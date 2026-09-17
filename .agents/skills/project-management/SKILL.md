@@ -72,6 +72,10 @@ The captain's request to create that local project authorizes this local initial
 
 ## Initialize
 
+Before any implementation work, load `spec-kit-workflow` and initialize Spec-Kit Core plus the pinned Spec-Kit-TDD extension in every project, regardless of delivery posture.
+Run `/speckit.tdd.setup` after the project test stack is available, and resolve or record its baseline findings before dispatching feature work.
+The workflow skill owns the exact setup commands, extension version, TDD profile contract, constitution principle, and per-feature lifecycle.
+
 Run no-mistakes initialization only for `no-mistakes` and `no-mistakes-prod-only` projects:
 
 ```sh

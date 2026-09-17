@@ -71,6 +71,8 @@
 # Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
 # fm-dod-lib.sh to every ship/scout launch brief, so this file never becomes a
 # second owner of a contract that must stay current across relaunches.
+# Ship briefs require the complete Spec-Kit Core and Spec-Kit-TDD lifecycle for every project feature.
+# The worker reads the firstmate-owned spec-kit-workflow skill before implementation and records all required artifacts.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -463,6 +465,10 @@ The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+Before implementation, read \`$FM_ROOT/.agents/skills/spec-kit-workflow/SKILL.md\` and follow its complete lifecycle.
+Verify \`.specify/\`, the enabled TDD extension, and \`.specify/memory/tdd-profile.md\` exist before starting feature work; if any is missing, perform project setup first and report any baseline limitation instead of guessing.
+Do not edit feature code before \`/speckit.specify\`, \`/speckit.plan\`, \`/speckit.tasks\`, and \`/speckit.tdd.plan\` have produced approved artifacts.
+Do not report implementation readiness before \`/speckit.tdd.run\`, \`/speckit.tdd.verify\`, \`/speckit.implement\`, \`/speckit.checklist\`, \`/speckit.analyze\`, and \`/speckit.converge\` complete in order.
 
 # Rules
 $RULE1

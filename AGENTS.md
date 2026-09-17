@@ -317,6 +317,7 @@ Treat file or subsystem overlap as a risk signal rather than an automatic reason
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.
+Before project initialization, ship dispatch, or implementation, load `spec-kit-workflow`; every project uses its complete Spec-Kit Core and Spec-Kit-TDD lifecycle before delivery.
 
 ### Dispatch and supervision handoff
 
@@ -580,6 +581,7 @@ These skills are not captain-invocable; load them only at their precise triggers
 - `fmx-respond` - load on an `x-mention <request_id>` `check:` wake to handle the mention, on an `x-mode-error ...` `check:` wake to report the Relay configuration blocker, on a `public-followup ...` `check:` wake or a startup-surfaced public commitment, and on any milestone or terminal wake for a Relay-linked task before posting its completion follow-up; relevant only when Relay is on.
 - `firstmate-codexapp` - load before coordinating a visible Codex Desktop thread, evaluating a Codex App backend request, or reconciling Codex Desktop host-tool smoke evidence for Firstmate work.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
+- `spec-kit-workflow` - load before initializing a project, dispatching a ship task, or starting implementation; it owns Spec-Kit Core and Spec-Kit-TDD setup, TDD profile verification, constitution approval, and the ordered per-feature lifecycle.
 
 ## 14. Relay
 
