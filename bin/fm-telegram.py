@@ -108,10 +108,13 @@ def _secure_private_path(path: Path, mode: int) -> None:
 
 
 def ensure_private_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.is_symlink() or not path.is_dir():
-        raise TelegramError(f"unsafe state directory: {path}")
-    _secure_private_path(path, 0o700)
+    try:
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if path.is_symlink() or not path.is_dir():
+            raise TelegramError(f"unsafe state directory: {path}")
+        _secure_private_path(path, 0o700)
+    except OSError as exc:
+        raise TelegramError(f"private directory could not be prepared: {path}") from exc
 
 
 def atomic_write(path: Path, data: bytes) -> None:
@@ -131,6 +134,8 @@ def atomic_write(path: Path, data: bytes) -> None:
         except TelegramError:
             path.unlink(missing_ok=True)
             raise
+    except OSError as exc:
+        raise TelegramError(f"private state could not be persisted: {path}") from exc
     finally:
         try:
             tmp.unlink()
@@ -170,7 +175,7 @@ def api_base() -> str:
 
 def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[str, Any]:
     token = token_value()
-    url = f"{api_base()}/{urllib.parse.quote(token, safe='')}/{method}"
+    url = f"{api_base()}{urllib.parse.quote(token, safe=':')}/{method}"
     body = json.dumps(params, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -228,7 +233,7 @@ def numeric_value(value: Any, pattern: re.Pattern[str], maximum: int = MAX_TELEG
         number = int(candidate)
     except (TypeError, ValueError, OverflowError):
         return None
-    return candidate if abs(number) <= maximum else None
+    return str(number) if abs(number) <= maximum else None
 
 
 def new_nonce() -> str:
@@ -541,7 +546,9 @@ def setup(token: str, machine: bool) -> dict[str, Any]:
 
 
 def _pair_hash(candidate_hash: str, user_id: str, chat_id: str) -> dict[str, Any]:
-    if numeric_value(user_id, ID_RE) is None or numeric_value(chat_id, CHAT_ID_RE) is None:
+    normalized_user = numeric_value(user_id, ID_RE)
+    normalized_chat = numeric_value(chat_id, CHAT_ID_RE)
+    if normalized_user is None or normalized_chat is None:
         raise TelegramError("Telegram identity must be numeric")
     lock = state_dir() / ".pairing.lock"
     token = portable_lock_acquire(lock)
@@ -552,9 +559,9 @@ def _pair_hash(candidate_hash: str, user_id: str, chat_id: str) -> dict[str, Any
         if not valid_nonce or record.get("paired_user_id") is not None or record.get("paired_chat_id") is not None:
             raise TelegramError("pairing nonce is expired or invalid")
         rotated = new_nonce()
-        record.update({"nonce_hash": nonce_hash(rotated), "nonce_expires_at": now() + DEFAULT_PAIRING_TTL, "paired_user_id": user_id, "paired_chat_id": chat_id, "paired_at": iso_now()})
+        record.update({"nonce_hash": nonce_hash(rotated), "nonce_expires_at": now() + DEFAULT_PAIRING_TTL, "paired_user_id": normalized_user, "paired_chat_id": normalized_chat, "paired_at": iso_now()})
         save_pairing(record)
-        return {"schema": "fm-telegram-pairing-result.v1", "paired": True, "user_id": user_id, "chat_id": chat_id}
+        return {"schema": "fm-telegram-pairing-result.v1", "paired": True, "user_id": normalized_user, "chat_id": normalized_chat}
     finally:
         portable_lock_release(lock, token)
 
@@ -589,6 +596,12 @@ def validate_steer_text(text: str) -> str:
 
 def bounded(text: str) -> str:
     return text[:MAX_MESSAGE_CHARS]
+
+
+def telegram_response(text: str) -> str:
+    if not isinstance(text, str) or len(text) > MAX_MESSAGE_CHARS:
+        raise TelegramError("Telegram response is too large")
+    return text
 
 
 def operational_state_dir() -> Path:
@@ -697,8 +710,10 @@ def portable_snapshot(all_decisions: bool) -> str:
         task_id = values.get("id", meta.stem)
         if not WORKER_RE.fullmatch(task_id):
             continue
+        if values.get("remote_host"):
+            raise TelegramError("Windows remote worker status and steer are unsupported; run Telegram on the remote Firstmate home")
         kind = values.get("kind") or "ship"
-        backend = values.get("remote_backend") if values.get("remote_host") else values.get("backend", "tmux")
+        backend = values.get("backend", "tmux")
         target = values.get("remote_target") if values.get("remote_host") else values.get("window", "")
         status_path = state / f"{task_id}.status"
         try:
@@ -856,14 +871,15 @@ def _portable_wake_append_locked(state: Path, target: str, summary: str) -> None
 
 
 def portable_wake(note_id: str, body: str) -> None:
-    state = operational_state_dir()
-    ensure_private_dir(state)
-    marker_dir = state / "inbox" / ".announced"
-    ensure_private_dir(marker_dir)
-    marker = marker_dir / note_id
-    lock = state / ".wake-queue.lock"
-    token = portable_lock_acquire(lock)
+    token: str | None = None
     try:
+        state = operational_state_dir()
+        ensure_private_dir(state)
+        marker_dir = state / "inbox" / ".announced"
+        ensure_private_dir(marker_dir)
+        marker = marker_dir / note_id
+        lock = state / ".wake-queue.lock"
+        token = portable_lock_acquire(lock)
         if marker.is_symlink() or (marker.exists() and not marker.is_file()):
             raise TelegramError("portable inbox announcement marker is unsafe")
         if marker.exists():
@@ -873,22 +889,28 @@ def portable_wake(note_id: str, body: str) -> None:
     except OSError as exc:
         raise TelegramError("portable inbox wake could not be persisted") from exc
     finally:
-        portable_lock_release(lock, token)
+        if token is not None:
+            portable_lock_release(lock, token)
 
 
 def portable_task_wake(target: str, record_path: Path) -> None:
-    state = operational_state_dir()
-    lock = state / ".wake-queue.lock"
-    token = portable_lock_acquire(lock)
+    token: str | None = None
     try:
+        state = operational_state_dir()
+        ensure_private_dir(state)
+        lock = state / ".wake-queue.lock"
+        token = portable_lock_acquire(lock)
         record_dir = record_path.parent
         if record_dir.name == "handled":
             record_dir = record_dir.parent
         path_text = str(record_dir).replace("\\", "/").replace("'", "'\\\\''")
         summary = f": Firstmate instruction waiting: list '{path_text}'/*.msg and, in numeric order, read and act on each, then mv each handled file to '{path_text}'/handled/."
         _portable_wake_append_locked(state, f"inbox:{target}", summary)
+    except OSError as exc:
+        raise TelegramError("portable task wake could not be persisted") from exc
     finally:
-        portable_lock_release(lock, token)
+        if token is not None:
+            portable_lock_release(lock, token)
 
 
 def _portable_atomic_claim(path: Path, data: bytes) -> bool:
@@ -991,15 +1013,25 @@ def portable_task_id(target: str, state: Path) -> str:
     raise TelegramError("Firstmate owner script rejected request")
 
 
+def portable_task_meta(target: str, state: Path) -> tuple[str, Path, dict[str, str]]:
+    task_id = portable_task_id(target, state)
+    meta = state / f"{task_id}.meta"
+    if meta.is_symlink() or not meta.is_file():
+        raise TelegramError("Firstmate owner script rejected request")
+    return task_id, meta, read_key_value(meta)
+
+
 def portable_target_kind(target: str, state: Path) -> str | None:
     try:
-        task_id = portable_task_id(target, state)
+        _, _, values = portable_task_meta(target, state)
     except TelegramError:
         return None
-    meta = state / f"{task_id}.meta"
-    if meta.is_symlink():
-        raise TelegramError("Firstmate owner script rejected request")
-    return read_key_value(meta).get("kind") or "ship"
+    return values.get("kind") or "ship"
+
+
+def portable_target_is_remote(target: str, state: Path) -> bool:
+    _, _, values = portable_task_meta(target, state)
+    return bool(values.get("remote_host"))
 
 
 def portable_send(target: str, body: str, delivery_id: str) -> str:
@@ -1007,10 +1039,9 @@ def portable_send(target: str, body: str, delivery_id: str) -> str:
     if not WORKER_RE.fullmatch(target) or not re.fullmatch(r"[a-f0-9]{16}", delivery_id):
         raise TelegramError("Firstmate owner script rejected request")
     state = operational_state_dir()
-    task_id = portable_task_id(target, state)
-    meta = state / f"{task_id}.meta"
-    if meta.is_symlink() or not meta.is_file():
-        raise TelegramError("Firstmate owner script rejected request")
+    task_id, meta, values = portable_task_meta(target, state)
+    if values.get("remote_host"):
+        raise TelegramError("Windows remote worker status and steer are unsupported; run Telegram on the remote Firstmate home")
     inbox = state / f"{task_id}.inbox"
     handled = inbox / "handled"
     ensure_private_dir(inbox)
@@ -1091,7 +1122,10 @@ def _durable_note_owner_result(output: str) -> str | None:
 
 def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
     if os.name == "nt":
-        return bounded(portable_owner(argv, stdin).strip() or "completed")
+        output = portable_owner(argv, stdin).strip() or "completed"
+        if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
+            raise TelegramError("Firstmate owner response is too large")
+        return output
     try:
         proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home()), **(env_extra or {})}, input=stdin, text=True, capture_output=True, timeout=20, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -1099,9 +1133,17 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
     if proc.returncode != 0:
         partial = _durable_note_owner_result(proc.stdout)
         if partial is not None:
-            return bounded(partial)
+            return partial
         raise TelegramError("Firstmate owner script rejected request")
-    return bounded(proc.stdout.strip() or "completed")
+    output = proc.stdout.strip() or "completed"
+    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        raise TelegramError("Firstmate owner response is too large")
+    return output
+
+
+def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
+    return telegram_response(owner(argv, stdin, env_extra))
+
 
 def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
     if numeric_value(user_id, ID_RE) is None or numeric_value(chat_id, CHAT_ID_RE) is None or numeric_value(update_id, ID_RE) is None:
@@ -1111,22 +1153,24 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
         raise TelegramError("Telegram identity is not paired")
     text = validate_text(text)
     if text == "/status":
-        return owner([str(root() / "bin/fm-bearings-snapshot.sh"), "--json"])
+        return owner_result([str(root() / "bin/fm-bearings-snapshot.sh"), "--json"])
     if text == "/decisions":
-        return owner([str(root() / "bin/fm-bearings-snapshot.sh"), "--json", "--all-decisions"])
+        return owner_result([str(root() / "bin/fm-bearings-snapshot.sh"), "--json", "--all-decisions"])
     if text.startswith("/note "):
         body = validate_text(text[6:], "note")
-        return owner([str(root() / "bin/fm-inbox.sh"), "note", "--request-id", f"telegram-{update_id}", "--json", "-"], body)
+        return owner_result([str(root() / "bin/fm-inbox.sh"), "note", "--request-id", f"telegram-{update_id}", "--json", "-"], body)
     if text.startswith("/steer "):
         rest = validate_text(text[7:], "steer")
         target, separator, body = rest.partition(" ")
         if not separator or not WORKER_RE.fullmatch(target):
             raise TelegramError("steer target or text is invalid")
         body = validate_steer_text(body)
+        if os.name == "nt" and portable_target_is_remote(target, operational_state_dir()):
+            raise TelegramError("Windows remote worker status and steer are unsupported; run Telegram on the remote Firstmate home")
         delivery_id = hashlib.sha256(f"telegram-steer-{update_id}".encode("ascii")).hexdigest()[:16]
         if portable_target_kind(target, operational_state_dir()) == "secondmate":
-            return owner([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
-        return owner([str(root() / "bin" / "fm-send.sh"), target, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
+            return owner_result([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
+        return owner_result([str(root() / "bin" / "fm-send.sh"), target, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
     raise TelegramError("unsupported Telegram command")
 
 
@@ -1289,10 +1333,8 @@ def apply_effect(record: dict[str, Any]) -> None:
             if pairing.get("paired_user_id") is None:
                 _pair_hash(str(record["pairing_nonce_hash"]), str(user_id), str(chat_id))
                 reply = "Telegram paired."
-            elif identity(pairing, user_id, chat_id) and pairing.get("nonce_hash") != record.get("pairing_nonce_hash"):
-                reply = "Telegram paired."
             else:
-                reply = dispatch(text, str(user_id), str(chat_id), str(record["update_id"]))
+                raise TelegramError("Telegram pairing is already complete")
         else:
             reply = dispatch(text, str(user_id), str(chat_id), str(record["update_id"]))
         outcome = "accepted"
@@ -1333,7 +1375,7 @@ def complete_update(record: dict[str, Any]) -> bool:
     return True
 
 
-def _poll(machine: bool, event: bool = False) -> dict[str, Any]:
+def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
     offset = read_offset()
     timeout = poll_timeout()
     response = api_call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 5)
@@ -1380,6 +1422,17 @@ def _poll(machine: bool, event: bool = False) -> dict[str, Any]:
     return output
 
 
+def _poll(machine: bool, event: bool = False) -> dict[str, Any]:
+    state = state_dir()
+    ensure_private_dir(state)
+    lock = state / ".poll.lock"
+    token = portable_lock_acquire(lock)
+    try:
+        return _poll_once(machine, event)
+    finally:
+        portable_lock_release(lock, token)
+
+
 def poll(machine: bool, event: bool = False) -> dict[str, Any]:
     try:
         return _poll(machine, event)
@@ -1407,14 +1460,20 @@ def next_sequence(directory: Path) -> str:
 
 
 def send_message(chat_id: str, update_id: str, command: str, text: str, sequence: Any = None) -> str:
-    if numeric_value(chat_id, CHAT_ID_RE) is None or numeric_value(update_id, ID_RE) is None:
+    normalized_chat = numeric_value(chat_id, CHAT_ID_RE)
+    normalized_update = numeric_value(update_id, ID_RE)
+    if normalized_chat is None or normalized_update is None:
         raise TelegramError("Telegram outbound identity is malformed")
-    text = bounded(text)
+    chat_id = normalized_chat
+    update_id = normalized_update
+    text = telegram_response(text)
     out_dir = state_dir() / "outbound"
     if sequence is None:
         sequence = next_sequence(out_dir)
-    if numeric_value(sequence, ID_RE, MAX_TELEGRAM_OFFSET) is None:
+    normalized_sequence = numeric_value(sequence, ID_RE, MAX_TELEGRAM_OFFSET)
+    if normalized_sequence is None:
         raise TelegramError("Telegram outbound sequence is malformed")
+    sequence = normalized_sequence
     path = out_dir / f"{sequence}.json"
     if path.exists():
         record = load_record(path, "fm-telegram-outbound.v1")
@@ -1460,8 +1519,6 @@ def worker_path() -> Path:
 
 
 def worker_loop() -> None:
-    while not worker_path().exists():
-        time.sleep(0.1)
     while worker_path().exists():
         try:
             poll(False)
@@ -1473,47 +1530,57 @@ def portable_enable() -> str:
     token_value()
     load_pairing()
     path = worker_path()
-    if path.exists():
-        record = load_record(path, "fm-telegram-worker.v1")
-        try:
-            pid = int(record["pid"])
-        except (ValueError, KeyError):
-            path.unlink(missing_ok=True)
-        else:
-            if pid <= 0:
+    lock = state_dir() / ".worker.lock"
+    token = portable_lock_acquire(lock)
+    try:
+        if path.exists():
+            record = load_record(path, "fm-telegram-worker.v1")
+            try:
+                pid = int(record["pid"])
+            except (ValueError, KeyError):
                 path.unlink(missing_ok=True)
             else:
-                try:
-                    os.kill(pid, 0)
-                except OSError:
+                if pid <= 0:
                     path.unlink(missing_ok=True)
                 else:
-                    return "Telegram polling already enabled"
-    ensure_private_dir(path.parent)
-    record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "at": iso_now()})
-    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    try:
-        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "worker"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
-    except (OSError, subprocess.SubprocessError) as exc:
-        path.unlink(missing_ok=True)
-        raise TelegramError("Telegram polling worker could not start") from exc
-    record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": proc.pid, "at": iso_now()})
-    return "enabled Telegram polling"
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        path.unlink(missing_ok=True)
+                    else:
+                        return "Telegram polling already enabled"
+        ensure_private_dir(path.parent)
+        record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "at": iso_now()})
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+        try:
+            proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "worker"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        except (OSError, subprocess.SubprocessError) as exc:
+            path.unlink(missing_ok=True)
+            raise TelegramError("Telegram polling worker could not start") from exc
+        record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": proc.pid, "at": iso_now()})
+        return "enabled Telegram polling"
+    finally:
+        portable_lock_release(lock, token)
 
 
 def portable_disable() -> str:
     path = worker_path()
-    if not path.exists():
-        return "retired Telegram polling"
-    record = load_record(path, "fm-telegram-worker.v1")
+    lock = state_dir() / ".worker.lock"
+    token = portable_lock_acquire(lock)
     try:
-        os.kill(int(record["pid"]), 15)
-    except (OSError, ValueError, KeyError):
-        pass
-    if path.is_symlink():
-        raise TelegramError("unsafe Telegram worker state")
-    path.unlink(missing_ok=True)
-    return "retired Telegram polling"
+        if not path.exists():
+            return "retired Telegram polling"
+        record = load_record(path, "fm-telegram-worker.v1")
+        try:
+            os.kill(int(record["pid"]), 15)
+        except (OSError, ValueError, KeyError):
+            pass
+        if path.is_symlink():
+            raise TelegramError("unsafe Telegram worker state")
+        path.unlink(missing_ok=True)
+        return "retired Telegram polling"
+    finally:
+        portable_lock_release(lock, token)
 
 
 def enable() -> str:

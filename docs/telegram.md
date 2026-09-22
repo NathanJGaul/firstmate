@@ -24,7 +24,7 @@ Pairing binds both Telegram user ID and chat ID.
 bin/fm-telegram.py enable
 ```
 
-On Linux and macOS, enablement registers one `telegram-bot` process-event source for the active home; the existing process-event runner owns background execution, durable capture, wake publication, and restart recovery. On Windows, enablement starts the bundled Python polling worker and stores its private worker record without requiring a shell or service installation.
+On Linux and macOS, enablement registers one `telegram-bot` process-event source for the active home; the existing process-event runner owns background execution, durable capture, wake publication, and restart recovery. On Windows, enablement starts the bundled Python polling worker and stores its private worker record without requiring a shell or service installation. Recorded remote workers are explicitly unsupported by the Windows owner boundary; status and steering return an error directing the operator to run Telegram on the remote Firstmate home.
 Disable it with:
 
 ```sh

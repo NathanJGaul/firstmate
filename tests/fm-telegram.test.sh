@@ -32,6 +32,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         with open(root + "/requests", "ab") as stream:
             stream.write(body + b"\n")
+        with open(root + "/paths", "a", encoding="utf-8") as stream:
+            stream.write(self.path + "\n")
         if self.path.endswith("/getMe"):
             payload = {"ok": True, "result": {"id": 99, "is_bot": True, "username": "firstmate_test_bot"}}
         elif self.path.endswith("/getUpdates"):
@@ -72,6 +74,7 @@ start_api "$api" "$API_PORT"
 home=$(make_home setup)
 setup=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
   "$TELEGRAM" setup --json --token '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
+assert_equals '/bot123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi/getMe' "$(head -1 "$api/paths")" 'Bot API path concatenates bot token without an extra slash'
 assert_contains "$setup" 'firstmate_test_bot' 'setup prints bot username'
 assert_contains "$setup" 'https://t.me/firstmate_test_bot?start=' 'setup prints Telegram deep link'
 assert_contains "$setup" '"qr":' 'machine setup records QR field'
