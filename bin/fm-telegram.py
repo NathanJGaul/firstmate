@@ -682,7 +682,16 @@ def _portable_decisions(status_path: Path, task_id: str, kind: str) -> list[dict
     return list(open_decisions.values())
 
 
-PORTABLE_STATE_VERBS = frozenset(("working", "needs-decision", "blocked", "paused", "done", "failed", "resolved", "captain-held"))
+PORTABLE_STATE_MAP = {
+    "working": "working",
+    "needs-decision": "parked",
+    "blocked": "blocked",
+    "paused": "paused",
+    "done": "done",
+    "failed": "failed",
+    "resolved": "unknown",
+    "captain-held": "unknown",
+}
 
 
 def _portable_current_state(lines: list[str]) -> tuple[str, str]:
@@ -695,15 +704,18 @@ def _portable_current_state(lines: list[str]) -> tuple[str, str]:
         if not words:
             continue
         verb = words[0]
-        if verb not in PORTABLE_STATE_VERBS:
+        if verb not in PORTABLE_STATE_MAP:
             continue
+        state = PORTABLE_STATE_MAP[verb]
+        if state == "unknown":
+            return state, ""
         if all(re.fullmatch(r"corr=[0-9A-Fa-f]{16}", word) for word in words[1:]):
             note = note.strip() if separator else ""
         elif separator:
             note = note.strip()
         else:
             note = ""
-        return verb, note[:256]
+        return state, note[:256]
     return "unknown", ""
 
 
@@ -745,14 +757,13 @@ def portable_snapshot(all_decisions: bool) -> str:
     omitted = []
     if not all_decisions and len(decisions) > len(visible_decisions):
         omitted.append({"surface": f"decisions_open showing {len(visible_decisions)} of {len(decisions)}", "reveal": "--all-decisions"})
-    in_flight = [task for task in tasks if task["state"] not in ("done", "failed")]
+    in_flight = [task for task in tasks if task["state"] == "working"]
     result: dict[str, Any] = {
         "schema": "fm-bearings.v1",
         "generated": iso_now(),
         "tasks": tasks,
         "in_flight": in_flight,
         "decisions_open": visible_decisions,
-        "decisions": visible_decisions,
         "omitted": omitted,
     }
     raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
@@ -1106,8 +1117,9 @@ def portable_send(target: str, body: str, delivery_id: str, fire_and_forget: boo
     return f"steer delivered to {target} with delivery {delivery_id}"
 
 
-def portable_owner(argv: list[str], stdin: str) -> str:
+def portable_owner(argv: list[str], stdin: str, env_extra: dict[str, str] | None = None) -> str:
     command = Path(argv[0]).name
+    owner_env = env_extra or {}
     if command == "fm-bearings-snapshot.sh":
         return portable_snapshot("--all-decisions" in argv)
     if command == "fm-inbox.sh" and len(argv) >= 4 and argv[1] == "note":
@@ -1121,7 +1133,7 @@ def portable_owner(argv: list[str], stdin: str) -> str:
         body = validate_text(" ".join(argv[flag + 2:]), "steer")
         return portable_send(argv[1], body, delivery_id, True)
     if command == "fm-send.sh" and len(argv) >= 3 and "--fire-and-forget" not in argv:
-        delivery_id = os.environ.get("FM_TELEGRAM_DELIVERY_ID", "")
+        delivery_id = owner_env.get("FM_TELEGRAM_DELIVERY_ID", os.environ.get("FM_TELEGRAM_DELIVERY_ID", ""))
         if portable_target_kind(argv[1], operational_state_dir()) == "secondmate":
             raise TelegramError("Firstmate owner script rejected request")
         body = validate_text(" ".join(argv[2:]), "steer")
@@ -1144,7 +1156,7 @@ def _durable_note_owner_result(output: str) -> str | None:
 
 def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
     if os.name == "nt":
-        output = portable_owner(argv, stdin).strip() or "completed"
+        output = portable_owner(argv, stdin, env_extra).strip() or "completed"
         if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
             raise TelegramError("Firstmate owner response is too large")
         return output
