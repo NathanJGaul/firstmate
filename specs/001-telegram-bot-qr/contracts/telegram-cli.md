@@ -2,7 +2,7 @@
 
 ## Setup
 
-`bin/fm-telegram.py setup --token <token>` validates and stores the token, calls `getMe`, creates pairing state, and prints the bot deep link plus QR output when available.
+`bin/fm-telegram.py setup --token <token>` validates and stores the token, calls `getMe`, creates pairing state, and prints the bot deep link plus the bundled QR output.
 
 ## Enablement
 

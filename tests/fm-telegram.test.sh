@@ -262,6 +262,8 @@ wire_poll=$(FM_HOME="$wire_home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_POR
 assert_contains "$wire_poll" '"processed": 1' 'Telegram deep-link start pairs through polling'
 assert_contains "$(cat "$wire_home/state/telegram/pairing.json")" '"paired_user_id":"17"' 'poll records Telegram user identity'
 assert_contains "$(cat "$wire_home/state/telegram/pairing.json")" '"paired_chat_id":"18"' 'poll records Telegram chat identity'
+assert_not_contains "$(cat "$wire_home/state/telegram/inbox/7.json")" "$wire_nonce" 'inbox redacts pairing nonce'
+assert_not_contains "$(cat "$wire_home/state/telegram/inbound/7.json")" "$wire_nonce" 'inbound record redacts pairing nonce'
 pass 'Telegram deep-link pairing binds user and chat identities'
 
 home=$(make_home commands)
@@ -297,8 +299,8 @@ assert_contains "$decisions" 'snapshot:--json --all-decisions' 'decisions use bo
 note=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 4 --text '/note hello')
 assert_contains "$note" 'note:note --request-id telegram-4 --json -:hello' 'note uses inbox owner and stdin'
 steer=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 5 --text '/steer worker hello')
-assert_contains "$steer" 'steer:worker --fire-and-forget ' 'steer uses a duplicate-tolerant delivery id'
-assert_contains "$steer" ' hello' 'steer preserves reversible worker text'
+assert_contains "$steer" 'steer:worker hello' 'steer preserves the normal worker text path'
+assert_not_contains "$steer" '--fire-and-forget' 'ordinary workers do not receive secondmate delivery flags'
 set +e
 unsafe=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 6 --text '/steer ../bad hello' 2>&1)
 unsafe_code=$?
@@ -322,13 +324,17 @@ parser_slash=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispat
 parser_slash_code=$?
 parser_dollar=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 12 --text '/steer worker $skill' 2>&1)
 parser_dollar_code=$?
+parser_key=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 13 --text '/steer worker --key Enter' 2>&1)
+parser_key_code=$?
 set -e
 expect_code 1 "$blank_note_code" 'whitespace-only note is rejected'
 expect_code 1 "$blank_steer_code" 'whitespace-only steer is rejected'
 expect_code 1 "$parser_slash_code" 'slash parser command is rejected'
 expect_code 1 "$parser_dollar_code" 'codex parser command is rejected'
+expect_code 1 "$parser_key_code" 'key parser command is rejected'
 assert_contains "$parser_slash" 'parser-native prefix' 'slash parser rejection is explicit'
 assert_contains "$parser_dollar" 'parser-native prefix' 'codex parser rejection is explicit'
+assert_contains "$parser_key" 'parser-native prefix' 'key parser rejection is explicit'
 pass 'paired command owner boundaries are enforced'
 
 home=$(make_home poll)

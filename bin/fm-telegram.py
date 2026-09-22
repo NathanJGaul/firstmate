@@ -30,6 +30,8 @@ MAX_UPDATE_BYTES = 256 * 1024
 MAX_COMMAND_BYTES = 4096
 MAX_MESSAGE_CHARS = 4096
 MAX_RESPONSE_BYTES = 256 * 1024
+MAX_TELEGRAM_ID = 2**63 - 1
+MAX_TELEGRAM_OFFSET = MAX_TELEGRAM_ID + 1
 DEFAULT_POLL_TIMEOUT = 30
 MAX_POLL_TIMEOUT = 50
 DEFAULT_PAIRING_TTL = 600
@@ -45,6 +47,10 @@ FROMFIRST_MARK = "[fm-from-firstmate]\u2063"
 
 
 class TelegramError(Exception):
+    pass
+
+
+class DurableOwnerError(TelegramError):
     pass
 
 
@@ -72,11 +78,40 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _windows_private_path(path: Path) -> None:
+    if os.name != "nt":
+        return
+    principal = os.environ.get("USERDOMAIN", "")
+    username = os.environ.get("USERNAME", "")
+    if principal and username:
+        principal = f"{principal}\\{username}"
+    else:
+        try:
+            result = subprocess.run(["whoami"], capture_output=True, text=True, timeout=5, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise TelegramError("Windows private ACL could not identify the current user") from exc
+        principal = result.stdout.strip()
+    if not principal or "\n" in principal or "\r" in principal:
+        raise TelegramError("Windows private ACL could not identify the current user")
+    try:
+        reset = subprocess.run(["icacls", str(path), "/reset"], capture_output=True, text=True, timeout=5, check=False)
+        restrict = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"], capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TelegramError(f"Windows private ACL is unavailable: {path}") from exc
+    if reset.returncode != 0 or restrict.returncode != 0:
+        raise TelegramError(f"Windows private ACL could not be applied: {path}")
+
+
+def _secure_private_path(path: Path, mode: int) -> None:
+    os.chmod(path, mode)
+    _windows_private_path(path)
+
+
 def ensure_private_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.is_symlink() or not path.is_dir():
         raise TelegramError(f"unsafe state directory: {path}")
-    os.chmod(path, 0o700)
+    _secure_private_path(path, 0o700)
 
 
 def atomic_write(path: Path, data: bytes) -> None:
@@ -91,7 +126,11 @@ def atomic_write(path: Path, data: bytes) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, path)
-        os.chmod(path, 0o600)
+        try:
+            _secure_private_path(path, 0o600)
+        except TelegramError:
+            path.unlink(missing_ok=True)
+            raise
     finally:
         try:
             tmp.unlink()
@@ -143,7 +182,7 @@ def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[s
         raise TelegramError("Telegram API response is too large")
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise TelegramError("Telegram API returned malformed JSON") from exc
     if not isinstance(payload, dict) or payload.get("ok") is not True:
         raise TelegramError("Telegram API rejected request")
@@ -179,6 +218,17 @@ def nonce_hash(nonce: str) -> str:
     return hashlib.sha256(nonce.encode("ascii")).hexdigest()
 
 
+def numeric_value(value: Any, pattern: re.Pattern[str], maximum: int = MAX_TELEGRAM_ID) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    candidate = str(value)
+    if pattern.fullmatch(candidate) is None:
+        return None
+    try:
+        number = int(candidate)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return candidate if abs(number) <= maximum else None
 
 
 def new_nonce() -> str:
@@ -490,19 +540,27 @@ def setup(token: str, machine: bool) -> dict[str, Any]:
 
 
 
-def pair(nonce: str, user_id: str, chat_id: str) -> dict[str, Any]:
-    if not ID_RE.fullmatch(user_id) or not CHAT_ID_RE.fullmatch(chat_id):
+def _pair_hash(candidate_hash: str, user_id: str, chat_id: str) -> dict[str, Any]:
+    if numeric_value(user_id, ID_RE) is None or numeric_value(chat_id, CHAT_ID_RE) is None:
         raise TelegramError("Telegram identity must be numeric")
-    candidate_hash = nonce_hash(nonce)
-    record = load_pairing()
-    expires = record.get("nonce_expires_at")
-    valid_nonce = isinstance(expires, int) and not isinstance(expires, bool) and expires > now() and secrets.compare_digest(candidate_hash, str(record.get("nonce_hash", "")))
-    if not valid_nonce or record.get("paired_user_id") is not None or record.get("paired_chat_id") is not None:
-        raise TelegramError("pairing nonce is expired or invalid")
-    rotated = new_nonce()
-    record.update({"nonce_hash": nonce_hash(rotated), "nonce_expires_at": now() + DEFAULT_PAIRING_TTL, "paired_user_id": user_id, "paired_chat_id": chat_id, "paired_at": iso_now()})
-    save_pairing(record)
-    return {"schema": "fm-telegram-pairing-result.v1", "paired": True, "user_id": user_id, "chat_id": chat_id}
+    lock = state_dir() / ".pairing.lock"
+    token = portable_lock_acquire(lock)
+    try:
+        record = load_pairing()
+        expires = record.get("nonce_expires_at")
+        valid_nonce = isinstance(expires, int) and not isinstance(expires, bool) and expires > now() and secrets.compare_digest(candidate_hash, str(record.get("nonce_hash", "")))
+        if not valid_nonce or record.get("paired_user_id") is not None or record.get("paired_chat_id") is not None:
+            raise TelegramError("pairing nonce is expired or invalid")
+        rotated = new_nonce()
+        record.update({"nonce_hash": nonce_hash(rotated), "nonce_expires_at": now() + DEFAULT_PAIRING_TTL, "paired_user_id": user_id, "paired_chat_id": chat_id, "paired_at": iso_now()})
+        save_pairing(record)
+        return {"schema": "fm-telegram-pairing-result.v1", "paired": True, "user_id": user_id, "chat_id": chat_id}
+    finally:
+        portable_lock_release(lock, token)
+
+
+def pair(nonce: str, user_id: str, chat_id: str) -> dict[str, Any]:
+    return _pair_hash(nonce_hash(nonce), user_id, chat_id)
 
 
 
@@ -516,7 +574,17 @@ def validate_text(text: str, label: str = "text") -> str:
 
 
 def identity(record: dict[str, Any], user_id: Any, chat_id: Any) -> bool:
-    return ID_RE.fullmatch(str(user_id)) is not None and CHAT_ID_RE.fullmatch(str(chat_id)) is not None and str(user_id) == str(record.get("paired_user_id")) and str(chat_id) == str(record.get("paired_chat_id"))
+    user = numeric_value(user_id, ID_RE)
+    chat = numeric_value(chat_id, CHAT_ID_RE)
+    return user is not None and chat is not None and user == str(record.get("paired_user_id")) and chat == str(record.get("paired_chat_id"))
+
+
+def validate_steer_text(text: str) -> str:
+    text = validate_text(text, "steer")
+    stripped = text.lstrip()
+    if stripped.startswith(("/", "$")) or re.match(r"--key(?:\s|$)", stripped):
+        raise TelegramError("steer text cannot start with a parser-native prefix")
+    return text
 
 
 def bounded(text: str) -> str:
@@ -597,6 +665,27 @@ def _portable_decisions(status_path: Path, task_id: str, kind: str) -> list[dict
     return list(open_decisions.values())
 
 
+def _portable_current_state(lines: list[str]) -> tuple[str, str]:
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        clean = re.sub(r"\s*\[at=[^\]]+\]", "", line).strip()
+        head, separator, note = clean.partition(":")
+        words = head.strip().split()
+        if not words:
+            continue
+        verb = words[0]
+        if all(re.fullmatch(r"corr=[0-9A-Fa-f]{16}", word) for word in words[1:]):
+            note = note.strip() if separator else ""
+        elif separator:
+            note = note.strip()
+        else:
+            note = ""
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", verb):
+            return verb, note[:256]
+    return "unknown", ""
+
+
 def portable_snapshot(all_decisions: bool) -> str:
     tasks: list[dict[str, Any]] = []
     decisions: list[dict[str, str]] = []
@@ -609,27 +698,48 @@ def portable_snapshot(all_decisions: bool) -> str:
         if not WORKER_RE.fullmatch(task_id):
             continue
         kind = values.get("kind") or "ship"
-        row: dict[str, Any] = {"id": task_id, "kind": kind, "backend": values.get("backend", "tmux"), "target": values.get("window", "")}
+        backend = values.get("remote_backend") if values.get("remote_host") else values.get("backend", "tmux")
+        target = values.get("remote_target") if values.get("remote_host") else values.get("window", "")
         status_path = state / f"{task_id}.status"
-        if status_path.is_file() and not status_path.is_symlink():
-            try:
-                status_lines = status_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                status_lines = []
-            row["latest_event"] = status_lines[-1] if status_lines else ""
+        try:
+            status_lines = status_path.read_text(encoding="utf-8", errors="replace").splitlines() if status_path.is_file() and not status_path.is_symlink() else []
+        except OSError:
+            status_lines = []
+        current_state, doing = _portable_current_state(status_lines)
+        row: dict[str, Any] = {
+            "id": task_id,
+            "kind": kind,
+            "state": current_state,
+            "backend": str(backend or "unknown")[:128],
+            "target": str(target or "")[:256],
+            "name": str(values.get("title") or task_id)[:128],
+            "doing": doing,
+        }
         task_decisions = _portable_decisions(status_path, task_id, kind)
         decisions.extend(task_decisions)
         tasks.append(row)
     visible_decisions = decisions if all_decisions else decisions[:20]
+    in_flight = [task for task in tasks if task["state"] not in ("done", "failed")]
     result: dict[str, Any] = {
         "schema": "fm-bearings.v1",
         "generated": iso_now(),
         "tasks": tasks,
-        "in_flight": tasks,
+        "in_flight": in_flight,
         "decisions_open": visible_decisions,
         "decisions": visible_decisions,
     }
-    return json.dumps(result, sort_keys=True, separators=(",", ":"))
+    while True:
+        raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        if len(raw.encode("utf-8")) <= MAX_MESSAGE_CHARS:
+            return raw
+        if result["decisions_open"]:
+            result["decisions_open"].pop()
+            result["decisions"] = result["decisions_open"]
+        elif result["tasks"]:
+            result["tasks"].pop()
+            result["in_flight"] = [task for task in result["tasks"] if task["state"] not in ("done", "failed")]
+        else:
+            raise TelegramError("portable status snapshot is too large")
 
 
 def _portable_pid_alive(pid: int) -> bool:
@@ -641,7 +751,7 @@ def _portable_pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, OverflowError):
         return False
     return True
 
@@ -677,9 +787,20 @@ def portable_lock_acquire(path: Path) -> str:
     while True:
         if path.is_symlink():
             raise TelegramError(f"unsafe portable lock: {path}")
+        candidate = path.parent / f".{path.name}.candidate.{os.getpid()}.{token}"
         try:
-            path.mkdir(mode=0o700)
+            candidate.mkdir(mode=0o700)
+            ensure_private_dir(candidate)
+            atomic_write(candidate / "owner", f"{os.getpid()}\t{token}\n".encode("ascii"))
+            try:
+                candidate.rename(path)
+            except FileExistsError:
+                shutil.rmtree(candidate)
+                continue
+            return token
         except FileExistsError:
+            if candidate.exists():
+                shutil.rmtree(candidate, ignore_errors=True)
             if _portable_lock_is_stale(path):
                 reclaimed = path.parent / f".{path.name}.reclaim.{os.getpid()}.{token}"
                 try:
@@ -697,10 +818,12 @@ def portable_lock_acquire(path: Path) -> str:
                 raise TelegramError(f"portable lock could not be acquired: {path}")
             time.sleep(0.05)
         except OSError as exc:
+            if candidate.exists():
+                shutil.rmtree(candidate, ignore_errors=True)
+            if path.exists() and time.time() < deadline:
+                time.sleep(0.05)
+                continue
             raise TelegramError(f"portable lock could not be acquired: {path}") from exc
-        else:
-            atomic_write(path / "owner", f"{os.getpid()}\t{token}\n".encode("ascii"))
-            return token
 
 
 def portable_lock_release(path: Path, token: str) -> None:
@@ -835,12 +958,20 @@ def portable_note(body: str, request_id: str) -> str:
             if note_id is None:
                 raise TelegramError("portable inbox request could not be recovered")
     note_path = directory / f"{note_id}.note"
+    handled_path = directory / "handled" / f"{note_id}.note"
+    if handled_path.is_symlink() or (handled_path.exists() and not handled_path.is_file()):
+        raise TelegramError("portable handled inbox note is unsafe")
+    if handled_path.is_file():
+        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": True, "path": str(handled_path)}, separators=(",", ":"))
     if note_path.is_symlink() or (note_path.exists() and not note_path.is_file()):
         raise TelegramError("portable inbox note is unsafe")
     if not note_path.exists():
         note = f"id={note_id}\nat={iso_now()}\nsource=telegram\nannounce_marker=1\nrequest_id={request_id}\n--\n{body}\n"
         atomic_write(note_path, note.encode("utf-8"))
-    portable_wake(note_id, body)
+    try:
+        portable_wake(note_id, body)
+    except TelegramError as exc:
+        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": False, "path": str(note_path), "error": bounded(str(exc))}, separators=(",", ":"))
     return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": True, "acknowledged": False, "path": str(note_path)}, separators=(",", ":"))
 
 
@@ -860,16 +991,25 @@ def portable_task_id(target: str, state: Path) -> str:
     raise TelegramError("Firstmate owner script rejected request")
 
 
+def portable_target_kind(target: str, state: Path) -> str | None:
+    try:
+        task_id = portable_task_id(target, state)
+    except TelegramError:
+        return None
+    meta = state / f"{task_id}.meta"
+    if meta.is_symlink():
+        raise TelegramError("Firstmate owner script rejected request")
+    return read_key_value(meta).get("kind") or "ship"
+
+
 def portable_send(target: str, body: str, delivery_id: str) -> str:
-    body = validate_text(body, "steer")
-    if body.lstrip().startswith(("/", "$")):
-        raise TelegramError("steer text cannot start with a parser-native prefix")
+    body = validate_steer_text(body)
     if not WORKER_RE.fullmatch(target) or not re.fullmatch(r"[a-f0-9]{16}", delivery_id):
         raise TelegramError("Firstmate owner script rejected request")
     state = operational_state_dir()
     task_id = portable_task_id(target, state)
     meta = state / f"{task_id}.meta"
-    if meta.is_symlink() or read_key_value(meta).get("kind") != "secondmate":
+    if meta.is_symlink() or not meta.is_file():
         raise TelegramError("Firstmate owner script rejected request")
     inbox = state / f"{task_id}.inbox"
     handled = inbox / "handled"
@@ -906,11 +1046,13 @@ def portable_send(target: str, body: str, delivery_id: str) -> str:
             atomic_write(record_path, record.encode("utf-8"))
     finally:
         portable_lock_release(lock, token)
+    if record_path.parent.name == "handled":
+        return f"steer already handled for {target} with delivery {delivery_id}"
     try:
         portable_task_wake(task_id, record_path)
-    except TelegramError:
-        pass
-    return f"steer delivered to {target}"
+    except TelegramError as exc:
+        raise DurableOwnerError(f"steer saved for {target} with delivery {delivery_id}, but worker wake failed: {exc}") from exc
+    return f"steer delivered to {target} with delivery {delivery_id}"
 
 
 def portable_owner(argv: list[str], stdin: str) -> str:
@@ -922,14 +1064,29 @@ def portable_owner(argv: list[str], stdin: str) -> str:
         return portable_note(validate_text(stdin, "note"), argv[request_index])
     if command == "fm-send.sh" and len(argv) >= 5 and "--fire-and-forget" in argv:
         flag = argv.index("--fire-and-forget")
-        if flag + 2 >= len(argv):
+        if flag + 2 >= len(argv) or portable_target_kind(argv[1], operational_state_dir()) != "secondmate":
             raise TelegramError("Firstmate owner script rejected request")
         delivery_id = argv[flag + 1]
         body = validate_text(" ".join(argv[flag + 2:]), "steer")
-        if body.lstrip().startswith(("/", "$")):
-            raise TelegramError("steer text cannot start with a parser-native prefix")
+        return portable_send(argv[1], body, delivery_id)
+    if command == "fm-send.sh" and len(argv) >= 3 and "--fire-and-forget" not in argv:
+        delivery_id = os.environ.get("FM_TELEGRAM_DELIVERY_ID", "")
+        body = validate_text(" ".join(argv[2:]), "steer")
         return portable_send(argv[1], body, delivery_id)
     raise TelegramError("Firstmate owner script unavailable on this platform")
+
+
+def _durable_note_owner_result(output: str) -> str | None:
+    try:
+        value = json.loads(output)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("schema") != "fm-inbox-note.v1" or value.get("saved") is not True:
+        return None
+    note_id = value.get("id")
+    if not isinstance(note_id, str) or NOTE_ID_RE.fullmatch(note_id) is None:
+        return None
+    return output.strip()
 
 
 def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
@@ -940,11 +1097,14 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
     except (OSError, subprocess.SubprocessError) as exc:
         raise TelegramError("Firstmate owner script unavailable") from exc
     if proc.returncode != 0:
+        partial = _durable_note_owner_result(proc.stdout)
+        if partial is not None:
+            return bounded(partial)
         raise TelegramError("Firstmate owner script rejected request")
     return bounded(proc.stdout.strip() or "completed")
 
 def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
-    if not ID_RE.fullmatch(user_id) or not CHAT_ID_RE.fullmatch(chat_id) or not ID_RE.fullmatch(update_id):
+    if numeric_value(user_id, ID_RE) is None or numeric_value(chat_id, CHAT_ID_RE) is None or numeric_value(update_id, ID_RE) is None:
         raise TelegramError("Telegram identity or update ID is malformed")
     record = load_pairing()
     if not identity(record, user_id, chat_id):
@@ -962,11 +1122,11 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
         target, separator, body = rest.partition(" ")
         if not separator or not WORKER_RE.fullmatch(target):
             raise TelegramError("steer target or text is invalid")
-        body = validate_text(body, "steer")
-        if body.lstrip().startswith(("/", "$")):
-            raise TelegramError("steer text cannot start with a parser-native prefix")
+        body = validate_steer_text(body)
         delivery_id = hashlib.sha256(f"telegram-steer-{update_id}".encode("ascii")).hexdigest()[:16]
-        return owner([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1"})
+        if portable_target_kind(target, operational_state_dir()) == "secondmate":
+            return owner([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
+        return owner([str(root() / "bin" / "fm-send.sh"), target, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
     raise TelegramError("unsupported Telegram command")
 
 
@@ -982,10 +1142,7 @@ def poll_timeout() -> int:
 
 
 def identity_value(value: Any, pattern: re.Pattern[str]) -> str | None:
-    if isinstance(value, bool) or not isinstance(value, (int, str)):
-        return None
-    candidate = str(value)
-    return candidate if pattern.fullmatch(candidate) else None
+    return numeric_value(value, pattern)
 
 
 def record_poll_error(message: str) -> None:
@@ -1026,6 +1183,19 @@ def load_record(path: Path, schema: str) -> dict[str, Any]:
     return value
 
 
+PAIRING_REDACTED_TEXT = "/start [pairing nonce redacted]"
+PAIRING_INVALID_TEXT = "/start [invalid pairing nonce]"
+
+
+def redact_pairing_text(text: str) -> tuple[str, str | None]:
+    if text in (PAIRING_REDACTED_TEXT, PAIRING_INVALID_TEXT) or not text.startswith("/start "):
+        return text, None
+    try:
+        return PAIRING_REDACTED_TEXT, nonce_hash(text[7:])
+    except TelegramError:
+        return PAIRING_INVALID_TEXT, None
+
+
 def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
     message = update.get("message")
     user_id = chat_id = None
@@ -1038,8 +1208,11 @@ def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
         text = message.get("text", "")
     valid_message = user_id is not None and chat_id is not None and isinstance(text, str)
     oversized = valid_message and len(text.encode("utf-8")) > MAX_COMMAND_BYTES
+    pairing_hash = None
     if not valid_message:
         text = ""
+    else:
+        text, pairing_hash = redact_pairing_text(text)
     return {
         "schema": "fm-telegram-inbox.v1",
         "update_id": update_id,
@@ -1047,6 +1220,7 @@ def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
         "user_id": user_id,
         "chat_id": chat_id,
         "text": bounded(text),
+        "pairing_nonce_hash": pairing_hash,
         "valid_message": valid_message,
         "oversized": oversized,
         "state": "pending",
@@ -1064,6 +1238,14 @@ def load_or_create_inbox(update: dict[str, Any], update_id: str) -> dict[str, An
         record = load_record(path, "fm-telegram-inbox.v1")
         if str(record.get("update_id")) != update_id:
             raise TelegramError("Telegram inbox record has the wrong update ID")
+        text = record.get("text", "")
+        if isinstance(text, str):
+            redacted, pairing_hash = redact_pairing_text(text)
+            if redacted != text or pairing_hash is not None and record.get("pairing_nonce_hash") != pairing_hash:
+                record["text"] = redacted
+                if pairing_hash is not None:
+                    record["pairing_nonce_hash"] = pairing_hash
+                record_json(state_dir() / "inbox", f"{update_id}.json", record)
         return record
     record = update_message(update, update_id)
     record_json(state_dir() / "inbox", f"{update_id}.json", record)
@@ -1082,12 +1264,9 @@ def persist_inbound(record: dict[str, Any]) -> None:
 
 
 def prepare_pairing(record: dict[str, Any]) -> None:
-    text = record.get("text", "")
-    if not text.startswith("/start ") or record.get("pairing_nonce_hash"):
+    if not str(record.get("text", "")).startswith("/start ") or record.get("pairing_nonce_hash"):
         return
-    candidate_hash = nonce_hash(text[7:])
-    record["pairing_nonce_hash"] = candidate_hash
-    record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+    raise TelegramError("pairing nonce is malformed")
 
 
 def apply_effect(record: dict[str, Any]) -> None:
@@ -1108,7 +1287,7 @@ def apply_effect(record: dict[str, Any]) -> None:
             prepare_pairing(record)
             pairing = load_pairing()
             if pairing.get("paired_user_id") is None:
-                pair(text[7:], str(user_id), str(chat_id))
+                _pair_hash(str(record["pairing_nonce_hash"]), str(user_id), str(chat_id))
                 reply = "Telegram paired."
             elif identity(pairing, user_id, chat_id) and pairing.get("nonce_hash") != record.get("pairing_nonce_hash"):
                 reply = "Telegram paired."
@@ -1117,6 +1296,10 @@ def apply_effect(record: dict[str, Any]) -> None:
         else:
             reply = dispatch(text, str(user_id), str(chat_id), str(record["update_id"]))
         outcome = "accepted"
+    except DurableOwnerError as exc:
+        record.update({"state": "pending", "effect": "pending", "reply": bounded(str(exc)), "outcome": "rejected", "command": command})
+        record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+        return
     except TelegramError as exc:
         reply = str(exc)
         outcome = "rejected"
@@ -1126,6 +1309,8 @@ def apply_effect(record: dict[str, Any]) -> None:
 
 def complete_update(record: dict[str, Any]) -> bool:
     apply_effect(record)
+    if record.get("effect") != "complete":
+        return False
     chat_id = record.get("chat_id")
     if not isinstance(chat_id, str):
         record.update({"state": "complete", "delivery": "not-applicable"})
@@ -1160,7 +1345,7 @@ def _poll(machine: bool, event: bool = False) -> dict[str, Any]:
     blocked = False
     for update in updates:
         update_id_value = update.get("update_id") if isinstance(update, dict) else None
-        if isinstance(update_id_value, bool) or not isinstance(update_id_value, int) or update_id_value < 0:
+        if isinstance(update_id_value, bool) or not isinstance(update_id_value, int) or update_id_value < 0 or update_id_value > MAX_TELEGRAM_ID:
             raise TelegramError("Telegram update is malformed")
         update_id = str(update_id_value)
         highest = max(highest, update_id_value + 1)
@@ -1222,11 +1407,13 @@ def next_sequence(directory: Path) -> str:
 
 
 def send_message(chat_id: str, update_id: str, command: str, text: str, sequence: Any = None) -> str:
+    if numeric_value(chat_id, CHAT_ID_RE) is None or numeric_value(update_id, ID_RE) is None:
+        raise TelegramError("Telegram outbound identity is malformed")
     text = bounded(text)
     out_dir = state_dir() / "outbound"
     if sequence is None:
         sequence = next_sequence(out_dir)
-    if not isinstance(sequence, str) or not re.fullmatch(r"[0-9]+", sequence):
+    if numeric_value(sequence, ID_RE, MAX_TELEGRAM_OFFSET) is None:
         raise TelegramError("Telegram outbound sequence is malformed")
     path = out_dir / f"{sequence}.json"
     if path.exists():
@@ -1261,7 +1448,7 @@ def read_offset() -> int:
     if not path.exists():
         return 0
     value = read_text(path)
-    if not value.isdigit():
+    if numeric_value(value, ID_RE, MAX_TELEGRAM_OFFSET) is None:
         raise TelegramError("Telegram offset is malformed")
     return int(value)
 
