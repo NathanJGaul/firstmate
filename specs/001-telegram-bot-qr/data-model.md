@@ -13,8 +13,9 @@ Successful pairing atomically replaces the nonce hash with a fresh nonce hash an
 
 ## Update Records
 
+`state/telegram/inbox/<update-id>.json` stores the durable update envelope and effect state before deduplication, owner dispatch, or offset publication.
 `state/telegram/inbound/<update-id>.json` stores schema, update ID, receipt time, bounded command text, and identity IDs.
-`state/telegram/processed/<update-id>` is an empty exclusive marker claimed before command dispatch.
+`state/telegram/processed/<update-id>` is an empty exclusive marker claimed after the inbox record; a marker never suppresses an unfinished inbox effect.
 `state/telegram/offset` stores the next Telegram offset as a decimal integer.
 
 `state/telegram/outbound/<sequence>.json` stores schema, update ID, chat ID, command, bounded response text, receipt time, and API result.

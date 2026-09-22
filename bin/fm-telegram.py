@@ -185,12 +185,264 @@ def deep_link(username: str, nonce: str) -> str:
     return f"https://t.me/{username}?start={urllib.parse.quote(nonce, safe='')}"
 
 
+QR_BLOCKS_M: dict[int, tuple[tuple[int, int, int], ...]] = {
+    1: ((1, 26, 16),),
+    2: ((1, 44, 28),),
+    3: ((1, 70, 44),),
+    4: ((2, 50, 32),),
+    5: ((2, 67, 43),),
+    6: ((4, 43, 27),),
+    7: ((4, 49, 31),),
+    8: ((2, 60, 38), (2, 61, 39)),
+    9: ((3, 58, 36), (2, 59, 37)),
+    10: ((4, 69, 43), (1, 70, 44)),
+}
+QR_ALIGNMENT: dict[int, tuple[int, ...]] = {
+    2: (6, 18), 3: (6, 22), 4: (6, 26), 5: (6, 30), 6: (6, 34),
+    7: (6, 22, 38), 8: (6, 24, 42), 9: (6, 26, 46), 10: (6, 28, 50),
+}
+
+
+def qr_gf_mul(left: int, right: int) -> int:
+    result = 0
+    while right:
+        if right & 1:
+            result ^= left
+        right >>= 1
+        left <<= 1
+        if left & 0x100:
+            left ^= 0x11D
+    return result
+
+
+def qr_ecc(data: list[int], count: int) -> list[int]:
+    generator = [1]
+    value = 1
+    for _ in range(count):
+        generator = [coefficient ^ qr_gf_mul(value, generator[index - 1]) if index else coefficient
+                     for index, coefficient in enumerate(generator + [0])]
+        value = qr_gf_mul(value, 2)
+    remainder = [0] * count
+    for byte in data:
+        factor = byte ^ remainder[0]
+        remainder = remainder[1:] + [0]
+        for index, coefficient in enumerate(generator[1:]):
+            remainder[index] ^= qr_gf_mul(coefficient, factor)
+    return remainder
+
+
+def qr_bch(value: int, polynomial: int, degree: int) -> int:
+    remainder = value << degree
+    for bit in range(value.bit_length() + degree - 1, degree - 1, -1):
+        if remainder & (1 << bit):
+            remainder ^= polynomial << (bit - degree)
+    return remainder
+
+
+def qr_base(version: int) -> list[list[bool | None]]:
+    size = version * 4 + 17
+    modules: list[list[bool | None]] = [[None] * size for _ in range(size)]
+
+    def finder(row: int, column: int) -> None:
+        for dy in range(-1, 8):
+            for dx in range(-1, 8):
+                y, x = row + dy, column + dx
+                if 0 <= y < size and 0 <= x < size:
+                    modules[y][x] = 0 <= dx <= 6 and 0 <= dy <= 6 and (
+                        dx in (0, 6) or dy in (0, 6) or 2 <= dx <= 4 and 2 <= dy <= 4
+                    )
+
+    finder(0, 0)
+    finder(size - 7, 0)
+    finder(0, size - 7)
+    for coordinate in QR_ALIGNMENT.get(version, ()):
+        for row in QR_ALIGNMENT.get(version, ()):
+            if modules[row][coordinate] is not None:
+                continue
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    modules[row + dy][coordinate + dx] = max(abs(dx), abs(dy)) != 1
+    for index in range(8, size - 8):
+        if modules[6][index] is None:
+            modules[6][index] = index % 2 == 0
+        if modules[index][6] is None:
+            modules[index][6] = index % 2 == 0
+    modules[size - 8][8] = True
+    version_bits = (version << 12) | qr_bch(version, 0x1F25, 12)
+    if version >= 7:
+        for index in range(18):
+            bit = bool((version_bits >> index) & 1)
+            modules[index // 3][index % 3 + size - 11] = bit
+            modules[index % 3 + size - 11][index // 3] = bit
+    for index in range(15):
+        if index < 6:
+            modules[index][8] = False
+        elif index < 8:
+            modules[index + 1][8] = False
+        else:
+            modules[size - 15 + index][8] = False
+        if index < 8:
+            modules[8][size - index - 1] = False
+        elif index == 8:
+            modules[8][7] = False
+        else:
+            modules[8][15 - index - 1] = False
+    return modules
+
+
+def qr_mask(mask: int, row: int, column: int) -> bool:
+    if mask == 0:
+        return (row + column) % 2 == 0
+    if mask == 1:
+        return row % 2 == 0
+    if mask == 2:
+        return column % 3 == 0
+    if mask == 3:
+        return (row + column) % 3 == 0
+    if mask == 4:
+        return (row // 2 + column // 3) % 2 == 0
+    if mask == 5:
+        return row * column % 2 + row * column % 3 == 0
+    if mask == 6:
+        return (row * column % 2 + row * column % 3) % 2 == 0
+    return ((row * column) % 3 + (row + column) % 2) % 2 == 0
+
+
+def qr_draw_data(modules: list[list[bool | None]], bits: list[int], mask: int) -> None:
+    size = len(modules)
+    bit_index = 0
+    row = size - 1
+    upward = True
+    column = size - 1
+    while column > 0:
+        if column == 6:
+            column -= 1
+        for _ in range(size):
+            row_index = row if upward else size - 1 - row
+            for column_index in (column, column - 1):
+                if modules[row_index][column_index] is None:
+                    bit = bits[bit_index] if bit_index < len(bits) else 0
+                    bit_index += 1
+                    modules[row_index][column_index] = bool(bit ^ qr_mask(mask, row_index, column_index))
+            row -= 1
+        row = size - 1
+        upward = not upward
+        column -= 2
+    if bit_index < len(bits):
+        raise TelegramError("bundled QR renderer produced an incomplete symbol")
+
+
+def qr_draw_format(modules: list[list[bool | None]], mask: int) -> None:
+    data = mask
+    format_bits = ((data << 10) | qr_bch(data, 0x537, 10)) ^ 0x5412
+    size = len(modules)
+    for index in range(15):
+        bit = bool((format_bits >> index) & 1)
+        if index < 6:
+            modules[index][8] = bit
+        elif index < 8:
+            modules[index + 1][8] = bit
+        else:
+            modules[size - 15 + index][8] = bit
+        if index < 8:
+            modules[8][size - index - 1] = bit
+        elif index == 8:
+            modules[8][7] = bit
+        else:
+            modules[8][15 - index - 1] = bit
+
+
+def qr_penalty(modules: list[list[bool | None]]) -> int:
+    size = len(modules)
+    score = 0
+    lines = [modules[row] for row in range(size)] + [[modules[row][column] for row in range(size)] for column in range(size)]
+    for line in lines:
+        run = 1
+        for index in range(1, size):
+            if line[index] == line[index - 1]:
+                run += 1
+            else:
+                if run >= 5:
+                    score += run - 2
+                run = 1
+        if run >= 5:
+            score += run - 2
+        for index in range(size - 6):
+            if line[index:index + 7] == [True, False, True, True, True, False, True]:
+                before = index >= 4 and all(value is False for value in line[index - 4:index])
+                after = index + 11 <= size and all(value is False for value in line[index + 7:index + 11])
+                if before or after:
+                    score += 40
+    for row in range(size - 1):
+        for column in range(size - 1):
+            block = modules[row][column]
+            if block == modules[row + 1][column] == modules[row][column + 1] == modules[row + 1][column + 1]:
+                score += 3
+    dark = sum(1 for row in modules for value in row if value)
+    score += abs(dark * 20 - size * size * 10) // (size * size) * 10
+    return score
+
+
 def qr(link: str) -> str:
-    try:
-        proc = subprocess.run(["qrencode", "-t", "ANSIUTF8", "-o", "-", link], capture_output=True, text=True, timeout=3, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return proc.stdout if proc.returncode == 0 else ""
+    payload = link.encode("utf-8")
+    selected_version = None
+    selected_bits: list[int] = []
+    for version, specifications in QR_BLOCKS_M.items():
+        capacity = sum(count * data_count for count, _, data_count in specifications)
+        if len(payload) > capacity - 2:
+            continue
+        bits = [0, 1, 0, 0]
+        bits.extend((len(payload) >> shift) & 1 for shift in range(7, -1, -1))
+        for byte in payload:
+            bits.extend((byte >> shift) & 1 for shift in range(7, -1, -1))
+        bits.extend([0] * min(4, capacity * 8 - len(bits)))
+        bits.extend([0] * ((-len(bits)) % 8))
+        pad = [1, 1, 1, 0, 1, 1, 0, 0]
+        while len(bits) < capacity * 8:
+            bits.extend(pad[:min(8, capacity * 8 - len(bits))])
+            pad = [0, 0, 0, 1, 0, 0, 0, 1] if pad == [1, 1, 1, 0, 1, 1, 0, 0] else [1, 1, 1, 0, 1, 1, 0, 0]
+        selected_version = version
+        selected_bits = bits
+        break
+    if selected_version is None:
+        raise TelegramError("deep link is too long for the bundled QR renderer")
+    codewords = [sum(selected_bits[index + offset] << (7 - offset) for offset in range(8)) for index in range(0, len(selected_bits), 8)]
+    blocks: list[list[int]] = []
+    ecc_blocks: list[list[int]] = []
+    cursor = 0
+    for count, total_count, data_count in QR_BLOCKS_M[selected_version]:
+        for _ in range(count):
+            block = codewords[cursor:cursor + data_count]
+            cursor += data_count
+            blocks.append(block)
+            ecc_blocks.append(qr_ecc(block, total_count - data_count))
+    interleaved = []
+    for index in range(max(len(block) for block in blocks)):
+        interleaved.extend(block[index] for block in blocks if index < len(block))
+    for index in range(max(len(block) for block in ecc_blocks)):
+        interleaved.extend(block[index] for block in ecc_blocks if index < len(block))
+    final_bits = [bit for byte in interleaved for bit in ((byte >> shift) & 1 for shift in range(7, -1, -1))]
+    base = qr_base(selected_version)
+    best: list[list[bool | None]] | None = None
+    best_score = 10**9
+    for mask in range(8):
+        candidate = [row[:] for row in base]
+        qr_draw_data(candidate, final_bits, mask)
+        qr_draw_format(candidate, mask)
+        score = qr_penalty(candidate)
+        if score < best_score:
+            best_score = score
+            best = candidate
+    if best is None:
+        raise TelegramError("bundled QR renderer could not select a mask")
+    quiet = 4
+    lines = []
+    for row in range(-quiet, len(best) + quiet):
+        line = []
+        for column in range(-quiet, len(best) + quiet):
+            line.append("██" if 0 <= row < len(best) and 0 <= column < len(best) and best[row][column] else "  ")
+        lines.append("".join(line))
+    return "\n".join(lines) + "\n"
 
 
 def setup(token: str, machine: bool) -> dict[str, Any]:
@@ -255,7 +507,7 @@ def pair(nonce: str, user_id: str, chat_id: str) -> dict[str, Any]:
 
 
 def validate_text(text: str, label: str = "text") -> str:
-    if not isinstance(text, str) or not text or len(text.encode("utf-8")) > MAX_COMMAND_BYTES:
+    if not isinstance(text, str) or not text or not text.strip() or len(text.encode("utf-8")) > MAX_COMMAND_BYTES:
         raise TelegramError(f"{label} is empty or too large")
     if any(ord(char) < 32 or ord(char) == 127 for char in text):
         raise TelegramError(f"{label} contains control bytes")
@@ -270,9 +522,170 @@ def bounded(text: str) -> str:
     return text[:MAX_MESSAGE_CHARS]
 
 
-def owner(argv: list[str], stdin: str = "") -> str:
+def operational_state_dir() -> Path:
+    return Path(os.environ.get("FM_STATE_OVERRIDE", home() / "state"))
+
+
+def read_key_value(path: Path) -> dict[str, str]:
+    if path.is_symlink() or not path.is_file():
+        return {}
+    values: dict[str, str] = {}
     try:
-        proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home())}, input=stdin, text=True, capture_output=True, timeout=20, check=False)
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key] = value
+    except OSError:
+        return {}
+    return values
+
+
+def portable_snapshot(all_decisions: bool) -> str:
+    tasks = []
+    state = operational_state_dir()
+    for meta in sorted(state.glob("*.meta")):
+        values = read_key_value(meta)
+        task_id = values.get("id", meta.stem)
+        if not WORKER_RE.fullmatch(task_id):
+            continue
+        row: dict[str, Any] = {"id": task_id, "kind": values.get("kind"), "backend": values.get("backend"), "target": values.get("target")}
+        status_path = state / f"{task_id}.status"
+        if status_path.is_file() and not status_path.is_symlink():
+            try:
+                row["latest_event"] = status_path.read_text(encoding="utf-8", errors="replace").splitlines()[-1:]
+            except OSError:
+                row["latest_event"] = []
+        tasks.append(row)
+    result: dict[str, Any] = {"schema": "fm-bearings-snapshot.v1", "tasks": tasks}
+    if all_decisions:
+        result["decisions"] = []
+    return json.dumps(result, sort_keys=True, separators=(",", ":"))
+
+
+def portable_wake(note_id: str, body: str) -> None:
+    state = operational_state_dir()
+    ensure_private_dir(state)
+    marker_dir = state / "inbox" / ".announced"
+    ensure_private_dir(marker_dir)
+    marker = marker_dir / note_id
+    lock = state / ".wake-queue.lock"
+    deadline = time.time() + 5
+    while True:
+        try:
+            os.mkdir(lock, 0o700)
+            break
+        except FileExistsError:
+            if time.time() >= deadline:
+                raise TelegramError("portable inbox wake could not be locked")
+            time.sleep(0.05)
+        except OSError as exc:
+            raise TelegramError("portable inbox wake could not be locked") from exc
+    try:
+        if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+            raise TelegramError("portable inbox announcement marker is unsafe")
+        if marker.exists():
+            return
+        sequence_path = state / ".wake-queue.seq"
+        try:
+            sequence = int(sequence_path.read_text(encoding="utf-8").strip()) if sequence_path.exists() else 0
+        except (OSError, ValueError):
+            sequence = 0
+        sequence += 1
+        atomic_write(sequence_path, f"{sequence}\n".encode("utf-8"))
+        with (state / ".wake-queue").open("a", encoding="utf-8") as stream:
+            stream.write(f"{now()}\t{sequence}\tcheck\tinbox:{note_id}\tcheck: captain inbox note {note_id} - {bounded(body).replace(chr(10), ' ')}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        atomic_write(marker, f"{iso_now()}\n".encode("utf-8"))
+    except OSError as exc:
+        raise TelegramError("portable inbox wake could not be persisted") from exc
+    finally:
+        try:
+            lock.rmdir()
+        except OSError:
+            pass
+
+
+def portable_note(body: str, request_id: str) -> str:
+    directory = operational_state_dir() / "inbox"
+    request_dir = directory / ".requests"
+    ensure_private_dir(directory)
+    ensure_private_dir(request_dir)
+    request_path = request_dir / request_id
+    created = False
+    if request_path.exists():
+        if request_path.is_symlink() or not request_path.is_file():
+            raise TelegramError("portable inbox request is unsafe")
+        note_id = request_path.read_text(encoding="utf-8").splitlines()[0]
+    else:
+        note_id = f"{now()}-{secrets.token_hex(4)}"
+        try:
+            fd = os.open(request_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            note_id = request_path.read_text(encoding="utf-8").splitlines()[0]
+        except OSError as exc:
+            raise TelegramError("portable inbox request could not be reserved") from exc
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(note_id + "\n")
+            created = True
+    note_path = directory / f"{note_id}.note"
+    if not note_path.exists():
+        note = f"id={note_id}\nat={iso_now()}\nsource=telegram\nannounce_marker=1\nrequest_id={request_id}\n--\n{body}\n"
+        atomic_write(note_path, note.encode("utf-8"))
+    portable_wake(note_id, body)
+    return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": True, "acknowledged": False, "path": str(note_path)}, separators=(",", ":"))
+
+
+def portable_send(target: str, body: str) -> str:
+    state = operational_state_dir()
+    meta = state / f"{target}.meta"
+    if not meta.is_file() or meta.is_symlink():
+        raise TelegramError("Firstmate owner script rejected request")
+    inbox = state / f"{target}.inbox"
+    handled = inbox / "handled"
+    ensure_private_dir(inbox)
+    ensure_private_dir(handled)
+    records = list(inbox.glob("*.msg")) + list(handled.glob("*.msg"))
+    for record in records:
+        if record.is_symlink() or not record.is_file():
+            continue
+        try:
+            content = record.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "\n--\n" in content and content.split("\n--\n", 1)[1] == body:
+            return f"steer delivered to {target}"
+    numbers = []
+    for record in records:
+        try:
+            numbers.append(int(record.stem))
+        except ValueError:
+            pass
+    sequence = f"{max(numbers, default=0) + 1:03d}"
+    record_path = inbox / f"{sequence}.msg"
+    record = f"schema=fm-task-inbox.v1\nat={iso_now()}\n--\n{body}"
+    atomic_write(record_path, record.encode("utf-8"))
+    return f"steer delivered to {target}"
+
+
+def portable_owner(argv: list[str], stdin: str) -> str:
+    command = Path(argv[0]).name
+    if command == "fm-bearings-snapshot.sh":
+        return portable_snapshot("--all-decisions" in argv)
+    if command == "fm-inbox.sh" and len(argv) >= 4 and argv[1] == "note":
+        request_index = argv.index("--request-id") + 1
+        return portable_note(validate_text(stdin, "note"), argv[request_index])
+    if command == "fm-send.sh" and len(argv) >= 3:
+        return portable_send(argv[1], validate_text(argv[-1], "steer"))
+    raise TelegramError("Firstmate owner script unavailable on this platform")
+
+
+def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
+    if os.name == "nt":
+        return bounded(portable_owner(argv, stdin).strip() or "completed")
+    try:
+        proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home()), **(env_extra or {})}, input=stdin, text=True, capture_output=True, timeout=20, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise TelegramError("Firstmate owner script unavailable") from exc
     if proc.returncode != 0:
@@ -299,7 +712,10 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
         if not separator or not WORKER_RE.fullmatch(target):
             raise TelegramError("steer target or text is invalid")
         body = validate_text(body, "steer")
-        return owner([str(root() / "bin" / "fm-send.sh"), target, body])
+        if body.lstrip().startswith(("/", "$")):
+            raise TelegramError("steer text cannot start with a parser-native prefix")
+        delivery_id = hashlib.sha256(f"telegram-steer-{update_id}".encode("ascii")).hexdigest()[:16]
+        return owner([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1"})
     raise TelegramError("unsupported Telegram command")
 
 
@@ -347,6 +763,133 @@ def claim_marker(path: Path) -> bool:
     return True
 
 
+def load_record(path: Path, schema: str) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise TelegramError(f"missing Telegram record: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TelegramError(f"Telegram record is malformed: {path}") from exc
+    if not isinstance(value, dict) or value.get("schema") != schema:
+        raise TelegramError(f"Telegram record has incompatible schema: {path}")
+    return value
+
+
+def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
+    message = update.get("message")
+    user_id = chat_id = None
+    text = ""
+    if isinstance(message, dict):
+        sender = message.get("from")
+        chat = message.get("chat")
+        user_id = identity_value(sender.get("id") if isinstance(sender, dict) else None, ID_RE)
+        chat_id = identity_value(chat.get("id") if isinstance(chat, dict) else None, CHAT_ID_RE)
+        text = message.get("text", "")
+    valid_message = user_id is not None and chat_id is not None and isinstance(text, str)
+    oversized = valid_message and len(text.encode("utf-8")) > MAX_COMMAND_BYTES
+    if not valid_message:
+        text = ""
+    return {
+        "schema": "fm-telegram-inbox.v1",
+        "update_id": update_id,
+        "at": iso_now(),
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "text": bounded(text),
+        "valid_message": valid_message,
+        "oversized": oversized,
+        "state": "pending",
+        "effect": "pending",
+        "delivery": "pending",
+        "reply": None,
+        "outcome": "rejected" if not valid_message else None,
+        "outbound_sequence": None,
+    }
+
+
+def load_or_create_inbox(update: dict[str, Any], update_id: str) -> dict[str, Any]:
+    path = state_dir() / "inbox" / f"{update_id}.json"
+    if path.exists():
+        record = load_record(path, "fm-telegram-inbox.v1")
+        if str(record.get("update_id")) != update_id:
+            raise TelegramError("Telegram inbox record has the wrong update ID")
+        return record
+    record = update_message(update, update_id)
+    record_json(state_dir() / "inbox", f"{update_id}.json", record)
+    return record
+
+
+def persist_inbound(record: dict[str, Any]) -> None:
+    record_json(state_dir() / "inbound", f"{record['update_id']}.json", {
+        "schema": "fm-telegram-inbound.v1",
+        "update_id": record["update_id"],
+        "at": record["at"],
+        "user_id": record.get("user_id"),
+        "chat_id": record.get("chat_id"),
+        "text": record.get("text", ""),
+    })
+
+
+def prepare_pairing(record: dict[str, Any]) -> None:
+    text = record.get("text", "")
+    if not text.startswith("/start ") or record.get("pairing_nonce_hash"):
+        return
+    candidate_hash = nonce_hash(text[7:])
+    record["pairing_nonce_hash"] = candidate_hash
+    record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+
+
+def apply_effect(record: dict[str, Any]) -> None:
+    if record.get("effect") == "complete":
+        return
+    record["state"] = "processing"
+    record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+    user_id = record.get("user_id")
+    chat_id = record.get("chat_id")
+    text = record.get("text", "")
+    command = text.split(" ", 1)[0] if text else "rejected"
+    try:
+        if not record.get("valid_message"):
+            raise TelegramError("Telegram message identity is malformed")
+        if record.get("oversized"):
+            raise TelegramError("text is empty or too large")
+        if text.startswith("/start "):
+            prepare_pairing(record)
+            pairing = load_pairing()
+            if pairing.get("paired_user_id") is None:
+                pair(text[7:], str(user_id), str(chat_id))
+                reply = "Telegram paired."
+            elif identity(pairing, user_id, chat_id) and pairing.get("nonce_hash") != record.get("pairing_nonce_hash"):
+                reply = "Telegram paired."
+            else:
+                reply = dispatch(text, str(user_id), str(chat_id), str(record["update_id"]))
+        else:
+            reply = dispatch(text, str(user_id), str(chat_id), str(record["update_id"]))
+        outcome = "accepted"
+    except TelegramError as exc:
+        reply = str(exc)
+        outcome = "rejected"
+    record.update({"state": "response_pending", "effect": "complete", "reply": bounded(reply), "outcome": outcome, "command": command})
+    record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+
+
+def complete_update(record: dict[str, Any]) -> bool:
+    apply_effect(record)
+    chat_id = record.get("chat_id")
+    if not isinstance(chat_id, str):
+        record.update({"state": "complete", "delivery": "not-applicable"})
+        record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+        return True
+    try:
+        sequence = send_message(chat_id, str(record["update_id"]), str(record.get("command", "rejected")), str(record.get("reply", "")), record.get("outbound_sequence"))
+    except TelegramError:
+        record["delivery"] = "pending"
+        record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+        return False
+    record.update({"state": "complete", "delivery": "sent", "outbound_sequence": sequence})
+    record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+    return True
+
 
 def _poll(machine: bool, event: bool = False) -> dict[str, Any]:
     offset = read_offset()
@@ -355,60 +898,37 @@ def _poll(machine: bool, event: bool = False) -> dict[str, Any]:
     updates = response.get("result")
     if not isinstance(updates, list) or len(json.dumps(updates).encode("utf-8")) > MAX_UPDATE_BYTES:
         raise TelegramError("Telegram update response is malformed or too large")
-    inbound = state_dir() / "inbound"
-    processed_dir = state_dir() / "processed"
     processed = duplicates = rejected = 0
     highest = offset
+    blocked = False
     for update in updates:
         update_id_value = update.get("update_id") if isinstance(update, dict) else None
         if isinstance(update_id_value, bool) or not isinstance(update_id_value, int) or update_id_value < 0:
             raise TelegramError("Telegram update is malformed")
         update_id = str(update_id_value)
         highest = max(highest, update_id_value + 1)
-        marker = processed_dir / update_id
-        if not claim_marker(marker):
+        record = load_or_create_inbox(update, update_id)
+        persist_inbound(record)
+        marker = state_dir() / "processed" / update_id
+        marker_was_present = not claim_marker(marker)
+        if record.get("effect") == "complete" and record.get("delivery") in ("sent", "not-applicable"):
             duplicates += 1
             continue
-        message = update.get("message")
-        user_id = chat_id = None
-        text = ""
-        if isinstance(message, dict):
-            sender = message.get("from")
-            chat = message.get("chat")
-            user_id = identity_value(sender.get("id") if isinstance(sender, dict) else None, ID_RE)
-            chat_id = identity_value(chat.get("id") if isinstance(chat, dict) else None, CHAT_ID_RE)
-            text = message.get("text", "")
-        valid_message = user_id is not None and chat_id is not None and isinstance(text, str)
-        if not valid_message:
-            rejected += 1
-            text = ""
-        inbound_record = {"schema": "fm-telegram-inbound.v1", "update_id": update_id, "at": iso_now(), "user_id": user_id, "chat_id": chat_id, "text": bounded(text)}
-        record_json(inbound, f"{update_id}.json", inbound_record)
-        atomic_write(marker, b"\n")
-        try:
-            if valid_message and text.startswith("/start "):
-                pairing = load_pairing()
-                if pairing.get("paired_user_id") is None:
-                    pair(text[7:], user_id, chat_id)
-                    reply = "Telegram paired."
-                else:
-                    reply = dispatch(text, user_id, chat_id, update_id)
-            elif valid_message:
-                reply = dispatch(text, user_id, chat_id, update_id)
-            else:
-                raise TelegramError("Telegram message identity is malformed")
-            send_message(chat_id, update_id, text.split(" ", 1)[0], reply)
+        if marker_was_present:
+            duplicates += 1
+        if not complete_update(record):
+            blocked = True
+            continue
+        if record.get("outcome") == "accepted":
             processed += 1
-        except TelegramError as exc:
+        else:
             rejected += 1
-            if chat_id is not None:
-                try:
-                    send_message(chat_id, update_id, text.split(" ", 1)[0] if text else "rejected", str(exc))
-                except TelegramError:
-                    pass
-    if highest != offset:
-        atomic_write(offset_path(), f"{highest}\n".encode())
-    output = {"schema": "fm-telegram-poll.v1", "processed": processed, "duplicates": duplicates, "rejected": rejected, "next_offset": highest}
+    next_offset = highest if not blocked else offset
+    if next_offset != offset:
+        atomic_write(offset_path(), f"{next_offset}\n".encode())
+    if blocked:
+        raise TelegramError("Telegram outbound response remains pending")
+    output = {"schema": "fm-telegram-poll.v1", "processed": processed, "duplicates": duplicates, "rejected": rejected, "next_offset": next_offset}
     if event:
         print(f"schema={RESULT_SCHEMA}\nstatus=ok\nprocessed={processed}\nduplicates={duplicates}\nrejected={rejected}\n")
     elif machine:
@@ -444,19 +964,35 @@ def next_sequence(directory: Path) -> str:
     return str(max(values, default=0) + 1)
 
 
-def send_message(chat_id: str, update_id: str, command: str, text: str) -> None:
+def send_message(chat_id: str, update_id: str, command: str, text: str, sequence: Any = None) -> str:
     text = bounded(text)
     out_dir = state_dir() / "outbound"
-    seq = next_sequence(out_dir)
-    record = {"schema": "fm-telegram-outbound.v1", "sequence": seq, "update_id": update_id, "chat_id": chat_id, "command": command, "text": text, "at": iso_now(), "api_ok": False}
+    if sequence is None:
+        sequence = next_sequence(out_dir)
+    if not isinstance(sequence, str) or not re.fullmatch(r"[0-9]+", sequence):
+        raise TelegramError("Telegram outbound sequence is malformed")
+    path = out_dir / f"{sequence}.json"
+    if path.exists():
+        record = load_record(path, "fm-telegram-outbound.v1")
+        if record.get("update_id") != update_id or record.get("chat_id") != chat_id or record.get("text") != text:
+            raise TelegramError("Telegram outbound record does not match update")
+        if record.get("api_ok") is True:
+            return sequence
+    else:
+        record = {"schema": "fm-telegram-outbound.v1", "sequence": sequence, "update_id": update_id, "chat_id": chat_id, "command": command, "text": text, "at": iso_now(), "api_ok": False, "delivery": "pending", "attempts": 0}
+    record["attempts"] = int(record.get("attempts", 0)) + 1
+    record["delivery"] = "unknown"
+    record_json(out_dir, f"{sequence}.json", record)
     try:
         api_call("sendMessage", {"chat_id": int(chat_id), "text": text})
-        record["api_ok"] = True
     except TelegramError:
         record["error"] = "Telegram API unavailable or rejected response"
-        record_json(out_dir, f"{seq}.json", record)
+        record_json(out_dir, f"{sequence}.json", record)
         raise
-    record_json(out_dir, f"{seq}.json", record)
+    record.update({"api_ok": True, "delivery": "sent"})
+    record.pop("error", None)
+    record_json(out_dir, f"{sequence}.json", record)
+    return sequence
 
 
 def offset_path() -> Path:
@@ -475,7 +1011,69 @@ def read_offset() -> int:
 
 
 
+def worker_path() -> Path:
+    return state_dir() / "worker.json"
+
+
+def worker_loop() -> None:
+    while not worker_path().exists():
+        time.sleep(0.1)
+    while worker_path().exists():
+        try:
+            _poll(False)
+        except TelegramError:
+            time.sleep(5)
+
+
+def portable_enable() -> str:
+    token_value()
+    load_pairing()
+    path = worker_path()
+    if path.exists():
+        record = load_record(path, "fm-telegram-worker.v1")
+        try:
+            pid = int(record["pid"])
+        except (ValueError, KeyError):
+            path.unlink(missing_ok=True)
+        else:
+            if pid <= 0:
+                return "Telegram polling already enabled"
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                path.unlink(missing_ok=True)
+            else:
+                return "Telegram polling already enabled"
+    ensure_private_dir(path.parent)
+    record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "at": iso_now()})
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "worker"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+    except (OSError, subprocess.SubprocessError) as exc:
+        path.unlink(missing_ok=True)
+        raise TelegramError("Telegram polling worker could not start") from exc
+    record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": proc.pid, "at": iso_now()})
+    return "enabled Telegram polling"
+
+
+def portable_disable() -> str:
+    path = worker_path()
+    if not path.exists():
+        return "retired Telegram polling"
+    record = load_record(path, "fm-telegram-worker.v1")
+    try:
+        os.kill(int(record["pid"]), 15)
+    except (OSError, ValueError, KeyError):
+        pass
+    if path.is_symlink():
+        raise TelegramError("unsafe Telegram worker state")
+    path.unlink(missing_ok=True)
+    return "retired Telegram polling"
+
+
 def enable() -> str:
+    if os.name == "nt":
+        return portable_enable()
     token_value()
     load_pairing()
     adapter = root() / "bin" / "fm-procevent-telegram.sh"
@@ -487,6 +1085,8 @@ def enable() -> str:
 
 
 def disable() -> str:
+    if os.name == "nt":
+        return portable_disable()
     proc = subprocess.run([str(root() / "bin" / "fm-procevent.sh"), "retire", "telegram-bot"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, capture_output=True, text=True, timeout=20, check=False)
     if proc.returncode:
         raise TelegramError("Telegram polling retirement failed")
@@ -517,6 +1117,7 @@ def main(argv: list[str]) -> int:
     poll_parser.add_argument("--json", action="store_true")
     sub.add_parser("enable")
     sub.add_parser("disable")
+    sub.add_parser("worker")
     args = parser.parse_args(argv)
     try:
         if args.command == "setup":
@@ -535,6 +1136,8 @@ def main(argv: list[str]) -> int:
             print(enable())
         elif args.command == "disable":
             print(disable())
+        elif args.command == "worker":
+            worker_loop()
         return 0
     except TelegramError as exc:
         print(f"fm-telegram: {exc}", file=sys.stderr)

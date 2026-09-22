@@ -47,12 +47,12 @@ As an operator, I can leave Telegram polling enabled while Firstmate remains aut
 - **FR-002**: Generate pairing nonces with one-time use, bounded expiry, and rotation after successful pairing.
 - **FR-003**: Bind accepted commands to both Telegram user identity and chat identity recorded during pairing.
 - **FR-004**: Poll Telegram using the Bot API `getUpdates` long-poll endpoint from the local session; do not expose an inbound webhook.
-- **FR-005**: Deduplicate Telegram updates by update id before command execution.
+- **FR-005**: Persist a durable Telegram inbox by update id before deduplication or command execution, then deduplicate updates without losing an unfinished effect.
 - **FR-006**: Persist inbound update records and outbound response records under the operational home state directory.
 - **FR-007**: Support only `/status`, `/decisions`, `/note`, and `/steer`; route each through existing read or owner scripts.
 - **FR-008**: Reject unpaired, mismatched, malformed, empty, oversized, and unsafe command inputs without invoking owner scripts.
 - **FR-009**: Exclude merge, destructive, irreversible, credential, and security-sensitive authority from Telegram-only commands.
-- **FR-010**: Keep token and pairing records in gitignored home configuration/state and support Linux, macOS, and Windows environments with Python standard library and shell-free subprocess boundaries.
+- **FR-010**: Keep token and pairing records in gitignored home configuration/state and support Linux, macOS, and Windows environments with Python standard library and shell-free subprocess boundaries. Windows uses the bundled Python polling worker and Python owner implementations instead of Unix shell runners.
 - **FR-011**: Bound Telegram API responses to 256 KiB, command text to 4096 UTF-8 bytes, outbound message text to 4096 characters, owner calls to 20 seconds, and long-poll waits to 50 seconds.
 - **FR-012**: Document setup, pairing, enablement, command surface, and limitations.
 
@@ -83,4 +83,4 @@ As an operator, I can leave Telegram polling enabled while Firstmate remains aut
 
 - The operator creates the bot with BotFather and supplies its token locally.
 - `python3` is available because Firstmate already uses it for machine-readable state.
-- `qrencode` is optional; setup still prints the exact deep link when it is unavailable.
+- The bundled Python renderer always prints a QR representation alongside the exact deep link.

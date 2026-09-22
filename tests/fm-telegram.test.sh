@@ -20,6 +20,7 @@ start_api() {
   local dir=$1 port=$2
   cat > "$dir/api.py" <<'PY'
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -40,7 +41,10 @@ class Handler(BaseHTTPRequestHandler):
             except FileNotFoundError:
                 payload = {"ok": True, "result": []}
         elif self.path.endswith("/sendMessage"):
-            payload = {"ok": True, "result": {"message_id": 1}}
+            if os.path.exists(root + "/fail-send"):
+                payload = {"ok": False, "error_code": 503, "description": "send unavailable"}
+            else:
+                payload = {"ok": True, "result": {"message_id": 1}}
         else:
             payload = {"ok": False, "error_code": 404, "description": "unknown"}
         raw = json.dumps(payload).encode()
@@ -71,6 +75,7 @@ setup=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
 assert_contains "$setup" 'firstmate_test_bot' 'setup prints bot username'
 assert_contains "$setup" 'https://t.me/firstmate_test_bot?start=' 'setup prints Telegram deep link'
 assert_contains "$setup" '"qr":' 'machine setup records QR field'
+assert_not_contains "$setup" '"qr": null' 'machine setup always includes bundled QR output'
 assert_present "$home/config/telegram-bot-token" 'setup stores token'
 assert_present "$home/state/telegram/pairing.json" 'setup stores pairing state'
 assert_equals '600' "$(stat -c '%a' "$home/config/telegram-bot-token")" 'token file is private'
@@ -160,7 +165,8 @@ assert_contains "$decisions" 'snapshot:--json --all-decisions' 'decisions use bo
 note=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 4 --text '/note hello')
 assert_contains "$note" 'note:note --request-id telegram-4 --json -:hello' 'note uses inbox owner and stdin'
 steer=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 5 --text '/steer worker hello')
-assert_contains "$steer" 'steer:worker hello' 'steer uses reversible send owner without unsupported flags'
+assert_contains "$steer" 'steer:worker --fire-and-forget ' 'steer uses a duplicate-tolerant delivery id'
+assert_contains "$steer" ' hello' 'steer preserves reversible worker text'
 set +e
 unsafe=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 6 --text '/steer ../bad hello' 2>&1)
 unsafe_code=$?
@@ -175,6 +181,22 @@ expect_code 1 "$unknown_code" 'unsupported Telegram command is rejected'
 assert_contains "$unknown" 'unsupported Telegram command' 'unsupported command rejection is explicit'
 expect_code 1 "$control_code" 'control bytes are rejected'
 assert_contains "$control" 'contains control bytes' 'control-byte rejection is explicit'
+set +e
+blank_note=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 9 --text '/note ' 2>&1)
+blank_note_code=$?
+blank_steer=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 10 --text '/steer worker ' 2>&1)
+blank_steer_code=$?
+parser_slash=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 11 --text '/steer worker /exit' 2>&1)
+parser_slash_code=$?
+parser_dollar=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 12 --text '/steer worker $skill' 2>&1)
+parser_dollar_code=$?
+set -e
+expect_code 1 "$blank_note_code" 'whitespace-only note is rejected'
+expect_code 1 "$blank_steer_code" 'whitespace-only steer is rejected'
+expect_code 1 "$parser_slash_code" 'slash parser command is rejected'
+expect_code 1 "$parser_dollar_code" 'codex parser command is rejected'
+assert_contains "$parser_slash" 'parser-native prefix' 'slash parser rejection is explicit'
+assert_contains "$parser_dollar" 'parser-native prefix' 'codex parser rejection is explicit'
 pass 'paired command owner boundaries are enforced'
 
 home=$(make_home poll)
@@ -230,6 +252,25 @@ expect_code 1 "$unavailable_code" 'unavailable Telegram API fails poll'
 assert_contains "$unavailable" 'Telegram API unavailable' 'poll reports API outage'
 assert_present "$home/state/telegram/errors/2.json" 'poll records API outage'
 assert_contains "$(cat "$home/state/telegram/errors/2.json")" 'Telegram API unavailable' 'poll outage record is bounded'
+cat > "$api/updates" <<'JSON'
+{"ok":true,"result":[{"update_id":43,"message":{"message_id":2,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/status"}}]}
+JSON
+touch "$api/fail-send"
+set +e
+response_outage=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" FM_TELEGRAM_POLL_TIMEOUT=1 \
+  "$TELEGRAM" poll --once --json 2>&1)
+response_outage_code=$?
+set -e
+expect_code 1 "$response_outage_code" 'failed Telegram response keeps poll pending'
+assert_equals '43' "$(cat "$home/state/telegram/offset")" 'failed Telegram response does not publish offset'
+assert_contains "$(cat "$home/state/telegram/inbox/43.json")" '"effect":"complete"' 'failed response keeps completed local effect'
+rm -f "$api/fail-send"
+response_retry=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" FM_TELEGRAM_POLL_TIMEOUT=1 \
+  "$TELEGRAM" poll --once --json)
+assert_contains "$response_retry" '"processed": 1' 'later poll retries durable response'
+assert_equals '44' "$(cat "$home/state/telegram/offset")" 'later poll publishes pending offset'
+assert_contains "$(cat "$home/state/telegram/inbox/43.json")" '"delivery":"sent"' 'later poll completes durable inbox record'
+pass 'poll retries durable outbound responses without re-running local effects'
 
 result="$TMP_ROOT/result"
 printf '%s\n' 'schema=fm-telegram-result.v1' 'status=ok' > "$result"

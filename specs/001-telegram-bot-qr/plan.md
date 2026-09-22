@@ -5,7 +5,7 @@
 - Language: Python 3 standard library for cross-platform network, JSON, hashing, subprocess, and file handling.
 - Existing boundaries: `bin/fm-inbox.sh`, `bin/fm-send.sh`, `bin/fm-bearings-snapshot.sh`, and `bin/fm-procevent.sh`.
 - External service: Telegram Bot API over outbound HTTPS long polling through `urllib.request` with a 30-second default timeout and 50-second maximum.
-- QR output: optional `qrencode` ANSI output with exact deep-link fallback.
+- QR output: bundled standard-library QR encoding rendered as terminal Unicode; setup always emits a scannable representation.
 - Persistence: home-local `config/telegram-bot-token` and `state/telegram/` records, all mode 0600.
 - Tests: existing Bash behavior runner with Python fixture HTTP server.
 
@@ -20,7 +20,7 @@
 
 `bin/fm-telegram.py` owns configuration, pairing, polling, command dispatch, persistence, and Telegram HTTP calls.
 `bin/fm-procevent-telegram.sh` is the process-event adapter that registers one local outbound poll source and invokes `fm-telegram.py poll --once` without a shell.
-A polling cycle reads one bounded `getUpdates` response, deduplicates update IDs, persists inbound records, validates pairing identity, invokes only existing owner scripts, persists outbound responses, and sends responses through `sendMessage`.
+A polling cycle reads one bounded `getUpdates` response, persists a durable inbox before deduplication, validates pairing identity, invokes only existing owner boundaries, persists outbound responses before `sendMessage`, and advances the offset only after terminal delivery.
 
 ## Data Model
 
