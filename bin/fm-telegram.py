@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -204,23 +205,30 @@ def token_value() -> str:
     return value
 
 
-def api_base() -> str:
-    value = os.environ.get("FM_TELEGRAM_API_BASE", "https://api.telegram.org/bot").rstrip("/")
+def _validate_api_url(value: str) -> urllib.parse.SplitResult:
     try:
         parsed = urllib.parse.urlsplit(value)
         hostname = parsed.hostname.lower() if parsed.hostname else ""
         parsed.port
     except ValueError as exc:
         raise TelegramError("Telegram API base URL is malformed") from exc
-    if parsed.scheme == "https":
-        pass
-    elif parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}:
-        pass
-    else:
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}):
         raise TelegramError("Telegram API base URL must use HTTPS except for localhost or 127.0.0.1 test endpoints")
     if not parsed.netloc or parsed.username is not None or parsed.password is not None:
         raise TelegramError("Telegram API base URL is malformed")
+    return parsed
+
+
+def api_base() -> str:
+    value = os.environ.get("FM_TELEGRAM_API_BASE", "https://api.telegram.org/bot").rstrip("/")
+    _validate_api_url(value)
     return value
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req: urllib.request.Request, newurl: str, code: int, msg: str, headers: Any, fp: Any) -> None:
+        _validate_api_url(urllib.parse.urljoin(req.full_url, newurl))
+        raise TelegramError("Telegram API redirects are not allowed")
 
 
 def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[str, Any]:
@@ -230,8 +238,11 @@ def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[s
     body = json.dumps(params, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opener = urllib.request.build_opener(_RejectRedirects())
+        with opener.open(request, timeout=timeout) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except TelegramError:
+        raise
     except (OSError, urllib.error.URLError, TimeoutError) as exc:
         raise TelegramError("Telegram API unavailable") from exc
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -670,7 +681,7 @@ def identity(record: dict[str, Any], user_id: Any, chat_id: Any) -> bool:
 def validate_steer_text(text: str) -> str:
     text = validate_text(text, "steer")
     stripped = text.lstrip()
-    if stripped.startswith(("/", "$")) or re.match(r"--(?:key|resolve-key|fire-and-forget)(?:=|\s|$)", stripped):
+    if stripped.startswith(("/", "$", "--")):
         raise TelegramError("steer text cannot start with a parser-native prefix")
     return text
 
@@ -743,6 +754,7 @@ def _portable_read_status(path: Path) -> list[str]:
 
 
 def _portable_read_backlog() -> list[dict[str, Any]]:
+    _portable_check_deadline()
     path = operational_data_dir() / "backlog.md"
     if path.is_symlink() or not path.is_file():
         return []
@@ -758,6 +770,7 @@ def _portable_read_backlog() -> list[dict[str, Any]]:
     _portable_check_deadline()
     if len(raw) > PORTABLE_MAX_STATUS_BYTES:
         raise TelegramError("portable backlog is too large")
+    _portable_check_deadline()
     lines = raw.decode("utf-8", errors="replace").splitlines()
     section = ""
     records: list[dict[str, Any]] = []
@@ -910,6 +923,7 @@ PORTABLE_STATE_MAP = {
 
 
 def _portable_busy_state(task_id: str, values: dict[str, str]) -> str | None:
+    _portable_check_deadline()
     record_path = operational_state_dir() / f"{task_id}.busy-state"
     generation_path = operational_state_dir() / f"{task_id}.busy-gen"
     if not record_path.exists() and not generation_path.exists():
@@ -965,7 +979,7 @@ def _portable_status_fold(lines: list[str], task_id: str, kind: str, lifecycle_s
     for line in lines:
         _portable_check_deadline()
         unstamped = _portable_status_unstamped(line)
-        if ":" not in unstamped and re.search(r"\[key=[^\]]+\]", unstamped) is None:
+        if ":" not in unstamped:
             continue
         verb = _portable_status_verb(unstamped)
         if verb not in verbs:
@@ -1008,16 +1022,10 @@ def portable_snapshot(all_decisions: bool) -> str:
     _portable_check_deadline()
     tasks: list[dict[str, Any]] = []
     decisions: list[dict[str, str]] = []
-    lifecycle_active: set[str] = set()
     state = operational_state_dir()
     backlog = _portable_read_backlog()
     backlog_by_id = {record["id"]: record for record in backlog}
-    meta_paths: list[Path] = []
-    for meta in state.glob("*.meta"):
-        _portable_check_deadline()
-        meta_paths.append(meta)
-        if len(meta_paths) > PORTABLE_MAX_TASKS:
-            raise TelegramError("portable status snapshot has too many tasks")
+    meta_paths = _portable_directory_entries(state, ".meta", PORTABLE_MAX_TASKS)
     meta_paths.sort()
     for meta in meta_paths:
         _portable_check_deadline()
@@ -1033,14 +1041,14 @@ def portable_snapshot(all_decisions: bool) -> str:
         backend = values.get("backend", "tmux")
         target = values.get("remote_target") if values.get("remote_host") else values.get("window", "")
         busy_state = _portable_busy_state(task_id, values)
-        if busy_state == "busy":
-            lifecycle_active.add(task_id)
         status_path = state / f"{task_id}.status"
         status_lines = _portable_read_status(status_path)
         task_decisions, latest = _portable_status_fold(status_lines, task_id, kind, "working" if busy_state == "busy" else None)
         if busy_state == "busy":
             current_state, doing = "working", "worker active"
         else:
+            if kind in ("ship", "scout") and latest is not None and latest[0] == "working":
+                task_decisions.clear()
             current_state, doing = _portable_state_projection(task_decisions, latest)
         backlog_record = backlog_by_id.get(task_id)
         if backlog_record is not None:
@@ -1065,7 +1073,6 @@ def portable_snapshot(all_decisions: bool) -> str:
         decision for decision in decisions
         if not any(existing["id"] == decision["id"] and existing["key"] == decision["key"] for existing in backlog_all_decisions)
     ]
-    decisions = [decision for decision in decisions if decision["id"] not in lifecycle_active]
     decision_limit = _portable_bound("FM_BEARINGS_DECISIONS", 20)
     visible_decisions = decisions[:decision_limit]
     omitted: list[dict[str, Any]] = []
@@ -1311,7 +1318,8 @@ def portable_task_wake(target: str, record_path: Path) -> None:
         if record_dir.name == "handled":
             record_dir = record_dir.parent
         path_text = str(record_dir).replace("\\", "/").replace("'", "'\\\\''")
-        summary = f": Firstmate instruction waiting: list '{path_text}'/*.msg and, in numeric order, read and act on each, then mv each handled file to '{path_text}'/handled/."
+        ack_command = " ".join(shlex.quote(part) for part in (sys.executable, str(Path(__file__).resolve()), "ack", "--state", str(state), "--task", target, "--record", record_path.name))
+        summary = f": Firstmate instruction waiting: list '{path_text}'/*.msg and, in numeric order, read and act on each, then run {ack_command} for each handled record."
         _portable_wake_append_locked(state, f"inbox:{target}", summary)
     except OSError as exc:
         raise TelegramError("portable task wake could not be persisted") from exc
@@ -1411,7 +1419,8 @@ def portable_note(body: str, request_id: str) -> str:
     try:
         portable_wake(note_id, body)
     except TelegramError as exc:
-        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": False, "error": bounded(str(exc))}, separators=(",", ":"))
+        partial = json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": False, "error": "note saved but wake could not be announced"}, separators=(",", ":"))
+        raise DurableOwnerError(partial) from exc
     return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": True, "acknowledged": False}, separators=(",", ":"))
 
 
@@ -1455,6 +1464,33 @@ def portable_task_id(target: str, state: Path) -> str:
     if target.startswith("fm-") and state.joinpath(f"{target[3:]}.meta").is_file():
         return target[3:]
     raise TelegramError("Firstmate owner script rejected request")
+
+
+def portable_task_ack(state: Path, target: str, record_name: str) -> str:
+    if not WORKER_RE.fullmatch(target) or re.fullmatch(r"[0-9]{1,12}\.msg", record_name) is None:
+        raise TelegramError("portable inbox acknowledgement is malformed")
+    inbox = state / f"{target}.inbox"
+    handled = inbox / "handled"
+    root_record = inbox / record_name
+    handled_record = handled / record_name
+    ensure_private_dir(inbox)
+    ensure_private_dir(handled)
+    token = portable_lock_acquire(inbox / ".seq.lock")
+    try:
+        if handled_record.is_symlink() or (handled_record.exists() and not handled_record.is_file()):
+            raise TelegramError("portable handled inbox record is unsafe")
+        if handled_record.is_file():
+            return str(handled_record)
+        if root_record.is_symlink() or (root_record.exists() and not root_record.is_file()):
+            raise TelegramError("portable inbox record is unsafe")
+        if not root_record.is_file():
+            raise TelegramError("portable inbox record is missing")
+        os.replace(root_record, handled_record)
+        return str(handled_record)
+    except OSError as exc:
+        raise TelegramError("portable inbox acknowledgement could not be persisted") from exc
+    finally:
+        portable_lock_release(inbox / ".seq.lock", token)
 
 
 def portable_task_meta(target: str, state: Path) -> tuple[str, Path, dict[str, str]]:
@@ -1504,22 +1540,33 @@ def _portable_delivery_match(path: Path, delivery_id: str, wire_body: str, fire_
     return True
 
 
+def _portable_directory_entries(directory: Path, suffix: str, limit: int = PORTABLE_MAX_RECORDS) -> list[Path]:
+    entries: list[Path] = []
+    try:
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                _portable_check_deadline()
+                if entry.name.endswith(suffix):
+                    entries.append(Path(entry.path))
+                    if len(entries) > limit:
+                        raise TelegramError("portable directory has too many records")
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise TelegramError("portable directory could not be enumerated") from exc
+    return entries
+
+
 def _portable_next_inbox_sequence(inbox: Path, handled: Path) -> str:
     numbers: list[int] = []
-    count = 0
     for directory in (inbox, handled):
-        for path in directory.glob("*.msg"):
-            _portable_check_deadline()
-            count += 1
-            if count > PORTABLE_MAX_RECORDS:
-                raise TelegramError("portable task inbox has too many records")
+        for path in _portable_directory_entries(directory, ".msg"):
             try:
                 numbers.append(int(path.stem))
             except ValueError:
                 continue
     reservation_dir = inbox / ".idempotency"
-    for path in reservation_dir.glob("*.reservation"):
-        _portable_check_deadline()
+    for path in _portable_directory_entries(reservation_dir, ".reservation"):
         name = _portable_record_field(path, "record") or ""
         if re.fullmatch(r"[0-9]{1,12}\.msg", name):
             numbers.append(int(name[:-4]))
@@ -1676,7 +1723,14 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
     return output
 
 
-_TELEGRAM_PATH_RE = re.compile(r"(?<![A-Za-z0-9_/:])(?:[A-Za-z]:[\\/][^\s\"'<>`,;)]*|/(?:[^/\s\"'<>`,;)]+/)+[^/\s\"'<>`,;)]*)")
+_TELEGRAM_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_/:])(?:"
+    r"[A-Za-z]:[\\/][^\s\"'<>`,;)]*"
+    r"|\\\\[^\s\"'<>`,;)]*"
+    r"|/(?:[^/\s\"'<>`,;)]+(?:/[^/\s\"'<>`,;)]+)*)"
+    r"|/"
+    r")"
+)
 
 
 def _telegram_redact_paths(text: str) -> str:
@@ -2030,7 +2084,7 @@ def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
     timeout = poll_timeout()
     response = api_call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 5)
     updates = response.get("result")
-    if not isinstance(updates, list) or len(json.dumps(updates).encode("utf-8")) > MAX_UPDATE_BYTES:
+    if not isinstance(updates, list) or len(_json_encode(updates, "Telegram update response")) > MAX_UPDATE_BYTES:
         raise TelegramError("Telegram update response is malformed or too large")
     processed = duplicates = rejected = 0
     highest = offset
@@ -2091,8 +2145,15 @@ def poll(machine: bool, event: bool = False) -> dict[str, Any]:
         raise
 
 
+def _json_encode(value: Any, label: str) -> bytes:
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError, OverflowError, RecursionError, UnicodeEncodeError) as exc:
+        raise TelegramError(f"{label} contains malformed data") from exc
+
+
 def record_json(directory: Path, name: str, value: dict[str, Any]) -> None:
-    raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    raw = _json_encode(value, "Telegram record") + b"\n"
     if len(raw) > MAX_RESPONSE_BYTES:
         raise TelegramError("Telegram record is too large")
     atomic_write(directory / name, raw)
@@ -2169,7 +2230,37 @@ def worker_path() -> Path:
 
 
 def worker_loop() -> None:
+    if os.name == "nt":
+        process = _portable_windows_process(os.getpid())
+        if process is None:
+            return
+        kernel, handle, process_start = process
+        kernel.CloseHandle(handle)
+        handoff_deadline = time.monotonic() + PORTABLE_OWNER_TIMEOUT
+        while True:
+            if not worker_path().exists():
+                return
+            try:
+                record = load_record(worker_path(), "fm-telegram-worker.v1")
+                recorded_pid = int(record.get("pid", 0))
+            except (TelegramError, TypeError, ValueError, OverflowError):
+                return
+            if recorded_pid == 0:
+                if time.monotonic() >= handoff_deadline:
+                    return
+                time.sleep(0.05)
+                continue
+            if recorded_pid != os.getpid() or str(record.get("process_start", "")) != process_start:
+                return
+            break
     while worker_path().exists():
+        if os.name == "nt":
+            try:
+                record = load_record(worker_path(), "fm-telegram-worker.v1")
+                if int(record.get("pid", 0)) != os.getpid() or str(record.get("process_start", "")) != process_start:
+                    return
+            except (TelegramError, TypeError, ValueError, OverflowError):
+                return
         try:
             poll(False)
         except TelegramError:
@@ -2187,7 +2278,7 @@ def portable_enable() -> str:
             record = load_record(path, "fm-telegram-worker.v1")
             try:
                 pid = int(record["pid"])
-            except (ValueError, KeyError):
+            except (TypeError, ValueError, KeyError, OverflowError):
                 path.unlink(missing_ok=True)
             else:
                 if pid <= 0:
@@ -2253,24 +2344,32 @@ def enable() -> str:
     adapter = root() / "bin" / "fm-procevent-telegram.sh"
     runner = root() / "bin" / "fm-procevent.sh"
     try:
-        proc = subprocess.run([str(runner), "register", "telegram", "telegram-bot", "--", str(adapter), "poll"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, capture_output=True, text=True, timeout=20, check=False)
+        proc = subprocess.run([str(runner), "register", "telegram", "telegram-bot", "--", str(adapter), "poll"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, capture_output=True, text=False, timeout=20, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise TelegramError("Telegram polling registration failed") from exc
     if proc.returncode:
         raise TelegramError("Telegram polling registration failed")
-    return proc.stdout.strip() or "registered Telegram polling"
+    try:
+        output = proc.stdout.decode("utf-8").strip()
+    except (AttributeError, UnicodeDecodeError) as exc:
+        raise TelegramError("Telegram polling registration returned malformed Unicode") from exc
+    return output or "registered Telegram polling"
 
 
 def disable() -> str:
     if os.name == "nt":
         return portable_disable()
     try:
-        proc = subprocess.run([str(root() / "bin" / "fm-procevent.sh"), "retire", "telegram-bot"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, capture_output=True, text=True, timeout=20, check=False)
+        proc = subprocess.run([str(root() / "bin" / "fm-procevent.sh"), "retire", "telegram-bot"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, capture_output=True, text=False, timeout=20, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise TelegramError("Telegram polling retirement failed") from exc
     if proc.returncode:
         raise TelegramError("Telegram polling retirement failed")
-    return proc.stdout.strip() or "retired Telegram polling"
+    try:
+        output = proc.stdout.decode("utf-8").strip()
+    except (AttributeError, UnicodeDecodeError) as exc:
+        raise TelegramError("Telegram polling retirement returned malformed Unicode") from exc
+    return output or "retired Telegram polling"
 
 
 def main(argv: list[str]) -> int:
@@ -2293,6 +2392,10 @@ def main(argv: list[str]) -> int:
     sub.add_parser("enable")
     sub.add_parser("disable")
     sub.add_parser("worker")
+    ack_parser = sub.add_parser("ack")
+    ack_parser.add_argument("--state", required=True)
+    ack_parser.add_argument("--task", required=True)
+    ack_parser.add_argument("--record", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "setup":
@@ -2310,6 +2413,8 @@ def main(argv: list[str]) -> int:
             print(disable())
         elif args.command == "worker":
             worker_loop()
+        elif args.command == "ack":
+            portable_task_ack(Path(args.state), args.task, args.record)
         return 0
     except TelegramError as exc:
         print(f"fm-telegram: {exc}", file=sys.stderr)

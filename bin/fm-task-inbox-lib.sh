@@ -243,6 +243,29 @@ fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
   printf '%s' "$rec"
 }
 
+fm_task_inbox_ack() {  # <state-dir> <task-id> <record-name>
+  local state=$1 task=$2 record=$3 dir lock status=0
+  case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$record" in ''|*.msg) ;; *) return 1 ;; esac
+  case "${record%.msg}" in ''|*[!0-9]*) return 1 ;; esac
+  dir=$(fm_task_inbox_dir "$state" "$task")
+  lock="$dir/.seq.lock"
+  fm_task_inbox_lock_acquire "$lock" || return 1
+  if [ -L "$dir/handled/$record" ] || { [ -e "$dir/handled/$record" ] && [ ! -f "$dir/handled/$record" ]; }; then
+    status=1
+  elif [ -f "$dir/handled/$record" ]; then
+    status=0
+  elif [ -L "$dir/$record" ] || { [ -e "$dir/$record" ] && [ ! -f "$dir/$record" ]; }; then
+    status=1
+  elif [ -f "$dir/$record" ]; then
+    mv "$dir/$record" "$dir/handled/$record" || status=1
+  else
+    status=1
+  fi
+  fm_lock_release "$lock"
+  return "$status"
+}
+
 # Durably enqueue one steer at most once: without an idempotency key, an
 # identical body is reused; with a key, only that key is reused. In both cases
 # an unhandled or already acknowledged record is returned instead of creating a
