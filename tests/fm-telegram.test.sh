@@ -224,31 +224,42 @@ if grep -F '"nonce"' "$home/state/telegram/pairing.json" >/dev/null 2>&1; then
   fail 'pairing state stored the raw nonce'
 fi
 
-pair=$(FM_HOME="$home" "$TELEGRAM" pair --json --nonce "$nonce" --user-id 7 --chat-id 8)
-assert_contains "$pair" '"paired": true' 'pairing accepts fresh nonce'
 set +e
-replay=$(FM_HOME="$home" "$TELEGRAM" pair --json --nonce "$nonce" --user-id 7 --chat-id 8 2>&1)
-replay_code=$?
+direct_pair=$(FM_HOME="$home" "$TELEGRAM" pair --json --nonce "$nonce" --user-id 7 --chat-id 8 2>&1)
+direct_pair_code=$?
 set -e
-expect_code 1 "$replay_code" 'pairing nonce cannot be reused'
-assert_contains "$replay" 'expired or invalid' 'replayed nonce is rejected'
-pass 'pairing is one-time and rotates nonce'
+expect_code 2 "$direct_pair_code" 'direct pairing bypass is unavailable'
+
+cat > "$api/updates" <<JSON
+{"ok":true,"result":[{"update_id":1,"message":{"message_id":1,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/start $nonce"}}]}
+JSON
+pair=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" "$TELEGRAM" poll --once --json)
+assert_contains "$pair" '"processed": 1' 'QR pairing accepts a fresh nonce'
+
+cat > "$api/updates" <<JSON
+{"ok":true,"result":[{"update_id":2,"message":{"message_id":2,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/start $nonce"}}]}
+JSON
+replay=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" "$TELEGRAM" poll --once --json)
+assert_contains "$replay" '"rejected": 1' 'replayed nonce is rejected after pairing'
+pass 'QR pairing is one-time and rotates nonce'
 
 expired_nonce='expired-nonce-123456'
 expired_hash=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$expired_nonce")
 cat > "$home/state/telegram/pairing.json" <<JSON
 {"schema":"fm-telegram-pairing.v1","bot_username":"firstmate_test_bot","nonce_hash":"$expired_hash","nonce_expires_at":1,"paired_user_id":null,"paired_chat_id":null,"paired_at":null}
 JSON
-set +e
-expired=$(FM_HOME="$home" "$TELEGRAM" pair --json --nonce "$expired_nonce" --user-id 7 --chat-id 8 2>&1)
-expired_code=$?
-malformed=$(FM_HOME="$home" "$TELEGRAM" pair --json --nonce 'bad nonce' --user-id 7 --chat-id 8 2>&1)
-malformed_code=$?
-set -e
-expect_code 1 "$expired_code" 'expired pairing nonce is rejected'
-assert_contains "$expired" 'expired or invalid' 'expired nonce rejection is explicit'
-expect_code 1 "$malformed_code" 'malformed pairing nonce is rejected'
-assert_contains "$malformed" 'nonce is malformed' 'malformed nonce rejection is explicit'
+cat > "$api/updates" <<JSON
+{"ok":true,"result":[{"update_id":3,"message":{"message_id":3,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/start $expired_nonce"}}]}
+JSON
+expired=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" "$TELEGRAM" poll --once --json)
+assert_contains "$expired" '"rejected": 1' 'expired pairing nonce is rejected'
+assert_contains "$(cat "$home/state/telegram/inbox/3.json")" 'expired or invalid' 'expired nonce rejection is explicit'
+cat > "$api/updates" <<'JSON'
+{"ok":true,"result":[{"update_id":4,"message":{"message_id":4,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/start bad nonce"}}]}
+JSON
+malformed=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" "$TELEGRAM" poll --once --json)
+assert_contains "$malformed" '"rejected": 1' 'malformed pairing nonce is rejected'
+assert_contains "$(cat "$home/state/telegram/inbox/4.json")" 'nonce is malformed' 'malformed nonce rejection is explicit'
 assert_contains "$(cat "$home/state/telegram/pairing.json")" '"paired_user_id":null' 'rejected nonces do not bind identity'
 pass 'expired and malformed pairing nonces are rejected'
 
@@ -356,6 +367,7 @@ assert_contains "$(cat "$api/requests")" '"timeout":30' 'poll uses Telegram long
 assert_present "$home/state/telegram/offset" 'poll advances durable offset'
 assert_present "$home/state/telegram/inbound/42.json" 'poll stores inbound update'
 assert_present "$home/state/telegram/outbound/" 'poll stores outbound response directory'
+assert_not_contains "$(cat "$home/state/telegram/outbound/42.json")" "$home" 'Telegram note response omits the local home path'
 set +e
 replay=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
   "$TELEGRAM" poll --once --json 2>&1)

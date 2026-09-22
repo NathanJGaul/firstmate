@@ -32,6 +32,12 @@ MAX_MESSAGE_CHARS = 4096
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_TELEGRAM_ID = 2**63 - 1
 MAX_TELEGRAM_OFFSET = MAX_TELEGRAM_ID + 1
+PORTABLE_MAX_STATUS_BYTES = 256 * 1024
+PORTABLE_MAX_METADATA_BYTES = 64 * 1024
+PORTABLE_MAX_RECORD_BYTES = 16 * 1024
+PORTABLE_MAX_RECORDS = 4096
+PORTABLE_MAX_TASKS = 256
+PORTABLE_OWNER_TIMEOUT = 20
 DEFAULT_POLL_TIMEOUT = 30
 MAX_POLL_TIMEOUT = 50
 DEFAULT_PAIRING_TTL = 600
@@ -42,8 +48,7 @@ WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 NOTE_ID_RE = re.compile(r"^[0-9]+-[A-Za-z0-9._-]+$")
 FROMFIRST_MARK = "[fm-from-firstmate]\u2063"
-
-
+_PORTABLE_DEADLINE: float | None = None
 
 
 class TelegramError(Exception):
@@ -570,12 +575,6 @@ def _pair_hash(candidate_hash: str, user_id: str, chat_id: str, update_id: str |
         portable_lock_release(lock, token)
 
 
-def pair(nonce: str, user_id: str, chat_id: str) -> dict[str, Any]:
-    return _pair_hash(nonce_hash(nonce), user_id, chat_id)
-
-
-
-
 def validate_text(text: str, label: str = "text") -> str:
     if not isinstance(text, str) or not text or not text.strip() or len(text.encode("utf-8")) > MAX_COMMAND_BYTES:
         raise TelegramError(f"{label} is empty or too large")
@@ -612,18 +611,50 @@ def operational_state_dir() -> Path:
     return Path(os.environ.get("FM_STATE_OVERRIDE", home() / "state"))
 
 
+def _portable_check_deadline() -> None:
+    if _PORTABLE_DEADLINE is not None and time.monotonic() >= _PORTABLE_DEADLINE:
+        raise TelegramError("Firstmate owner call timed out")
+
+
 def read_key_value(path: Path) -> dict[str, str]:
+    _portable_check_deadline()
     if path.is_symlink() or not path.is_file():
         return {}
-    values: dict[str, str] = {}
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "=" in line:
-                key, value = line.split("=", 1)
-                values[key] = value
+        if path.stat().st_size > PORTABLE_MAX_METADATA_BYTES:
+            return {}
+        with path.open("rb") as stream:
+            raw = stream.read(PORTABLE_MAX_METADATA_BYTES + 1)
     except OSError:
         return {}
+    _portable_check_deadline()
+    if len(raw) > PORTABLE_MAX_METADATA_BYTES:
+        return {}
+    values: dict[str, str] = {}
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key] = value
     return values
+
+
+def _portable_read_status(path: Path) -> list[str]:
+    _portable_check_deadline()
+    if path.is_symlink() or not path.is_file():
+        return []
+    try:
+        if path.stat().st_size > PORTABLE_MAX_STATUS_BYTES:
+            raise TelegramError("portable status log is too large")
+        with path.open("rb") as stream:
+            raw = stream.read(PORTABLE_MAX_STATUS_BYTES + 1)
+    except TelegramError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise TelegramError("portable status log could not be read") from exc
+    _portable_check_deadline()
+    if len(raw) > PORTABLE_MAX_STATUS_BYTES:
+        raise TelegramError("portable status log is too large")
+    return raw.decode("utf-8", errors="replace").splitlines()
 
 
 def _portable_status_unstamped(line: str) -> str:
@@ -638,48 +669,36 @@ def _portable_status_unstamped(line: str) -> str:
     return kept + rest
 
 
-def _portable_decisions(status_path: Path, task_id: str, kind: str) -> list[dict[str, str]]:
-    if status_path.is_symlink() or not status_path.is_file():
-        return []
-    open_decisions: dict[str, dict[str, str]] = {}
-    try:
-        lines = status_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-    for line in lines:
-        unstamped = _portable_status_unstamped(line)
-        head, separator, note = unstamped.partition(":")
-        head = head.strip()
-        verb = head.split("[", 1)[0].strip()
-        words = verb.split()
-        if len(words) > 1 and all(re.fullmatch(r"corr=[0-9A-Fa-f]{16}", word) for word in words[1:]):
-            verb = words[0]
-        if verb in ("done", "failed") and separator and kind in ("ship", "scout"):
-            open_decisions.clear()
-            continue
-        if verb not in ("needs-decision", "blocked", "resolved", "captain-held"):
-            continue
-        before_key = re.search(r"\[key=([^\]]+)\]", head)
-        key = before_key.group(1) if before_key else ""
-        if not key and separator:
-            note_head = note.lstrip()
-            note_key = re.match(r"\[key=([^\]]+)\]", note_head)
-            if note_key:
-                key = note_key.group(1)
-                note = note_head[note_key.end():].lstrip()
-        if not key:
-            key = "default"
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", key):
-            continue
-        note = note.strip() if separator else ""
-        if key.startswith("pending-reply-") and not re.match(r"pending-reply-[^:]+:", note):
-            continue
-        if verb in ("resolved", "captain-held"):
-            open_decisions.pop(key, None)
-        else:
-            open_decisions.pop(key, None)
-            open_decisions[key] = {"id": task_id, "key": key, "verb": verb, "summary": note}
-    return list(open_decisions.values())
+def _portable_status_verb(unstamped: str) -> str:
+    head = unstamped.partition(":")[0].strip()
+    verb = head.split("[", 1)[0].strip()
+    words = verb.split()
+    if not words or not all(re.fullmatch(r"corr=[0-9A-Fa-f]{16}", word) for word in words[1:]):
+        return ""
+    return words[0]
+
+
+def _portable_status_note(unstamped: str) -> str:
+    head, separator, note = unstamped.partition(":")
+    if not separator:
+        return unstamped.strip()
+    note = note.strip()
+    if "[key=" not in head:
+        match = re.match(r"\[key=([^\]]+)\]\s*(.*)", note)
+        if match and re.fullmatch(r"[A-Za-z0-9._-]+", match.group(1)):
+            note = match.group(2)
+    return note
+
+
+def _portable_status_key(unstamped: str) -> str | None:
+    head, separator, note = unstamped.partition(":")
+    match = re.search(r"\[key=([^\]]+)\]", head)
+    if match is None and separator:
+        match = re.match(r"\s*\[key=([^\]]+)\]", note)
+    if match is None:
+        return "default"
+    key = match.group(1)
+    return key if re.fullmatch(r"[A-Za-z0-9._-]+", key) else None
 
 
 PORTABLE_STATE_MAP = {
@@ -694,36 +713,64 @@ PORTABLE_STATE_MAP = {
 }
 
 
-def _portable_current_state(lines: list[str]) -> tuple[str, str]:
-    for line in reversed(lines):
-        if not line.strip():
+def _portable_status_fold(lines: list[str], task_id: str, kind: str) -> tuple[list[dict[str, str]], tuple[str, str] | None]:
+    open_decisions: list[dict[str, str]] = []
+    latest: tuple[str, str] | None = None
+    for line in lines:
+        _portable_check_deadline()
+        unstamped = _portable_status_unstamped(line)
+        if ":" not in unstamped and re.search(r"\[key=[^\]]+\]", unstamped) is None:
             continue
-        clean = re.sub(r"\s*\[at=[^\]]+\]", "", line).strip()
-        head, separator, note = clean.partition(":")
-        words = head.strip().split()
-        if not words:
+        verb = _portable_status_verb(unstamped)
+        if verb not in ("working", "needs-decision", "blocked", "paused", "done", "failed", "resolved", "captain-held"):
             continue
-        verb = words[0]
-        if verb not in PORTABLE_STATE_MAP:
+        note = _portable_status_note(unstamped)
+        latest = (verb, note)
+        if verb in ("done", "failed") and ":" in unstamped and kind in ("ship", "scout"):
+            open_decisions.clear()
             continue
-        state = PORTABLE_STATE_MAP[verb]
-        if state == "unknown":
-            return state, ""
-        if all(re.fullmatch(r"corr=[0-9A-Fa-f]{16}", word) for word in words[1:]):
-            note = note.strip() if separator else ""
-        elif separator:
-            note = note.strip()
-        else:
-            note = ""
-        return state, note[:256]
-    return "unknown", ""
+        if verb not in ("needs-decision", "blocked", "resolved", "captain-held"):
+            continue
+        key = _portable_status_key(unstamped)
+        if key is None:
+            continue
+        if key.startswith("pending-reply-") and not re.match(r"pending-reply-[^:]+:", note):
+            continue
+        open_decisions = [entry for entry in open_decisions if entry["key"] != key]
+        if verb in ("needs-decision", "blocked"):
+            open_decisions.append({"id": task_id, "key": key, "verb": verb, "summary": note})
+    return open_decisions, latest
+
+
+def _portable_state_projection(open_decisions: list[dict[str, str]], latest: tuple[str, str] | None) -> tuple[str, str]:
+    if open_decisions:
+        entry = open_decisions[-1]
+        return PORTABLE_STATE_MAP[entry["verb"]], entry["summary"][:256]
+    if latest is None:
+        return "unknown", ""
+    verb, note = latest
+    return PORTABLE_STATE_MAP.get(verb, "unknown"), note[:256] if verb in PORTABLE_STATE_MAP and PORTABLE_STATE_MAP[verb] != "unknown" else ""
+
+
+def _portable_decisions(lines: list[str], task_id: str, kind: str) -> list[dict[str, str]]:
+    return _portable_status_fold(lines, task_id, kind)[0]
+
+
+def _portable_current_state(lines: list[str], task_id: str = "", kind: str = "ship") -> tuple[str, str]:
+    decisions, latest = _portable_status_fold(lines, task_id, kind)
+    return _portable_state_projection(decisions, latest)
 
 
 def portable_snapshot(all_decisions: bool) -> str:
+    _portable_check_deadline()
     tasks: list[dict[str, Any]] = []
     decisions: list[dict[str, str]] = []
     state = operational_state_dir()
-    for meta in sorted(state.glob("*.meta")):
+    meta_paths = sorted(state.glob("*.meta"))
+    if len(meta_paths) > PORTABLE_MAX_TASKS:
+        raise TelegramError("portable status snapshot has too many tasks")
+    for meta in meta_paths:
+        _portable_check_deadline()
         if meta.is_symlink() or not meta.is_file():
             continue
         values = read_key_value(meta)
@@ -736,11 +783,9 @@ def portable_snapshot(all_decisions: bool) -> str:
         backend = values.get("backend", "tmux")
         target = values.get("remote_target") if values.get("remote_host") else values.get("window", "")
         status_path = state / f"{task_id}.status"
-        try:
-            status_lines = status_path.read_text(encoding="utf-8", errors="replace").splitlines() if status_path.is_file() and not status_path.is_symlink() else []
-        except OSError:
-            status_lines = []
-        current_state, doing = _portable_current_state(status_lines)
+        status_lines = _portable_read_status(status_path)
+        task_decisions, latest = _portable_status_fold(status_lines, task_id, kind)
+        current_state, doing = _portable_state_projection(task_decisions, latest)
         row: dict[str, Any] = {
             "id": task_id,
             "kind": kind,
@@ -750,14 +795,13 @@ def portable_snapshot(all_decisions: bool) -> str:
             "name": str(values.get("title") or task_id)[:128],
             "doing": doing,
         }
-        task_decisions = _portable_decisions(status_path, task_id, kind)
         decisions.extend(task_decisions)
         tasks.append(row)
     visible_decisions = decisions if all_decisions else decisions[:20]
     omitted = []
     if not all_decisions and len(decisions) > len(visible_decisions):
         omitted.append({"surface": f"decisions_open showing {len(visible_decisions)} of {len(decisions)}", "reveal": "--all-decisions"})
-    in_flight = [task for task in tasks if task["state"] == "working"]
+    in_flight = [task for task in tasks if task["state"] in ("working", "parked", "blocked", "paused")]
     result: dict[str, Any] = {
         "schema": "fm-bearings.v1",
         "generated": iso_now(),
@@ -775,6 +819,17 @@ def portable_snapshot(all_decisions: bool) -> str:
 def _portable_pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel = ctypes.windll.kernel32
+            handle = kernel.OpenProcess(0x1000, False, pid)
+            if handle:
+                kernel.CloseHandle(handle)
+                return True
+            return kernel.GetLastError() == 5
+        except (AttributeError, OSError, OverflowError):
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -959,12 +1014,22 @@ def _portable_atomic_claim(path: Path, data: bytes) -> bool:
 
 
 def _portable_reservation_id(path: Path) -> str | None:
+    _portable_check_deadline()
     if path.is_symlink() or not path.is_file():
         raise TelegramError("portable inbox request is unsafe")
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        if path.stat().st_size > PORTABLE_MAX_RECORD_BYTES:
+            raise TelegramError("portable inbox request is too large")
+        with path.open("rb") as stream:
+            raw = stream.read(PORTABLE_MAX_RECORD_BYTES + 1)
+    except TelegramError:
+        raise
     except (OSError, UnicodeDecodeError) as exc:
         raise TelegramError("portable inbox request is unreadable") from exc
+    _portable_check_deadline()
+    if len(raw) > PORTABLE_MAX_RECORD_BYTES:
+        raise TelegramError("portable inbox request is too large")
+    lines = raw.decode("utf-8", errors="replace").splitlines()
     note_id = lines[0].strip() if lines else ""
     if not NOTE_ID_RE.fullmatch(note_id):
         if not lines or not "".join(lines).strip():
@@ -975,6 +1040,7 @@ def _portable_reservation_id(path: Path) -> str | None:
 
 
 def portable_note(body: str, request_id: str) -> str:
+    _portable_check_deadline()
     body = validate_text(body, "note")
     if not REQUEST_ID_RE.fullmatch(request_id):
         raise TelegramError("portable inbox request ID is malformed")
@@ -999,7 +1065,7 @@ def portable_note(body: str, request_id: str) -> str:
     if handled_path.is_symlink() or (handled_path.exists() and not handled_path.is_file()):
         raise TelegramError("portable handled inbox note is unsafe")
     if handled_path.is_file():
-        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": True, "path": str(handled_path)}, separators=(",", ":"))
+        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": True}, separators=(",", ":"))
     if note_path.is_symlink() or (note_path.exists() and not note_path.is_file()):
         raise TelegramError("portable inbox note is unsafe")
     if not note_path.exists():
@@ -1008,23 +1074,37 @@ def portable_note(body: str, request_id: str) -> str:
     try:
         portable_wake(note_id, body)
     except TelegramError as exc:
-        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": False, "path": str(note_path), "error": bounded(str(exc))}, separators=(",", ":"))
-    return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": True, "acknowledged": False, "path": str(note_path)}, separators=(",", ":"))
+        return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": False, "acknowledged": False, "error": bounded(str(exc))}, separators=(",", ":"))
+    return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": True, "acknowledged": False}, separators=(",", ":"))
+
+
+def _portable_record_text(path: Path) -> str | None:
+    _portable_check_deadline()
+    try:
+        if path.stat().st_size > PORTABLE_MAX_RECORD_BYTES:
+            raise TelegramError("portable task inbox record is too large")
+        with path.open("rb") as stream:
+            raw = stream.read(PORTABLE_MAX_RECORD_BYTES + 1)
+    except TelegramError:
+        raise
+    except (OSError, UnicodeDecodeError):
+        return None
+    _portable_check_deadline()
+    if len(raw) > PORTABLE_MAX_RECORD_BYTES:
+        raise TelegramError("portable task inbox record is too large")
+    return raw.decode("utf-8", errors="replace")
 
 
 def _portable_record_body(path: Path) -> str | None:
-    try:
-        content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-    return content.split("\n--\n", 1)[1] if "\n--\n" in content else None
+    content = _portable_record_text(path)
+    return content.split("\n--\n", 1)[1] if content is not None and "\n--\n" in content else None
 
 
 def _portable_record_field(path: Path, field: str) -> str | None:
-    try:
-        header = path.read_text(encoding="utf-8").split("\n--\n", 1)[0]
-    except (OSError, UnicodeDecodeError):
+    content = _portable_record_text(path)
+    if content is None:
         return None
+    header = content.split("\n--\n", 1)[0]
     prefix = f"{field}="
     for line in header.splitlines():
         if line.startswith(prefix):
@@ -1062,52 +1142,73 @@ def portable_target_is_remote(target: str, state: Path) -> bool:
 
 
 def portable_send(target: str, body: str, delivery_id: str, fire_and_forget: bool) -> str:
+    _portable_check_deadline()
     body = validate_steer_text(body)
     if not WORKER_RE.fullmatch(target) or not re.fullmatch(r"[a-f0-9]{16}", delivery_id):
         raise TelegramError("Firstmate owner script rejected request")
     state = operational_state_dir()
     task_id, _, values = portable_task_meta(target, state)
-    if values.get("remote_host"):
-        raise TelegramError("Windows remote worker status and steer are unsupported; run Telegram on the remote Firstmate home")
-    is_secondmate = (values.get("kind") or "ship") == "secondmate"
-    if fire_and_forget != is_secondmate:
-        raise TelegramError("Firstmate owner script rejected request")
-    inbox = state / f"{task_id}.inbox"
-    handled = inbox / "handled"
-    ensure_private_dir(inbox)
-    ensure_private_dir(handled)
-    wire_body = f"{FROMFIRST_MARK}delivery={delivery_id} {body}" if fire_and_forget else body
-    lock = inbox / ".seq.lock"
-    token = portable_lock_acquire(lock)
+    meta_identity = {key: values.get(key, "") for key in ("id", "spawn_gen", "kind", "backend", "window", "remote_host", "remote_target")}
+    meta_lock = state / f".meta-{task_id}.lock"
+    meta_token = portable_lock_acquire(meta_lock)
+    inbox_token: str | None = None
     record_path: Path | None = None
     try:
-        records = list(inbox.glob("*.msg")) + list(handled.glob("*.msg"))
-        for record in records:
-            if record.is_symlink() or not record.is_file():
-                continue
-            existing_key = _portable_record_field(record, "idempotency-key")
-            legacy_match = re.match(rf"^{re.escape(FROMFIRST_MARK)}delivery=([a-f0-9]{{16}}) (.*)$", _portable_record_body(record) or "", re.DOTALL)
-            if existing_key != delivery_id and not (existing_key is None and legacy_match and legacy_match.group(1) == delivery_id):
-                continue
-            existing = _portable_record_body(record)
-            if existing != wire_body or (_portable_record_field(record, "delivery") == "fire-and-forget") != fire_and_forget:
-                raise TelegramError("Firstmate delivery ID was reused for different text")
-            record_path = record
-            break
-        if record_path is None:
-            numbers = []
+        current_task_id, _, current_values = portable_task_meta(target, state)
+        current_identity = {key: current_values.get(key, "") for key in meta_identity}
+        if current_task_id != task_id or current_identity != meta_identity:
+            raise TelegramError("Firstmate worker changed during steering")
+        if current_values.get("remote_host"):
+            raise TelegramError("Windows remote worker status and steer are unsupported; run Telegram on the remote Firstmate home")
+        is_secondmate = (current_values.get("kind") or "ship") == "secondmate"
+        if fire_and_forget != is_secondmate:
+            raise TelegramError("Firstmate owner script rejected request")
+        inbox = state / f"{task_id}.inbox"
+        handled = inbox / "handled"
+        ensure_private_dir(inbox)
+        ensure_private_dir(handled)
+        wire_body = f"{FROMFIRST_MARK}delivery={delivery_id} {body}" if fire_and_forget else body
+        lock = inbox / ".seq.lock"
+        inbox_token = portable_lock_acquire(lock)
+        try:
+            records = list(inbox.glob("*.msg")) + list(handled.glob("*.msg"))
+            if len(records) > PORTABLE_MAX_RECORDS:
+                raise TelegramError("portable task inbox has too many records")
             for record in records:
-                try:
-                    numbers.append(int(record.stem))
-                except ValueError:
-                    pass
-            sequence = f"{max(numbers, default=0) + 1:03d}"
-            delivery_line = "delivery=fire-and-forget\n" if fire_and_forget else ""
-            record_path = inbox / f"{sequence}.msg"
-            record = f"schema=fm-task-inbox.v1\nat={iso_now()}\n{delivery_line}idempotency-key={delivery_id}\n--\n{wire_body}"
-            atomic_write(record_path, record.encode("utf-8"))
+                _portable_check_deadline()
+                if record.is_symlink() or not record.is_file():
+                    continue
+                existing_key = _portable_record_field(record, "idempotency-key")
+                legacy_match = re.match(rf"^{re.escape(FROMFIRST_MARK)}delivery=([a-f0-9]{{16}}) (.*)$", _portable_record_body(record) or "", re.DOTALL)
+                if existing_key != delivery_id and not (existing_key is None and legacy_match and legacy_match.group(1) == delivery_id):
+                    continue
+                existing = _portable_record_body(record)
+                if existing != wire_body or (_portable_record_field(record, "delivery") == "fire-and-forget") != fire_and_forget:
+                    raise TelegramError("Firstmate delivery ID was reused for different text")
+                record_path = record
+                break
+            if record_path is None:
+                numbers = []
+                for record in records:
+                    _portable_check_deadline()
+                    try:
+                        numbers.append(int(record.stem))
+                    except ValueError:
+                        pass
+                sequence = f"{max(numbers, default=0) + 1:03d}"
+                delivery_line = "delivery=fire-and-forget\n" if fire_and_forget else ""
+                record_path = inbox / f"{sequence}.msg"
+                record = f"schema=fm-task-inbox.v1\nat={iso_now()}\n{delivery_line}idempotency-key={delivery_id}\n--\n{wire_body}"
+                atomic_write(record_path, record.encode("utf-8"))
+        finally:
+            portable_lock_release(lock, inbox_token)
+            inbox_token = None
     finally:
-        portable_lock_release(lock, token)
+        if inbox_token is not None:
+            portable_lock_release(inbox, inbox_token)
+        portable_lock_release(meta_lock, meta_token)
+    if record_path is None:
+        raise TelegramError("Firstmate owner script rejected request")
     if record_path.parent.name == "handled":
         return f"steer already handled for {target} with delivery {delivery_id}"
     try:
@@ -1118,27 +1219,33 @@ def portable_send(target: str, body: str, delivery_id: str, fire_and_forget: boo
 
 
 def portable_owner(argv: list[str], stdin: str, env_extra: dict[str, str] | None = None) -> str:
-    command = Path(argv[0]).name
-    owner_env = env_extra or {}
-    if command == "fm-bearings-snapshot.sh":
-        return portable_snapshot("--all-decisions" in argv)
-    if command == "fm-inbox.sh" and len(argv) >= 4 and argv[1] == "note":
-        request_index = argv.index("--request-id") + 1
-        return portable_note(validate_text(stdin, "note"), argv[request_index])
-    if command == "fm-send.sh" and len(argv) >= 5 and "--fire-and-forget" in argv:
-        flag = argv.index("--fire-and-forget")
-        if flag + 2 >= len(argv) or portable_target_kind(argv[1], operational_state_dir()) != "secondmate":
-            raise TelegramError("Firstmate owner script rejected request")
-        delivery_id = argv[flag + 1]
-        body = validate_text(" ".join(argv[flag + 2:]), "steer")
-        return portable_send(argv[1], body, delivery_id, True)
-    if command == "fm-send.sh" and len(argv) >= 3 and "--fire-and-forget" not in argv:
-        delivery_id = owner_env.get("FM_TELEGRAM_DELIVERY_ID", os.environ.get("FM_TELEGRAM_DELIVERY_ID", ""))
-        if portable_target_kind(argv[1], operational_state_dir()) == "secondmate":
-            raise TelegramError("Firstmate owner script rejected request")
-        body = validate_text(" ".join(argv[2:]), "steer")
-        return portable_send(argv[1], body, delivery_id, False)
-    raise TelegramError("Firstmate owner script unavailable on this platform")
+    global _PORTABLE_DEADLINE
+    previous_deadline = _PORTABLE_DEADLINE
+    _PORTABLE_DEADLINE = time.monotonic() + PORTABLE_OWNER_TIMEOUT
+    try:
+        command = Path(argv[0]).name
+        owner_env = env_extra or {}
+        if command == "fm-bearings-snapshot.sh":
+            return portable_snapshot("--all-decisions" in argv)
+        if command == "fm-inbox.sh" and len(argv) >= 4 and argv[1] == "note":
+            request_index = argv.index("--request-id") + 1
+            return portable_note(validate_text(stdin, "note"), argv[request_index])
+        if command == "fm-send.sh" and len(argv) >= 5 and "--fire-and-forget" in argv:
+            flag = argv.index("--fire-and-forget")
+            if flag + 2 >= len(argv) or portable_target_kind(argv[1], operational_state_dir()) != "secondmate":
+                raise TelegramError("Firstmate owner script rejected request")
+            delivery_id = argv[flag + 1]
+            body = validate_text(" ".join(argv[flag + 2:]), "steer")
+            return portable_send(argv[1], body, delivery_id, True)
+        if command == "fm-send.sh" and len(argv) >= 3 and "--fire-and-forget" not in argv:
+            delivery_id = owner_env.get("FM_TELEGRAM_DELIVERY_ID", os.environ.get("FM_TELEGRAM_DELIVERY_ID", ""))
+            if portable_target_kind(argv[1], operational_state_dir()) == "secondmate":
+                raise TelegramError("Firstmate owner script rejected request")
+            body = validate_text(" ".join(argv[2:]), "steer")
+            return portable_send(argv[1], body, delivery_id, False)
+        raise TelegramError("Firstmate owner script unavailable on this platform")
+    finally:
+        _PORTABLE_DEADLINE = previous_deadline
 
 
 def _durable_note_owner_result(output: str) -> str | None:
@@ -1175,8 +1282,19 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
     return output
 
 
+def _telegram_owner_output(output: str) -> str:
+    try:
+        value = json.loads(output)
+    except (TypeError, ValueError):
+        return output
+    if not isinstance(value, dict) or value.get("schema") != "fm-inbox-note.v1":
+        return output
+    value.pop("path", None)
+    return json.dumps(value, separators=(",", ":"))
+
+
 def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
-    return telegram_response(owner(argv, stdin, env_extra))
+    return telegram_response(_telegram_owner_output(owner(argv, stdin, env_extra)))
 
 
 def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
@@ -1578,13 +1696,10 @@ def portable_enable() -> str:
             else:
                 if pid <= 0:
                     path.unlink(missing_ok=True)
+                elif _portable_pid_alive(pid):
+                    return "Telegram polling already enabled"
                 else:
-                    try:
-                        os.kill(pid, 0)
-                    except OSError:
-                        path.unlink(missing_ok=True)
-                    else:
-                        return "Telegram polling already enabled"
+                    path.unlink(missing_ok=True)
         ensure_private_dir(path.parent)
         record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "at": iso_now()})
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -1654,11 +1769,6 @@ def main(argv: list[str]) -> int:
     setup_parser = sub.add_parser("setup")
     setup_parser.add_argument("--token", required=True)
     setup_parser.add_argument("--json", action="store_true")
-    pair_parser = sub.add_parser("pair")
-    pair_parser.add_argument("--nonce", required=True)
-    pair_parser.add_argument("--user-id", required=True)
-    pair_parser.add_argument("--chat-id", required=True)
-    pair_parser.add_argument("--json", action="store_true")
     dispatch_parser = sub.add_parser("dispatch")
     dispatch_parser.add_argument("--user-id", required=True)
     dispatch_parser.add_argument("--chat-id", required=True)
@@ -1678,9 +1788,6 @@ def main(argv: list[str]) -> int:
             result = setup(args.token, args.json or args.global_json)
             if args.json or args.global_json:
                 print(json.dumps(result, sort_keys=True))
-        elif args.command == "pair":
-            result = pair(args.nonce, args.user_id, args.chat_id)
-            print(json.dumps(result, sort_keys=True) if args.json or args.global_json else "paired")
         elif args.command == "dispatch":
             result = dispatch(args.text, args.user_id, args.chat_id, args.update_id)
             print(json.dumps({"schema": "fm-telegram-dispatch.v1", "text": bounded(result)}, sort_keys=True) if args.json or args.global_json else result)
