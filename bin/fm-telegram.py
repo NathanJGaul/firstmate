@@ -176,11 +176,28 @@ def read_text(path: Path) -> str:
 
 
 
+def verify_token_path(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise TelegramError(f"cannot inspect Telegram bot token: {path}") from exc
+    if path.is_symlink() or not path.is_file():
+        raise TelegramError(f"unsafe Telegram bot token file: {path}")
+    if os.name == "nt":
+        _windows_private_path(path)
+        return
+    if info.st_mode & 0o077:
+        raise TelegramError("Telegram bot token file is not private")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise TelegramError("Telegram bot token file is not owned by the current user")
+
+
 def token_value() -> str:
     value = os.environ.get("FM_TELEGRAM_BOT_TOKEN", "")
     if not value:
         path = config_dir() / TOKEN_NAME
-        if path.exists():
+        if path.exists() or path.is_symlink():
+            verify_token_path(path)
             value = read_text(path)
     if not TOKEN_RE.fullmatch(value):
         raise TelegramError(f"invalid Telegram bot token; write one line into {config_dir() / TOKEN_NAME}")
@@ -188,12 +205,28 @@ def token_value() -> str:
 
 
 def api_base() -> str:
-    return os.environ.get("FM_TELEGRAM_API_BASE", "https://api.telegram.org/bot").rstrip("/")
+    value = os.environ.get("FM_TELEGRAM_API_BASE", "https://api.telegram.org/bot").rstrip("/")
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+        parsed.port
+    except ValueError as exc:
+        raise TelegramError("Telegram API base URL is malformed") from exc
+    if parsed.scheme == "https":
+        pass
+    elif parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}:
+        pass
+    else:
+        raise TelegramError("Telegram API base URL must use HTTPS except for localhost or 127.0.0.1 test endpoints")
+    if not parsed.netloc or parsed.username is not None or parsed.password is not None:
+        raise TelegramError("Telegram API base URL is malformed")
+    return value
 
 
 def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[str, Any]:
+    base = api_base()
     token = token_value()
-    url = f"{api_base()}{urllib.parse.quote(token, safe=':')}/{method}"
+    url = f"{base}{urllib.parse.quote(token, safe=':')}/{method}"
     body = json.dumps(params, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -570,8 +603,17 @@ def setup(token: str, machine: bool) -> dict[str, Any]:
     sys.stdout.flush()
     stream = getattr(sys.stdout, "buffer", None)
     if stream is None:
-        sys.stdout.write(picture)
-        sys.stdout.flush()
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
+        try:
+            sys.stdout.write(picture)
+            sys.stdout.flush()
+        except UnicodeEncodeError:
+            try:
+                os.write(sys.stdout.fileno(), picture.encode("utf-8"))
+            except (AttributeError, OSError) as exc:
+                raise TelegramError("QR output stream cannot emit UTF-8") from exc
     else:
         stream.write(picture.encode("utf-8"))
         stream.flush()
@@ -803,6 +845,14 @@ def _portable_backlog_decisions(records: list[dict[str, Any]], all_decisions: bo
     return decisions
 
 
+def _portable_bound(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return min(PORTABLE_MAX_RECORDS, max(1, value))
+
+
 def _portable_status_unstamped(line: str) -> str:
     rest = line
     kept = ""
@@ -958,6 +1008,7 @@ def portable_snapshot(all_decisions: bool) -> str:
     _portable_check_deadline()
     tasks: list[dict[str, Any]] = []
     decisions: list[dict[str, str]] = []
+    lifecycle_active: set[str] = set()
     state = operational_state_dir()
     backlog = _portable_read_backlog()
     backlog_by_id = {record["id"]: record for record in backlog}
@@ -982,6 +1033,8 @@ def portable_snapshot(all_decisions: bool) -> str:
         backend = values.get("backend", "tmux")
         target = values.get("remote_target") if values.get("remote_host") else values.get("window", "")
         busy_state = _portable_busy_state(task_id, values)
+        if busy_state == "busy":
+            lifecycle_active.add(task_id)
         status_path = state / f"{task_id}.status"
         status_lines = _portable_read_status(status_path)
         task_decisions, latest = _portable_status_fold(status_lines, task_id, kind, "working" if busy_state == "busy" else None)
@@ -1012,16 +1065,13 @@ def portable_snapshot(all_decisions: bool) -> str:
         decision for decision in decisions
         if not any(existing["id"] == decision["id"] and existing["key"] == decision["key"] for existing in backlog_all_decisions)
     ]
-    try:
-        decision_limit = int(os.environ.get("FM_BEARINGS_DECISIONS", "20"))
-    except ValueError:
-        decision_limit = 20
-    decision_limit = min(PORTABLE_MAX_RECORDS, max(1, decision_limit))
+    decisions = [decision for decision in decisions if decision["id"] not in lifecycle_active]
+    decision_limit = _portable_bound("FM_BEARINGS_DECISIONS", 20)
     visible_decisions = decisions[:decision_limit]
-    omitted = []
+    omitted: list[dict[str, Any]] = []
     if len(decisions) > len(visible_decisions):
         omitted.append({"surface": f"decisions_open showing {len(visible_decisions)} of {len(decisions)}", "reveal": "--all-decisions" if not all_decisions else "raise FM_BEARINGS_DECISIONS", "count": len(decisions) - len(visible_decisions)})
-    in_flight = [
+    in_flight_all = [
         task for task in tasks
         if task["state"] in ("working", "parked", "blocked", "paused")
         and not (
@@ -1031,6 +1081,10 @@ def portable_snapshot(all_decisions: bool) -> str:
             and (backlog_by_id.get(task["id"]) or {}).get("hold_reason")
         )
     ]
+    in_flight_limit = _portable_bound("FM_BEARINGS_IN_FLIGHT", 20)
+    in_flight = in_flight_all[:in_flight_limit]
+    if len(in_flight_all) > len(in_flight):
+        omitted.append({"surface": f"in_flight showing {len(in_flight)} of {len(in_flight_all)}", "reveal": "--all-in-flight", "count": len(in_flight_all) - len(in_flight)})
     result: dict[str, Any] = {
         "schema": "fm-bearings.v1",
         "generated": iso_now(),
@@ -1450,19 +1504,6 @@ def _portable_delivery_match(path: Path, delivery_id: str, wire_body: str, fire_
     return True
 
 
-def _portable_find_delivery(inbox: Path, handled: Path, delivery_id: str, wire_body: str, fire_and_forget: bool) -> Path | None:
-    count = 0
-    for directory in (inbox, handled):
-        for path in directory.glob("*.msg"):
-            _portable_check_deadline()
-            count += 1
-            if count > PORTABLE_MAX_RECORDS:
-                raise TelegramError("portable task inbox has too many records")
-            if _portable_delivery_match(path, delivery_id, wire_body, fire_and_forget):
-                return path
-    return None
-
-
 def _portable_next_inbox_sequence(inbox: Path, handled: Path) -> str:
     numbers: list[int] = []
     count = 0
@@ -1544,14 +1585,10 @@ def portable_send(target: str, body: str, delivery_id: str, fire_and_forget: boo
                     record_path = root_record
                     atomic_write(record_path, _portable_inbox_record_text(record_name, wire_body, delivery_id, fire_and_forget))
             else:
-                record_path = _portable_find_delivery(inbox, handled, delivery_id, wire_body, fire_and_forget)
-                if record_path is not None:
-                    atomic_write(reservation, _portable_reservation_text(record_path.name, wire_body, delivery_id, fire_and_forget))
-                else:
-                    record_name = _portable_next_inbox_sequence(inbox, handled)
-                    atomic_write(reservation, _portable_reservation_text(record_name, wire_body, delivery_id, fire_and_forget))
-                    record_path = inbox / record_name
-                    atomic_write(record_path, _portable_inbox_record_text(record_name, wire_body, delivery_id, fire_and_forget))
+                record_name = _portable_next_inbox_sequence(inbox, handled)
+                atomic_write(reservation, _portable_reservation_text(record_name, wire_body, delivery_id, fire_and_forget))
+                record_path = inbox / record_name
+                atomic_write(record_path, _portable_inbox_record_text(record_name, wire_body, delivery_id, fire_and_forget))
         finally:
             portable_lock_release(lock, inbox_token)
             inbox_token = None
@@ -1639,57 +1676,81 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
     return output
 
 
+_TELEGRAM_PATH_RE = re.compile(r"(?<![A-Za-z0-9_/:])(?:[A-Za-z]:[\\/][^\s\"'<>`,;)]*|/(?:[^/\s\"'<>`,;)]+/)+[^/\s\"'<>`,;)]*)")
+
+
+def _telegram_redact_paths(text: str) -> str:
+    return _TELEGRAM_PATH_RE.sub("[path redacted]", text)
+
+
+def _telegram_redact_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _telegram_redact_paths(value)
+    if isinstance(value, list):
+        return [_telegram_redact_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _telegram_redact_value(item) for key, item in value.items()}
+    return value
+
+
 def _compact_bearings_output(value: dict[str, Any]) -> str:
-    def short(value: Any, limit: int = 40) -> str:
-        text = str(value or "").replace("\r", " ").replace("\n", " ")
-        return text[:limit]
-
-    def rows(name: str, limit: int = 3) -> list[dict[str, Any]]:
-        source = value.get(name)
-        if not isinstance(source, list):
-            return []
-        result: list[dict[str, Any]] = []
-        for row in source[:limit]:
-            if not isinstance(row, dict):
-                continue
-            if name == "decisions_open":
-                result.append({key: short(row.get(key)) for key in ("id", "key", "verb", "summary", "owner") if row.get(key) is not None})
-            else:
-                result.append({key: short(row.get(key)) for key in ("id", "kind", "state", "name", "doing") if row.get(key) is not None})
-        return result
-
     array_counts = {key: len(item) for key, item in value.items() if isinstance(item, list)}
-    compact: dict[str, Any] = {
-        "schema": value.get("schema", "fm-bearings.v1"),
-        "summary": array_counts,
-        "tasks": rows("tasks"),
-        "in_flight": rows("in_flight"),
-        "decisions_open": rows("decisions_open"),
-        "omitted": [],
-    }
-    omitted: list[dict[str, Any]] = []
     existing = value.get("omitted")
-    if isinstance(existing, list):
-        for item in existing[:4]:
-            if isinstance(item, dict):
-                omitted.append({key: short(item.get(key)) for key in ("surface", "reveal", "count") if item.get(key) is not None})
-    for key in ("tasks", "in_flight", "decisions_open"):
-        total = array_counts.get(key, 0)
-        shown = len(compact[key])
-        if total > shown:
-            omitted.append({"surface": key, "count": total - shown, "reveal": "request bounded status again"})
-    compact["omitted"] = omitted[:8]
-    compact["omitted_count"] = sum(int(item.get("count", 0)) for item in omitted if str(item.get("count", "")).isdigit())
-    return json.dumps(compact, separators=(",", ":"))
+
+    def build(row_limit: int, text_limit: int) -> str:
+        def short(item: Any) -> str:
+            text = _telegram_redact_paths(str(item or "")).replace("\r", " ").replace("\n", " ")
+            return text[:text_limit]
+
+        def rows(name: str) -> list[dict[str, Any]]:
+            source = value.get(name)
+            if not isinstance(source, list):
+                return []
+            result: list[dict[str, Any]] = []
+            for row in source[:row_limit]:
+                if not isinstance(row, dict):
+                    continue
+                names = ("id", "key", "verb", "summary", "owner") if name == "decisions_open" else ("id", "kind", "state", "name", "doing")
+                result.append({key: short(row.get(key)) for key in names if row.get(key) is not None})
+            return result
+
+        compact: dict[str, Any] = {
+            "schema": "fm-bearings.v1",
+            "summary": array_counts,
+            "tasks": rows("tasks"),
+            "in_flight": rows("in_flight"),
+            "decisions_open": rows("decisions_open"),
+            "omitted": [],
+        }
+        omitted: list[dict[str, Any]] = []
+        if isinstance(existing, list):
+            for item in existing[:4]:
+                if isinstance(item, dict):
+                    omitted.append({key: short(item.get(key)) for key in ("surface", "reveal", "count") if item.get(key) is not None})
+        for key in ("tasks", "in_flight", "decisions_open"):
+            total = array_counts.get(key, 0)
+            shown = len(compact[key])
+            if total > shown:
+                omitted.append({"surface": key, "count": total - shown, "reveal": "request bounded status again"})
+        compact["omitted"] = omitted[:8]
+        compact["omitted_count"] = sum(int(item.get("count", 0)) for item in omitted if str(item.get("count", "")).isdigit())
+        return json.dumps(compact, separators=(",", ":"))
+
+    for row_limit, text_limit in ((3, 40), (2, 32), (1, 24), (0, 16)):
+        encoded = build(row_limit, text_limit)
+        if len(encoded) <= MAX_MESSAGE_CHARS:
+            return encoded
+    return json.dumps({"schema": "fm-bearings.v1", "omitted": [{"surface": "status", "count": 1, "reveal": "request bounded status again"}]}, separators=(",", ":"))
 
 
 def _telegram_owner_output(output: str) -> str:
     try:
         value = json.loads(output)
     except (TypeError, ValueError):
-        return output
+        return _telegram_redact_paths(output)
     if not isinstance(value, dict):
-        return output
+        return _telegram_redact_paths(output)
+    value = _telegram_redact_value(value)
     if value.get("schema") == "fm-inbox-note.v1":
         value.pop("path", None)
         if "error" in value:
@@ -1699,11 +1760,12 @@ def _telegram_owner_output(output: str) -> str:
         return encoded
     if value.get("schema") == "fm-bearings.v1":
         return _compact_bearings_output(value)
-    return encoded
+    schema = value.get("schema") if isinstance(value.get("schema"), str) else "fm-telegram-owner-result.v1"
+    return json.dumps({"schema": schema, "omitted": True, "message": "Firstmate response exceeded Telegram's message limit"}, separators=(",", ":"))
 
 
 def _telegram_owner_error(exc: TelegramError) -> str:
-    message = str(exc)
+    message = _telegram_redact_paths(str(exc))
     if "/" in message or "\\" in message or re.search(r"[A-Za-z]:", message):
         return "Firstmate owner request failed"
     return message
@@ -1717,8 +1779,6 @@ def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | N
     except TelegramError as exc:
         raise TelegramError(_telegram_owner_error(exc)) from exc
     result = _telegram_owner_output(output)
-    if len(result) > MAX_MESSAGE_CHARS:
-        raise TelegramError("Firstmate owner response is too large")
     return telegram_response(result)
 
 

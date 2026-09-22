@@ -265,11 +265,23 @@ _fm_task_inbox_write_reservation_locked() {  # <inbox-dir> <record-name> <text> 
   [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
 }
 
+fm_task_inbox_derived_key() {  # <delivery-mode> <text>
+  local mode=$1 text=$2 digest
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest=$(printf '%s\0%s' "$mode" "$text" | sha256sum | awk '{print $1}') || return 1
+  else
+    digest=$(printf '%s\0%s' "$mode" "$text" | cksum | awk '{print $1 "-" $2}') || return 1
+  fi
+  [ -n "$digest" ] || return 1
+  printf 'body-%s' "$digest"
+}
+
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode] [idempotency-key]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' f want have reservation record_name existing_key status=0 marker_body derived_key
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' want have reservation record_name existing_key status=0 marker_body derived_key marker_prefix candidate
   dir=$(fm_task_inbox_dir "$state" "$task")
-  if [ -z "$idempotency_key" ] && [ -n "${FM_FROMFIRST_MARK:-}" ]; then
-    marker_body=${text#"$FM_FROMFIRST_MARK"}
+  marker_prefix=${FM_FROMFIRST_MARK:-'[fm-from-firstmate]'$'\u2063'}
+  if [ -z "$idempotency_key" ]; then
+    marker_body=${text#"$marker_prefix"}
     if [ "$marker_body" != "$text" ]; then
       derived_key=${marker_body%% *}
       case "$derived_key" in
@@ -282,6 +294,9 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
       esac
     fi
   fi
+  if [ -z "$idempotency_key" ]; then
+    idempotency_key=$(fm_task_inbox_derived_key "$delivery_mode" "$text") || return 1
+  fi
   mkdir -p "$dir/handled" "$dir/.idempotency" || return 1
   lock="$dir/.seq.lock"
   fm_task_inbox_lock_acquire "$lock" || return 1
@@ -291,18 +306,25 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
     if [ "$status" -eq 0 ] && [ -e "$reservation" ]; then
       existing_key=$(fm_task_inbox_idempotency_key "$reservation" 2>/dev/null || true)
       [ "$existing_key" = "$idempotency_key" ] || status=1
+      record_name=$(awk -F= '$1 == "record" { print $2; exit }' "$reservation" 2>/dev/null || true)
+      case "$record_name" in [0-9]*.msg) ;; *) status=1 ;; esac
+      case "${record_name%.msg}" in ''|*[!0-9]*) status=1 ;; esac
+      if [ "$status" -eq 0 ] && [ -f "$dir/handled/$record_name" ]; then
+        candidate="$dir/handled/$record_name"
+      elif [ "$status" -eq 0 ] && [ -f "$dir/$record_name" ]; then
+        candidate="$dir/$record_name"
+      else
+        candidate="$reservation"
+      fi
       if [ "$status" -eq 0 ] && want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
         printf '%s' "$text" > "$want" || status=1
-        fm_task_inbox_body "$reservation" > "$have" 2>/dev/null || status=1
+        fm_task_inbox_body "$candidate" > "$have" 2>/dev/null || status=1
         cmp -s "$want" "$have" || status=1
         if [ "$delivery_mode" = fire-and-forget ]; then
-          fm_task_inbox_is_fire_and_forget "$reservation" || status=1
-        elif fm_task_inbox_is_fire_and_forget "$reservation"; then
+          fm_task_inbox_is_fire_and_forget "$candidate" || status=1
+        elif fm_task_inbox_is_fire_and_forget "$candidate"; then
           status=1
         fi
-        record_name=$(awk -F= '$1 == "record" { print $2; exit }' "$reservation" 2>/dev/null || true)
-        case "$record_name" in ''|*[!0-9.]*|*.msg.msg) status=1 ;; esac
-        case "$record_name" in *.msg) ;; *) status=1 ;; esac
         rm -f "$want" "$have"
       else
         status=1
@@ -317,68 +339,11 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
         fi
       fi
     elif [ "$status" -eq 0 ]; then
-      if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
-        printf '%s' "$text" > "$want" || status=1
-        for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-          [ -e "$f" ] || continue
-          existing_key=$(fm_task_inbox_idempotency_key "$f" 2>/dev/null || true)
-          [ "$existing_key" = "$idempotency_key" ] || continue
-          if [ "$delivery_mode" = fire-and-forget ]; then
-            fm_task_inbox_is_fire_and_forget "$f" || { status=1; break; }
-          elif fm_task_inbox_is_fire_and_forget "$f"; then
-            status=1
-            break
-          fi
-          fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
-          if cmp -s "$want" "$have"; then
-            [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
-            rec=$f
-            break
-          fi
-          status=1
-          break
-        done
-        rm -f "$want" "$have"
-      else
-        status=1
+      record_name=$(fm_task_inbox_next_seq "$dir").msg
+      _fm_task_inbox_write_reservation_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key" || status=1
+      if [ "$status" -eq 0 ]; then
+        rec=$(_fm_task_inbox_write_record_at_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key") || status=1
       fi
-      if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
-        record_name=$(fm_task_inbox_next_seq "$dir").msg
-        _fm_task_inbox_write_reservation_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key" || status=1
-        if [ "$status" -eq 0 ]; then
-          rec=$(_fm_task_inbox_write_record_at_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key") || status=1
-        fi
-      elif [ "$status" -eq 0 ]; then
-        _fm_task_inbox_write_reservation_locked "$dir" "${rec##*/}" "$text" "$delivery_mode" "$idempotency_key" || status=1
-      fi
-    fi
-  else
-    if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
-      if printf '%s' "$text" > "$want"; then
-        for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-          [ -e "$f" ] || continue
-          if [ "$delivery_mode" = fire-and-forget ]; then
-            fm_task_inbox_is_fire_and_forget "$f" || continue
-          elif fm_task_inbox_is_fire_and_forget "$f"; then
-            continue
-          fi
-          fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
-          if cmp -s "$want" "$have"; then
-            [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
-            rec=$f
-            break
-          fi
-        done
-      else
-        status=1
-      fi
-      rm -f "$want" "$have"
-    else
-      rm -f "${want:-}" "${have:-}" 2>/dev/null || true
-      status=1
-    fi
-    if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
-      rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
     fi
   fi
   fm_lock_release "$lock"

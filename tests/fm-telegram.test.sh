@@ -360,6 +360,7 @@ cat > "$api/updates" <<'JSON'
 {"ok":true,"result":[{"update_id":42,"message":{"message_id":1,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/note hello"}}]}
 JSON
 printf '%s\n' '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' > "$home/config/telegram-bot-token"
+chmod 600 "$home/config/telegram-bot-token"
 poll=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
   "$TELEGRAM" poll --once --json)
 assert_contains "$poll" '"processed": 1' 'poll processes update'
