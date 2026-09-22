@@ -227,7 +227,10 @@ def nonce_hash(nonce: str) -> str:
 def numeric_value(value: Any, pattern: re.Pattern[str], maximum: int = MAX_TELEGRAM_ID) -> str | None:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         return None
-    candidate = str(value)
+    try:
+        candidate = str(value)
+    except (ValueError, OverflowError):
+        return None
     if pattern.fullmatch(candidate) is None:
         return None
     try:
@@ -575,8 +578,17 @@ def _pair_hash(candidate_hash: str, user_id: str, chat_id: str, update_id: str |
         portable_lock_release(lock, token)
 
 
+def utf8_length(text: str, label: str) -> int:
+    try:
+        return len(text.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise TelegramError(f"{label} contains malformed Unicode") from exc
+
+
 def validate_text(text: str, label: str = "text") -> str:
-    if not isinstance(text, str) or not text or not text.strip() or len(text.encode("utf-8")) > MAX_COMMAND_BYTES:
+    if not isinstance(text, str) or not text or not text.strip():
+        raise TelegramError(f"{label} is empty or too large")
+    if utf8_length(text, label) > MAX_COMMAND_BYTES:
         raise TelegramError(f"{label} is empty or too large")
     if any(ord(char) < 32 or ord(char) == 127 for char in text):
         raise TelegramError(f"{label} contains control bytes")
@@ -602,7 +614,10 @@ def bounded(text: str) -> str:
 
 
 def telegram_response(text: str) -> str:
-    if not isinstance(text, str) or len(text) > MAX_MESSAGE_CHARS:
+    if not isinstance(text, str):
+        raise TelegramError("Telegram response is too large")
+    utf8_length(text, "Telegram response")
+    if len(text) > MAX_MESSAGE_CHARS:
         raise TelegramError("Telegram response is too large")
     return text
 
@@ -816,19 +831,72 @@ def portable_snapshot(all_decisions: bool) -> str:
     return raw
 
 
+def _portable_windows_process(pid: int, terminate: bool = False) -> tuple[Any, Any, str] | None:
+    if os.name != "nt" or pid <= 0:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME)]
+        kernel.GetProcessTimes.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        access = 0x1000 | (0x0001 if terminate else 0)
+        handle = kernel.OpenProcess(access, False, pid)
+        if not handle:
+            return None
+        created = wintypes.FILETIME()
+        exited = wintypes.FILETIME()
+        kernel_time = wintypes.FILETIME()
+        user_time = wintypes.FILETIME()
+        if not kernel.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            kernel.CloseHandle(handle)
+            return None
+        started = (created.dwHighDateTime << 32) | created.dwLowDateTime
+        return kernel, handle, str(started)
+    except (AttributeError, OSError, OverflowError, TypeError):
+        return None
+
+
+def _portable_record_process(record: dict[str, Any], terminate: bool = False) -> tuple[Any, Any] | None:
+    try:
+        pid = int(record["pid"])
+        expected = str(record["process_start"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if pid <= 0 or re.fullmatch(r"[0-9]+", expected) is None:
+        return None
+    process = _portable_windows_process(pid, terminate)
+    if process is None:
+        return None
+    kernel, handle, started = process
+    if started != expected:
+        kernel.CloseHandle(handle)
+        return None
+    return kernel, handle
+
+
 def _portable_pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":
         try:
             import ctypes
-            kernel = ctypes.windll.kernel32
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.CloseHandle.restype = wintypes.BOOL
             handle = kernel.OpenProcess(0x1000, False, pid)
             if handle:
                 kernel.CloseHandle(handle)
                 return True
-            return kernel.GetLastError() == 5
-        except (AttributeError, OSError, OverflowError):
+            return ctypes.get_last_error() == 5
+        except (AttributeError, OSError, OverflowError, TypeError):
             return False
     try:
         os.kill(pid, 0)
@@ -1264,7 +1332,7 @@ def _durable_note_owner_result(output: str) -> str | None:
 def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
     if os.name == "nt":
         output = portable_owner(argv, stdin, env_extra).strip() or "completed"
-        if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        if utf8_length(output, "Firstmate owner response") > MAX_RESPONSE_BYTES:
             raise TelegramError("Firstmate owner response is too large")
         return output
     try:
@@ -1277,7 +1345,7 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
             return partial
         raise TelegramError("Firstmate owner script rejected request")
     output = proc.stdout.strip() or "completed"
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
+    if utf8_length(output, "Firstmate owner response") > MAX_RESPONSE_BYTES:
         raise TelegramError("Firstmate owner response is too large")
     return output
 
@@ -1290,6 +1358,8 @@ def _telegram_owner_output(output: str) -> str:
     if not isinstance(value, dict) or value.get("schema") != "fm-inbox-note.v1":
         return output
     value.pop("path", None)
+    if "error" in value:
+        value["error"] = "note saved but wake could not be announced"
     return json.dumps(value, separators=(",", ":"))
 
 
@@ -1403,7 +1473,10 @@ def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
         chat_id = identity_value(chat.get("id") if isinstance(chat, dict) else None, CHAT_ID_RE)
         text = message.get("text", "")
     valid_message = user_id is not None and chat_id is not None and isinstance(text, str)
-    oversized = valid_message and len(text.encode("utf-8")) > MAX_COMMAND_BYTES
+    if valid_message:
+        oversized = utf8_length(text, "Telegram message") > MAX_COMMAND_BYTES
+    else:
+        oversized = False
     pairing_hash = None
     if not valid_message:
         text = ""
@@ -1696,19 +1769,31 @@ def portable_enable() -> str:
             else:
                 if pid <= 0:
                     path.unlink(missing_ok=True)
-                elif _portable_pid_alive(pid):
-                    return "Telegram polling already enabled"
                 else:
+                    process = _portable_record_process(record)
+                    if process is not None:
+                        process[0].CloseHandle(process[1])
+                        return "Telegram polling already enabled"
                     path.unlink(missing_ok=True)
         ensure_private_dir(path.parent)
-        record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "at": iso_now()})
+        record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "process_start": "", "at": iso_now()})
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
         try:
             proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "worker"], cwd=root(), env={**os.environ, "FM_HOME": str(home())}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
         except (OSError, subprocess.SubprocessError) as exc:
             path.unlink(missing_ok=True)
             raise TelegramError("Telegram polling worker could not start") from exc
-        record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": proc.pid, "at": iso_now()})
+        process = _portable_windows_process(proc.pid)
+        if process is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            path.unlink(missing_ok=True)
+            raise TelegramError("Telegram polling worker identity could not be recorded")
+        kernel, handle, process_start = process
+        kernel.CloseHandle(handle)
+        record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": proc.pid, "process_start": process_start, "at": iso_now()})
         return "enabled Telegram polling"
     finally:
         portable_lock_release(lock, token)
@@ -1722,10 +1807,13 @@ def portable_disable() -> str:
         if not path.exists():
             return "retired Telegram polling"
         record = load_record(path, "fm-telegram-worker.v1")
-        try:
-            os.kill(int(record["pid"]), 15)
-        except (OSError, ValueError, KeyError):
-            pass
+        process = _portable_record_process(record, terminate=True)
+        if process is not None:
+            kernel, handle = process
+            try:
+                kernel.TerminateProcess(handle, 15)
+            finally:
+                kernel.CloseHandle(handle)
         if path.is_symlink():
             raise TelegramError("unsafe Telegram worker state")
         path.unlink(missing_ok=True)
