@@ -2,7 +2,7 @@
 feature: telegram-bot-qr
 verdict: BLOCKED
 standard: .specify/extensions/tdd/templates/tdd-test-quality-rubric.md
-verified_at: 43bf6d3d
+verified_at: 5746eee6
 behaviors: 9
 proven: 0
 likely: 9
@@ -24,22 +24,22 @@ suite: focused 1 passed, 0 failed; OMP-only full run exceeded the approximately 
 
 | Behavior | Class | Evidence |
 | --- | --- | --- |
-| U1 | LIKELY | Cycle log records an initial red and green focused run; feature commits are not present in the current history, so ordering cannot be corroborated. |
-| U2 | LIKELY | Cycle log records an initial red and green focused run; feature commits are not present in the current history, so ordering cannot be corroborated. |
-| U3 | LIKELY | Cycle log records an initial red and green focused run; feature commits are not present in the current history, so ordering cannot be corroborated. |
-| U4 | LIKELY | Focused suite covers setup and one-time pairing; commit ordering is not available in the current history. |
-| U5 | LIKELY | Focused suite covers expired, malformed, and replayed pairing; commit ordering is not available in the current history. |
-| U6 | LIKELY | Focused suite covers unsupported commands, control bytes, and unsafe worker IDs; commit ordering is not available in the current history. |
-| U7 | LIKELY | Focused suite covers duplicate update IDs and durable records; commit ordering is not available in the current history. |
-| U8 | LIKELY | Focused suite covers malformed API and outage records; commit ordering is not available in the current history. |
-| U9 | LIKELY | Focused suite covers adapter poll, classify, and silent entry points; commit ordering is not available in the current history. |
+| U1 | LIKELY | Cycle log records an initial red and green focused run; the current branch records the feature in one commit, so test/source ordering cannot be corroborated. |
+| U2 | LIKELY | Cycle log records an initial red and green focused run; the current branch records the feature in one commit, so test/source ordering cannot be corroborated. |
+| U3 | LIKELY | Cycle log records an initial red and green focused run; the current branch records the feature in one commit, so test/source ordering cannot be corroborated. |
+| U4 | LIKELY | Focused suite covers setup and one-time pairing; the current branch records the feature in one commit, so ordering cannot be corroborated. |
+| U5 | LIKELY | Focused suite covers expired, malformed, and replayed pairing; the current branch records the feature in one commit, so ordering cannot be corroborated. |
+| U6 | LIKELY | Focused suite covers unsupported commands, control bytes, and unsafe worker IDs; the current branch records the feature in one commit, so ordering cannot be corroborated. |
+| U7 | LIKELY | Focused suite covers duplicate update IDs and durable records; the current branch records the feature in one commit, so ordering cannot be corroborated. |
+| U8 | LIKELY | Focused suite covers malformed API and outage records; the current branch records the feature in one commit, so ordering cannot be corroborated. |
+| U9 | LIKELY | Focused suite covers adapter poll, classify, and silent entry points; the current branch records the feature in one commit, so ordering cannot be corroborated. |
 
 ## Findings
 
 | # | Severity | Finding | Evidence |
 | --- | --- | --- | --- |
 | 1 | HIGH | Full-suite baseline is red outside the Telegram feature, so completion cannot be independently certified. | OMP-only run failed in existing `tests/fm-extension-binding.test.sh`, `tests/fm-gemini-harness.test.sh`, `tests/fm-harness-precedence.test.sh`, and `tests/fm-backend-herdr.test.sh`, then exited 143 during `tests/fm-inactive-reconcile.test.sh`. |
-| 2 | MED | Test-first ordering is not provable from current history because implementation work is uncommitted at audit time. | `git log` contains no Telegram feature commits; cycle log is the only red/green evidence. |
+| 2 | MED | Test-first ordering is not provable from current history because the feature was committed as one combined change. | `git log` contains one Telegram feature commit; cycle log is the only red/green ordering evidence. |
 
 ## Mutation results
 

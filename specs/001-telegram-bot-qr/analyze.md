@@ -17,7 +17,7 @@ The plan's Python standard-library implementation matches the functional require
 | FR-003, FR-007, FR-008, FR-009 | T006-T009 | Covered |
 | FR-004, FR-005, FR-006, FR-011 | T010-T013 | Covered |
 | FR-010 | T004-T005, T011-T012 | Covered |
-| FR-012 | T002, T014 | Covered |
+| FR-012 | T002, T015 | Covered |
 | SC-001, SC-002 | T003-T005 | Covered |
 | SC-003 | T006-T009 | Covered |
 | SC-004, SC-005, SC-006 | T010-T013 | Covered |

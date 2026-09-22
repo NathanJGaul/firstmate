@@ -261,6 +261,126 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/speckit-analyze/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-checklist/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-clarify/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-constitution/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-converge/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-implement/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-plan/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-specify/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-tasks/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-taskstoissues/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-tdd-plan/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-tdd-run/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-tdd-setup/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/speckit-tdd-verify/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/README.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/commands/speckit.tdd.plan.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/commands/speckit.tdd.run.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/commands/speckit.tdd.setup.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/commands/speckit.tdd.verify.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/templates/tdd-loop-playbook.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/templates/tdd-stack-profile.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/templates/tdd-test-list-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/extensions/tdd/templates/tdd-test-quality-rubric.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/memory/constitution.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/memory/tdd-profile.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/templates/checklist-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/templates/constitution-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/templates/plan-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/templates/spec-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".specify/templates/tasks-template.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".greptile/rules.md",
       "audience": "maintainer-architecture"
     },
@@ -457,6 +577,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/telegram.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/tmux-backend.md",
       "audience": "operator-current"
     },
@@ -599,6 +723,54 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/contracts/telegram-cli.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/data-model.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-telegram-bot-qr/tdd/verification.md",
+      "audience": "maintainer-verification"
     },
     {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",

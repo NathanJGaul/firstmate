@@ -160,7 +160,7 @@ assert_contains "$decisions" 'snapshot:--json --all-decisions' 'decisions use bo
 note=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 4 --text '/note hello')
 assert_contains "$note" 'note:note --request-id telegram-4 --json -:hello' 'note uses inbox owner and stdin'
 steer=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 5 --text '/steer worker hello')
-assert_contains "$steer" 'steer:worker --fire-and-forget' 'steer uses reversible send owner'
+assert_contains "$steer" 'steer:worker hello' 'steer uses reversible send owner without unsupported flags'
 set +e
 unsafe=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 6 --text '/steer ../bad hello' 2>&1)
 unsafe_code=$?

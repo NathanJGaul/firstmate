@@ -26,5 +26,5 @@ Bot tokens never appear in any record.
 Update JSON: 256 KiB.
 Command text: 4096 UTF-8 bytes.
 Telegram response text: 4096 Unicode characters.
-Polling timeout: 30 seconds by default, bounded to 120 seconds.
+Polling timeout: 30 seconds by default, bounded to 50 seconds.
 Pairing expiry: 10 minutes by default, bounded to 24 hours.

@@ -38,7 +38,7 @@ A polling cycle reads one bounded `getUpdates` response, deduplicates update IDs
 - `/status`: reads `fm-bearings-snapshot.sh --json` and returns bounded current durable status.
 - `/decisions`: reads `fm-bearings-snapshot.sh --json --all-decisions` and returns bounded open decisions.
 - `/note <text>`: calls `fm-inbox.sh note --request-id telegram-<update-id> --json -` with text on stdin.
-- `/steer <worker> <text>`: validates worker and text, then calls `fm-send.sh <worker> --fire-and-forget <stable-id> <text>`.
+- `/steer <worker> <text>`: validates worker and text, then calls `fm-send.sh <worker> <text>` through the owner boundary.
 
 ## Security and Failure Rules
 

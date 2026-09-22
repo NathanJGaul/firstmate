@@ -299,8 +299,7 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
         if not separator or not WORKER_RE.fullmatch(target):
             raise TelegramError("steer target or text is invalid")
         body = validate_text(body, "steer")
-        delivery = hashlib.sha256(f"telegram:{update_id}:{target}".encode()).hexdigest()[:16]
-        return owner([str(root() / "bin/fm-send.sh"), target, "--fire-and-forget", delivery, body])
+        return owner([str(root() / "bin" / "fm-send.sh"), target, body])
     raise TelegramError("unsupported Telegram command")
 
 
