@@ -351,6 +351,60 @@ assert_contains "$parser_dollar" 'parser-native prefix' 'codex parser rejection 
 assert_contains "$parser_key" 'parser-native prefix' 'key parser rejection is explicit'
 pass 'paired command owner boundaries are enforced'
 
+pagination_root="$TMP_ROOT/pagination-root"
+mkdir -p "$pagination_root/bin"
+cat > "$pagination_root/bin/fm-bearings-snapshot.sh" <<'SH'
+#!/usr/bin/env python3
+import json
+import os
+
+offset = int(os.environ.get("FM_BEARINGS_IN_FLIGHT_OFFSET", "0"))
+limit = int(os.environ.get("FM_BEARINGS_IN_FLIGHT", "20"))
+rows = [
+    {"id": f"worker-{index:03d}-" + "x" * 117, "kind": "ship", "state": "working", "name": "n" * 120, "doing": "d" * 120}
+    for index in range(80)
+]
+end = offset + limit
+result = {"schema": "fm-bearings.v1", "generated": "2026-01-01T00:00:00Z", "in_flight": rows[offset:end], "decisions_open": [], "omitted": []}
+if end < len(rows):
+    result["omitted"].append({"surface": f"in_flight showing {end} of {len(rows)}", "count": len(rows) - end})
+print(json.dumps(result))
+SH
+chmod 755 "$pagination_root/bin/fm-bearings-snapshot.sh"
+page_one=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$pagination_root" FM_TELEGRAM_PAGE_SIZE=50 \
+  "$TELEGRAM" dispatch --user-id 7 --chat-id 8 --update-id 14 --text /status)
+next_command=$(python3 - "$page_one" <<'PY'
+import json
+import sys
+value = json.loads(sys.argv[1])
+assert 0 < len(value["in_flight"]) < 50
+assert value["pagination"]["next_offset"] == len(value["in_flight"])
+print(value["pagination"]["next_command"])
+PY
+)
+page_two=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$pagination_root" FM_TELEGRAM_PAGE_SIZE=50 \
+  "$TELEGRAM" dispatch --user-id 7 --chat-id 8 --update-id 15 --text "$next_command")
+python3 - "$page_one" "$page_two" <<'PY'
+import json
+import sys
+first = json.loads(sys.argv[1])
+second = json.loads(sys.argv[2])
+assert second["in_flight"][0]["id"] == f"worker-{first['pagination']['next_offset']:03d}-" + "x" * 117
+PY
+pass 'status pagination continues after response compaction without skipping rows'
+
+legacy_state="$TMP_ROOT/legacy-inbox"
+mkdir -p "$legacy_state/task.inbox/handled"
+{
+  printf 'schema=fm-task-inbox.v1\nat=2026-01-01T00:00:00Z\n--\n'
+  printf 'legacy body\n'
+} > "$legacy_state/task.inbox/001.msg"
+legacy_record=$(bash -c '. "$1"; fm_task_inbox_write_idempotent "$2" "$3" "$4" "$5"' _ \
+  "$ROOT/bin/fm-task-inbox-lib.sh" "$legacy_state" task $'legacy body\n' '')
+assert_equals "$legacy_state/task.inbox/001.msg" "$legacy_record" 'legacy inbox replay preserves trailing newlines'
+assert_absent "$legacy_state/task.inbox/002.msg" 'legacy inbox replay does not allocate a duplicate'
+pass 'legacy inbox idempotency compares exact record bodies'
+
 home=$(make_home poll)
 mkdir -p "$home/state/telegram"
 cat > "$home/state/telegram/pairing.json" <<'JSON'

@@ -288,6 +288,16 @@ _fm_task_inbox_write_reservation_locked() {  # <inbox-dir> <record-name> <text> 
   [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
 }
 
+_fm_task_inbox_body_matches() {  # <record-path> <expected-file> <temporary-directory>
+  local record=$1 expected=$2 directory=$3 actual status=1
+  actual=$(mktemp "$directory/.dedup.XXXXXX") || return 1
+  if fm_task_inbox_body "$record" > "$actual" 2>/dev/null && cmp -s "$expected" "$actual"; then
+    status=0
+  fi
+  rm -f "$actual"
+  return "$status"
+}
+
 fm_task_inbox_derived_key() {  # <delivery-mode> <text>
   local mode=$1 text=$2 digest
   if command -v sha256sum >/dev/null 2>&1; then
@@ -300,7 +310,7 @@ fm_task_inbox_derived_key() {  # <delivery-mode> <text>
 }
 
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode] [idempotency-key]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' want have reservation record_name existing_key status=0 marker_body derived_key marker_prefix candidate legacy_body legacy_match candidate_body found idempotency_supplied=0
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' want have body_want='' reservation record_name existing_key status=0 marker_body derived_key marker_prefix candidate legacy_allowed legacy_match found idempotency_supplied=0
   [ -n "$idempotency_key" ] && idempotency_supplied=1
   dir=$(fm_task_inbox_dir "$state" "$task")
   marker_prefix=${FM_FROMFIRST_MARK:-'[fm-from-firstmate]'$'\u2063'}
@@ -324,6 +334,11 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
   mkdir -p "$dir/handled" "$dir/.idempotency" || return 1
   lock="$dir/.seq.lock"
   fm_task_inbox_lock_acquire "$lock" || return 1
+  if ! body_want=$(mktemp "$dir/.dedup.XXXXXX"); then
+    status=1
+  elif ! printf '%s' "$text" > "$body_want"; then
+    status=1
+  fi
   if [ -n "$idempotency_key" ]; then
     case "$idempotency_key" in ''|*[!A-Za-z0-9._:-]*) status=1 ;; esac
     reservation="$dir/.idempotency/$idempotency_key.reservation"
@@ -367,23 +382,26 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
       for candidate in "$dir"/*.msg "$dir/handled"/*.msg; do
         [ -f "$candidate" ] || continue
         existing_key=$(fm_task_inbox_idempotency_key "$candidate" 2>/dev/null || true)
+        legacy_allowed=0
         legacy_match=0
         if [ -z "$existing_key" ]; then
-          legacy_body=$(fm_task_inbox_body "$candidate" 2>/dev/null || true)
-          if [ "$idempotency_supplied" -eq 0 ] && [ "$legacy_body" = "$text" ]; then
-            legacy_match=1
+          if [ "$idempotency_supplied" -eq 0 ]; then
+            legacy_allowed=1
           else
-            case "$legacy_body" in
-              "$marker_prefix"delivery="$idempotency_key"\ *) legacy_match=1 ;;
+            case "$text" in
+              "$marker_prefix"delivery="$idempotency_key"\ *) legacy_allowed=1 ;;
             esac
+          fi
+          if [ "$legacy_allowed" -eq 1 ] && [ "$status" -eq 0 ] &&
+            _fm_task_inbox_body_matches "$candidate" "$body_want" "$dir"; then
+            legacy_match=1
           fi
         fi
         if [ "$existing_key" != "$idempotency_key" ] && [ "$legacy_match" -ne 1 ]; then
           continue
         fi
         found=1
-        candidate_body=$(fm_task_inbox_body "$candidate" 2>/dev/null || true)
-        if [ "$candidate_body" != "$text" ]; then
+        if [ "$status" -eq 0 ] && ! _fm_task_inbox_body_matches "$candidate" "$body_want" "$dir"; then
           status=1
           break
         fi
@@ -408,6 +426,7 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
       fi
     fi
   fi
+  [ -z "$body_want" ] || rm -f "$body_want"
   fm_lock_release "$lock"
   [ "$status" -eq 0 ] || return 1
   printf '%s' "$rec"

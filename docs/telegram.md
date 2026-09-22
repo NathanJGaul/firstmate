@@ -36,7 +36,7 @@ bin/fm-telegram.py disable
 - `/status [page]` reads one bounded durable fleet-status page.
 - `/decisions [page]` reads one bounded open-decision page. Responses include a continuation command when another page exists.
 
-Pages start at 1. The default page size is 10 and `FM_TELEGRAM_PAGE_SIZE` may set it from 1 through 50 for the polling process.
+Pages start at 1. The default page size is 10 and `FM_TELEGRAM_PAGE_SIZE` may set it from 1 through 50 for the polling process. When response compaction emits fewer rows than the configured page size, `pagination.next_command` carries a `page:offset` continuation so no rows are skipped.
 - `/note <text>` queues a note through `bin/fm-inbox.sh`.
 - `/steer <worker> <text>` sends reversible worker text through `bin/fm-send.sh`.
 

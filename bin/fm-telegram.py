@@ -1854,24 +1854,76 @@ def _telegram_owner_error(exc: TelegramError) -> str:
     return message
 
 
-def _telegram_page_output(output: str, command: str, page: int, page_size: int, collection: str) -> str:
+def _telegram_page_output(output: str, command: str, page: int, page_size: int, collection: str, offset: int) -> str:
     try:
         value = json.loads(output)
     except (TypeError, ValueError):
         return _telegram_owner_output(output)
     if not isinstance(value, dict) or value.get("schema") != "fm-bearings.v1" or not isinstance(value.get(collection), list):
         return _telegram_owner_output(output)
+    value = _telegram_redact_value(value)
     rows = value[collection]
-    has_more = len(rows) > page_size
-    value[collection] = rows[:page_size]
-    next_page = page + 1 if has_more else None
-    value["pagination"] = {
-        "page": page,
-        "page_size": page_size,
-        "next_page": next_page,
-        "next_command": f"{command} {next_page}" if next_page is not None else None,
-    }
-    return _telegram_owner_output(json.dumps(value, separators=(",", ":")))
+    page_rows = rows[:page_size]
+    upstream_more = len(rows) > page_size
+    omitted = value.get("omitted")
+    if isinstance(omitted, list):
+        for item in omitted:
+            if isinstance(item, dict) and str(item.get("surface", "")).startswith(collection):
+                upstream_more = True
+                break
+    names = ("id", "key", "verb", "summary", "owner") if collection == "decisions_open" else ("id", "kind", "state", "name", "doing")
+
+    def compact_row(row: Any, text_limit: int) -> dict[str, str]:
+        if not isinstance(row, dict):
+            return {"id": "(malformed)"}
+        result: dict[str, str] = {}
+        for key in names:
+            item = row.get(key)
+            if item is None:
+                continue
+            text = str(item).replace("\r", " ").replace("\n", " ")
+            result[key] = text[:128] if key in {"id", "key"} else text[:text_limit]
+        return result
+
+    def render(rendered_rows: list[dict[str, str]]) -> str:
+        has_more = len(rendered_rows) < len(page_rows) or upstream_more
+        next_offset = offset + len(rendered_rows)
+        next_page = page + 1 if has_more else None
+        expected_offset = page * page_size
+        next_command = None
+        if next_page is not None:
+            suffix = str(next_page) if next_offset == expected_offset else f"{next_page}:{next_offset}"
+            next_command = f"{command} {suffix}"
+        result: dict[str, Any] = {"schema": "fm-bearings.v1", collection: rendered_rows, "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "collection": collection,
+            "next_page": next_page,
+            "next_offset": next_offset if next_page is not None else None,
+            "next_command": next_command,
+        }}
+        generated = value.get("generated")
+        if isinstance(generated, str):
+            result["generated"] = generated[:64]
+        return json.dumps(result, separators=(",", ":"))
+
+    best_rows: list[dict[str, str]] = []
+    best_output = ""
+    for text_limit in (128, 96, 64, 48, 32, 24, 16, 8):
+        candidate_rows: list[dict[str, str]] = []
+        for row in page_rows:
+            candidate = candidate_rows + [compact_row(row, text_limit)]
+            if len(render(candidate)) > MAX_MESSAGE_CHARS:
+                break
+            candidate_rows = candidate
+        if len(candidate_rows) > len(best_rows):
+            best_rows = candidate_rows
+            best_output = render(candidate_rows)
+        if len(best_rows) == len(page_rows):
+            break
+    if not best_output:
+        best_output = render(best_rows)
+    return best_output
 
 
 def _telegram_page_size() -> int:
@@ -1884,24 +1936,30 @@ def _telegram_page_size() -> int:
     return value
 
 
-def _telegram_page_number(text: str, command: str) -> int:
+def _telegram_page_number(text: str, command: str) -> tuple[int, int | None]:
     if text == command:
-        return 1
+        return 1, None
     prefix = f"{command} "
     if not text.startswith(prefix):
         raise TelegramError("unsupported Telegram command")
     raw = text[len(prefix):]
-    if re.fullmatch(r"[0-9]{1,6}", raw) is None:
+    parts = raw.split(":")
+    if len(parts) not in (1, 2) or any(re.fullmatch(r"[0-9]{1,7}", part) is None for part in parts):
         raise TelegramError(f"{command} page must be between 1 and {MAX_TELEGRAM_PAGE}")
-    page = int(raw)
+    page = int(parts[0])
     if page < 1 or page > MAX_TELEGRAM_PAGE:
         raise TelegramError(f"{command} page must be between 1 and {MAX_TELEGRAM_PAGE}")
-    return page
+    if len(parts) == 1:
+        return page, None
+    offset = int(parts[1])
+    if offset < 0 or offset > MAX_TELEGRAM_PAGE * MAX_TELEGRAM_PAGE_SIZE:
+        raise TelegramError(f"{command} continuation is malformed")
+    return page, offset
 
 
-def _telegram_snapshot_page(command: str, page: int, page_size: int) -> str:
+def _telegram_snapshot_page(command: str, page: int, page_size: int, page_offset: int | None = None) -> str:
     collection = "in_flight" if command == "/status" else "decisions_open"
-    offset = (page - 1) * page_size
+    offset = (page - 1) * page_size if page_offset is None else page_offset
     limit = page_size + 1
     env_extra = {
         "FM_TELEGRAM_PAGE_KIND": collection,
@@ -1915,10 +1973,10 @@ def _telegram_snapshot_page(command: str, page: int, page_size: int) -> str:
     arguments = [str(root() / "bin/fm-bearings-snapshot.sh"), "--json"]
     if command == "/decisions":
         arguments.append("--all-decisions")
-    return owner_result(arguments, env_extra=env_extra, page=(command, page, page_size, collection))
+    return owner_result(arguments, env_extra=env_extra, page=(command, page, page_size, collection, offset))
 
 
-def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None, page: tuple[str, int, int, str] | None = None) -> str:
+def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None, page: tuple[str, int, int, str, int] | None = None) -> str:
     try:
         output = owner(argv, stdin, env_extra)
     except DurableOwnerError as exc:
@@ -1926,8 +1984,8 @@ def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | N
     except TelegramError as exc:
         raise TelegramError(_telegram_owner_error(exc)) from exc
     if page is not None:
-        command, page_number, page_size, collection = page
-        result = _telegram_page_output(output, command, page_number, page_size, collection)
+        command, page_number, page_size, collection, page_offset = page
+        result = _telegram_page_output(output, command, page_number, page_size, collection, page_offset)
     else:
         result = _telegram_owner_output(output)
     return telegram_response(result)
@@ -1941,9 +1999,11 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
         raise TelegramError("Telegram identity is not paired")
     text = validate_text(text)
     if text == "/status" or text.startswith("/status "):
-        return _telegram_snapshot_page("/status", _telegram_page_number(text, "/status"), _telegram_page_size())
+        page, page_offset = _telegram_page_number(text, "/status")
+        return _telegram_snapshot_page("/status", page, _telegram_page_size(), page_offset)
     if text == "/decisions" or text.startswith("/decisions "):
-        return _telegram_snapshot_page("/decisions", _telegram_page_number(text, "/decisions"), _telegram_page_size())
+        page, page_offset = _telegram_page_number(text, "/decisions")
+        return _telegram_snapshot_page("/decisions", page, _telegram_page_size(), page_offset)
     if text.startswith("/note "):
         body = validate_text(text[6:], "note")
         return owner_result([str(root() / "bin/fm-inbox.sh"), "note", "--request-id", f"telegram-{update_id}", "--json", "-"], body)
