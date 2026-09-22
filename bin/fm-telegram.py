@@ -157,7 +157,7 @@ def atomic_write(path: Path, data: bytes) -> None:
     finally:
         try:
             tmp.unlink()
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             pass
 
 
@@ -567,7 +567,14 @@ def setup(token: str, machine: bool) -> dict[str, Any]:
         return output
     print(f"Telegram bot: @{username}")
     print(f"Pairing link: {link}")
-    print(picture, end="")
+    sys.stdout.flush()
+    stream = getattr(sys.stdout, "buffer", None)
+    if stream is None:
+        sys.stdout.write(picture)
+        sys.stdout.flush()
+    else:
+        stream.write(picture.encode("utf-8"))
+        stream.flush()
     return output
 
 
@@ -852,7 +859,53 @@ PORTABLE_STATE_MAP = {
 }
 
 
-def _portable_status_fold(lines: list[str], task_id: str, kind: str) -> tuple[list[dict[str, str]], tuple[str, str] | None]:
+def _portable_busy_state(task_id: str, values: dict[str, str]) -> str | None:
+    record_path = operational_state_dir() / f"{task_id}.busy-state"
+    generation_path = operational_state_dir() / f"{task_id}.busy-gen"
+    if not record_path.exists() and not generation_path.exists():
+        return None
+    try:
+        if generation_path.stat().st_size > 256 or record_path.stat().st_size > 4096:
+            return "unknown"
+        generation = generation_path.read_text(encoding="ascii").strip()
+        raw = record_path.read_text(encoding="ascii")
+    except (OSError, UnicodeError):
+        return "unknown"
+    _portable_check_deadline()
+    lines = raw.splitlines()
+    if len(lines) != 1 or not re.fullmatch(r"[A-Za-z0-9._-]+", generation):
+        return "unknown"
+    fields = lines[0].split(" ")
+    if len(fields) != 7 or fields[0] != "v1":
+        return "unknown"
+    parsed: dict[str, str] = {}
+    for field in fields[1:]:
+        key, separator, value = field.partition("=")
+        if not separator or key in parsed or not value:
+            return "unknown"
+        parsed[key] = value
+    if set(parsed) != {"gen", "seq", "state", "source", "event", "ts"}:
+        return "unknown"
+    if parsed["gen"] != generation or parsed["state"] not in {"busy", "idle", "unknown"}:
+        return "unknown"
+    if not re.fullmatch(r"[0-9]+", parsed["seq"]) or not re.fullmatch(r"[0-9]+", parsed["ts"]):
+        return "unknown"
+    harness_sources = {
+        "claude": {"claude-hook"},
+        "gemini": {"gemini-hook"},
+        "opencode": {"opencode-plugin"},
+        "pi": {"pi-ext"},
+        "pi-signed": {"pi-ext"},
+        "omp": {"omp-ext"},
+        "codex": {"codex-hook", "codex-appserver"},
+        "kimi": {"kimi-wire", "kimi-hook"},
+    }
+    harness = values.get("harness", "").split("-", 1)[0]
+    trusted = {"fm-spawn", "fm-interrupt", "fm-recovery"} | harness_sources.get(harness, set())
+    return parsed["state"] if parsed["source"] in trusted else "unknown"
+
+
+def _portable_status_fold(lines: list[str], task_id: str, kind: str, lifecycle_state: str | None = None) -> tuple[list[dict[str, str]], tuple[str, str] | None]:
     open_decisions: list[dict[str, str]] = []
     latest: tuple[str, str] | None = None
     pause = os.environ.get("FM_CLASSIFY_PAUSED_VERB", "paused")
@@ -872,8 +925,6 @@ def _portable_status_fold(lines: list[str], task_id: str, kind: str) -> tuple[li
         if verb in ("done", "failed") and ":" in unstamped and kind in ("ship", "scout"):
             open_decisions.clear()
             continue
-        if verb == "working" and kind in ("ship", "scout"):
-            open_decisions.clear()
         if verb not in ("needs-decision", "blocked", resolve, held):
             continue
         key = _portable_status_key(unstamped)
@@ -884,6 +935,8 @@ def _portable_status_fold(lines: list[str], task_id: str, kind: str) -> tuple[li
         open_decisions = [entry for entry in open_decisions if entry["key"] != key]
         if verb in ("needs-decision", "blocked"):
             open_decisions.append({"id": task_id, "key": key, "verb": verb, "summary": note})
+    if lifecycle_state in ("working", "done", "failed") and kind in ("ship", "scout"):
+        open_decisions.clear()
     if latest is not None:
         latest = (latest[0], latest[1])
     return open_decisions, latest
@@ -928,10 +981,14 @@ def portable_snapshot(all_decisions: bool) -> str:
         kind = values.get("kind") or "ship"
         backend = values.get("backend", "tmux")
         target = values.get("remote_target") if values.get("remote_host") else values.get("window", "")
+        busy_state = _portable_busy_state(task_id, values)
         status_path = state / f"{task_id}.status"
         status_lines = _portable_read_status(status_path)
-        task_decisions, latest = _portable_status_fold(status_lines, task_id, kind)
-        current_state, doing = _portable_state_projection(task_decisions, latest)
+        task_decisions, latest = _portable_status_fold(status_lines, task_id, kind, "working" if busy_state == "busy" else None)
+        if busy_state == "busy":
+            current_state, doing = "working", "worker active"
+        else:
+            current_state, doing = _portable_state_projection(task_decisions, latest)
         backlog_record = backlog_by_id.get(task_id)
         if backlog_record is not None:
             if backlog_record.get("state") == "done":
@@ -955,11 +1012,25 @@ def portable_snapshot(all_decisions: bool) -> str:
         decision for decision in decisions
         if not any(existing["id"] == decision["id"] and existing["key"] == decision["key"] for existing in backlog_all_decisions)
     ]
-    visible_decisions = decisions if all_decisions else decisions[:20]
+    try:
+        decision_limit = int(os.environ.get("FM_BEARINGS_DECISIONS", "20"))
+    except ValueError:
+        decision_limit = 20
+    decision_limit = min(PORTABLE_MAX_RECORDS, max(1, decision_limit))
+    visible_decisions = decisions[:decision_limit]
     omitted = []
-    if not all_decisions and len(decisions) > len(visible_decisions):
-        omitted.append({"surface": f"decisions_open showing {len(visible_decisions)} of {len(decisions)}", "reveal": "--all-decisions"})
-    in_flight = [task for task in tasks if task["state"] in ("working", "parked", "blocked", "paused")]
+    if len(decisions) > len(visible_decisions):
+        omitted.append({"surface": f"decisions_open showing {len(visible_decisions)} of {len(decisions)}", "reveal": "--all-decisions" if not all_decisions else "raise FM_BEARINGS_DECISIONS", "count": len(decisions) - len(visible_decisions)})
+    in_flight = [
+        task for task in tasks
+        if task["state"] in ("working", "parked", "blocked", "paused")
+        and not (
+            task["state"] != "working"
+            and (backlog_by_id.get(task["id"]) or {}).get("state") == "in_flight"
+            and (backlog_by_id.get(task["id"]) or {}).get("hold_kind") == "captain"
+            and (backlog_by_id.get(task["id"]) or {}).get("hold_reason")
+        )
+    ]
     result: dict[str, Any] = {
         "schema": "fm-bearings.v1",
         "generated": iso_now(),
@@ -969,8 +1040,8 @@ def portable_snapshot(all_decisions: bool) -> str:
         "omitted": omitted,
     }
     raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
-    if len(raw.encode("utf-8")) > MAX_MESSAGE_CHARS:
-        raise TelegramError("portable status snapshot is too large")
+    if len(raw.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        return _compact_bearings_output(result)
     return raw
 
 
@@ -1568,17 +1639,67 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
     return output
 
 
+def _compact_bearings_output(value: dict[str, Any]) -> str:
+    def short(value: Any, limit: int = 40) -> str:
+        text = str(value or "").replace("\r", " ").replace("\n", " ")
+        return text[:limit]
+
+    def rows(name: str, limit: int = 3) -> list[dict[str, Any]]:
+        source = value.get(name)
+        if not isinstance(source, list):
+            return []
+        result: list[dict[str, Any]] = []
+        for row in source[:limit]:
+            if not isinstance(row, dict):
+                continue
+            if name == "decisions_open":
+                result.append({key: short(row.get(key)) for key in ("id", "key", "verb", "summary", "owner") if row.get(key) is not None})
+            else:
+                result.append({key: short(row.get(key)) for key in ("id", "kind", "state", "name", "doing") if row.get(key) is not None})
+        return result
+
+    array_counts = {key: len(item) for key, item in value.items() if isinstance(item, list)}
+    compact: dict[str, Any] = {
+        "schema": value.get("schema", "fm-bearings.v1"),
+        "summary": array_counts,
+        "tasks": rows("tasks"),
+        "in_flight": rows("in_flight"),
+        "decisions_open": rows("decisions_open"),
+        "omitted": [],
+    }
+    omitted: list[dict[str, Any]] = []
+    existing = value.get("omitted")
+    if isinstance(existing, list):
+        for item in existing[:4]:
+            if isinstance(item, dict):
+                omitted.append({key: short(item.get(key)) for key in ("surface", "reveal", "count") if item.get(key) is not None})
+    for key in ("tasks", "in_flight", "decisions_open"):
+        total = array_counts.get(key, 0)
+        shown = len(compact[key])
+        if total > shown:
+            omitted.append({"surface": key, "count": total - shown, "reveal": "request bounded status again"})
+    compact["omitted"] = omitted[:8]
+    compact["omitted_count"] = sum(int(item.get("count", 0)) for item in omitted if str(item.get("count", "")).isdigit())
+    return json.dumps(compact, separators=(",", ":"))
+
+
 def _telegram_owner_output(output: str) -> str:
     try:
         value = json.loads(output)
     except (TypeError, ValueError):
         return output
-    if not isinstance(value, dict) or value.get("schema") != "fm-inbox-note.v1":
+    if not isinstance(value, dict):
         return output
-    value.pop("path", None)
-    if "error" in value:
-        value["error"] = "note saved but wake could not be announced"
-    return json.dumps(value, separators=(",", ":"))
+    if value.get("schema") == "fm-inbox-note.v1":
+        value.pop("path", None)
+        if "error" in value:
+            value["error"] = "note saved but wake could not be announced"
+    encoded = json.dumps(value, separators=(",", ":"))
+    if len(encoded) <= MAX_MESSAGE_CHARS:
+        return encoded
+    if value.get("schema") == "fm-bearings.v1":
+        return _compact_bearings_output(value)
+    return encoded
 
 
 def _telegram_owner_error(exc: TelegramError) -> str:
@@ -1595,7 +1716,10 @@ def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | N
         raise DurableOwnerError(_telegram_owner_error(exc)) from exc
     except TelegramError as exc:
         raise TelegramError(_telegram_owner_error(exc)) from exc
-    return telegram_response(_telegram_owner_output(output))
+    result = _telegram_owner_output(output)
+    if len(result) > MAX_MESSAGE_CHARS:
+        raise TelegramError("Firstmate owner response is too large")
+    return telegram_response(result)
 
 
 def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:

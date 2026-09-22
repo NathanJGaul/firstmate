@@ -266,8 +266,22 @@ _fm_task_inbox_write_reservation_locked() {  # <inbox-dir> <record-name> <text> 
 }
 
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode] [idempotency-key]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' f want have reservation record_name existing_key status=0
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' f want have reservation record_name existing_key status=0 marker_body derived_key
   dir=$(fm_task_inbox_dir "$state" "$task")
+  if [ -z "$idempotency_key" ] && [ -n "${FM_FROMFIRST_MARK:-}" ]; then
+    marker_body=${text#"$FM_FROMFIRST_MARK"}
+    if [ "$marker_body" != "$text" ]; then
+      derived_key=${marker_body%% *}
+      case "$derived_key" in
+        delivery=*|corr=*)
+          derived_key=${derived_key#*=}
+          case "$derived_key" in
+            [a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9]) idempotency_key=$(printf '%s' "$derived_key" | tr 'A-F' 'a-f') ;;
+          esac
+          ;;
+      esac
+    fi
+  fi
   mkdir -p "$dir/handled" "$dir/.idempotency" || return 1
   lock="$dir/.seq.lock"
   fm_task_inbox_lock_acquire "$lock" || return 1

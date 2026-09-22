@@ -930,7 +930,11 @@ else
     remote_rc=0
     remote_completion_unknown=0
     REMOTE_SEND_ARGS=("$TARGET_REMOTE_ID" "$MESSAGE")
-    [ -z "$FIRE_AND_FORGET_ID" ] || REMOTE_SEND_ARGS+=(fire-and-forget)
+    if [ -n "$FIRE_AND_FORGET_ID" ]; then
+      REMOTE_SEND_ARGS+=(fire-and-forget "$FIRE_AND_FORGET_ID")
+    elif [ -n "$PENDING_REPLY_CORR" ]; then
+      REMOTE_SEND_ARGS+=("" "$PENDING_REPLY_CORR")
+    fi
     # Each transport attempt is bounded by FM_SEND_REMOTE_BUDGET seconds.
     # fm_run_timed's 124 means the attempt was killed at the bound with remote
     # completion unknown - the enqueue may have landed - so it exits through
