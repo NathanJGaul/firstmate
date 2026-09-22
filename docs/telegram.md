@@ -33,8 +33,10 @@ bin/fm-telegram.py disable
 
 ## Commands
 
-- `/status` reads bounded durable fleet status.
-- `/decisions` reads bounded open decisions.
+- `/status [page]` reads one bounded durable fleet-status page.
+- `/decisions [page]` reads one bounded open-decision page. Responses include a continuation command when another page exists.
+
+Pages start at 1. The default page size is 10 and `FM_TELEGRAM_PAGE_SIZE` may set it from 1 through 50 for the polling process.
 - `/note <text>` queues a note through `bin/fm-inbox.sh`.
 - `/steer <worker> <text>` sends reversible worker text through `bin/fm-send.sh`.
 
@@ -47,7 +49,7 @@ Telegram text is never evaluated by a shell.
 Inbound updates, the durable Telegram inbox, processed-update markers, outbound responses, poll errors, and the next update offset live under `state/telegram/`. The inbox is written before deduplication, owner dispatch, and offset publication; unfinished effects resume from their recorded state.
 The pairing record stores only a hash of the active nonce; the raw nonce appears only in the printed deep link.
 Bot tokens never enter those records.
-- A single Telegram response is limited to 256 KiB, command text to 4096 UTF-8 bytes, and outbound message text to 4096 characters.
+- A single Telegram response is limited to 256 KiB, command text to 4096 UTF-8 bytes, and outbound message text to 4096 characters. Status and decision pages stay within the Telegram message limit and expose `pagination.next_command` when more rows remain.
 - Owner-script calls are limited to 20 seconds, and one `getUpdates` request waits up to 50 seconds.
 Repeated Telegram update IDs do not execute commands twice.
 

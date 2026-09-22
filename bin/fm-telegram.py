@@ -42,6 +42,9 @@ PORTABLE_OWNER_TIMEOUT = 20
 DEFAULT_POLL_TIMEOUT = 30
 MAX_POLL_TIMEOUT = 50
 DEFAULT_PAIRING_TTL = 600
+DEFAULT_TELEGRAM_PAGE_SIZE = 10
+MAX_TELEGRAM_PAGE_SIZE = 50
+MAX_TELEGRAM_PAGE = 100000
 TOKEN_RE = re.compile(r"^[0-9]+:[A-Za-z0-9_-]{20,}$")
 ID_RE = re.compile(r"^[0-9]+$")
 CHAT_ID_RE = re.compile(r"^-?[0-9]+$")
@@ -1018,8 +1021,12 @@ def _portable_state_projection(open_decisions: list[dict[str, str]], latest: tup
     return state, note[:256] if state != "unknown" else ""
 
 
-def portable_snapshot(all_decisions: bool) -> str:
+def portable_snapshot(all_decisions: bool, page_kind: str | None = None, page_offset: int = 0, page_limit: int | None = None) -> str:
     _portable_check_deadline()
+    if page_kind not in (None, "in_flight", "decisions") or page_offset < 0 or page_offset > MAX_TELEGRAM_PAGE * MAX_TELEGRAM_PAGE_SIZE:
+        raise TelegramError("Telegram page is malformed")
+    if page_kind is not None and (page_limit is None or page_limit < 1 or page_limit > MAX_TELEGRAM_PAGE_SIZE + 1):
+        raise TelegramError("Telegram page is malformed")
     tasks: list[dict[str, Any]] = []
     decisions: list[dict[str, str]] = []
     state = operational_state_dir()
@@ -1074,10 +1081,14 @@ def portable_snapshot(all_decisions: bool) -> str:
         if not any(existing["id"] == decision["id"] and existing["key"] == decision["key"] for existing in backlog_all_decisions)
     ]
     decision_limit = _portable_bound("FM_BEARINGS_DECISIONS", 20)
-    visible_decisions = decisions[:decision_limit]
+    if page_kind == "decisions":
+        visible_decisions = decisions[page_offset:page_offset + (page_limit or decision_limit)]
+    else:
+        visible_decisions = decisions[:decision_limit]
     omitted: list[dict[str, Any]] = []
-    if len(decisions) > len(visible_decisions):
-        omitted.append({"surface": f"decisions_open showing {len(visible_decisions)} of {len(decisions)}", "reveal": "--all-decisions" if not all_decisions else "raise FM_BEARINGS_DECISIONS", "count": len(decisions) - len(visible_decisions)})
+    decisions_end = page_offset + len(visible_decisions) if page_kind == "decisions" else len(visible_decisions)
+    if len(decisions) > decisions_end:
+        omitted.append({"surface": f"decisions_open showing {decisions_end} of {len(decisions)}", "reveal": "--all-decisions" if not all_decisions else "raise FM_BEARINGS_DECISIONS", "count": len(decisions) - decisions_end})
     in_flight_all = [
         task for task in tasks
         if task["state"] in ("working", "parked", "blocked", "paused")
@@ -1089,9 +1100,13 @@ def portable_snapshot(all_decisions: bool) -> str:
         )
     ]
     in_flight_limit = _portable_bound("FM_BEARINGS_IN_FLIGHT", 20)
-    in_flight = in_flight_all[:in_flight_limit]
-    if len(in_flight_all) > len(in_flight):
-        omitted.append({"surface": f"in_flight showing {len(in_flight)} of {len(in_flight_all)}", "reveal": "--all-in-flight", "count": len(in_flight_all) - len(in_flight)})
+    if page_kind == "in_flight":
+        in_flight = in_flight_all[page_offset:page_offset + (page_limit or in_flight_limit)]
+    else:
+        in_flight = in_flight_all[:in_flight_limit]
+    in_flight_end = page_offset + len(in_flight) if page_kind == "in_flight" else len(in_flight)
+    if len(in_flight_all) > in_flight_end:
+        omitted.append({"surface": f"in_flight showing {in_flight_end} of {len(in_flight_all)}", "reveal": "--all-in-flight", "count": len(in_flight_all) - in_flight_end})
     result: dict[str, Any] = {
         "schema": "fm-bearings.v1",
         "generated": iso_now(),
@@ -1662,7 +1677,13 @@ def portable_owner(argv: list[str], stdin: str, env_extra: dict[str, str] | None
         command = Path(argv[0]).name
         owner_env = env_extra or {}
         if command == "fm-bearings-snapshot.sh":
-            return portable_snapshot("--all-decisions" in argv)
+            page_kind = owner_env.get("FM_TELEGRAM_PAGE_KIND")
+            try:
+                page_offset = int(owner_env.get("FM_TELEGRAM_PAGE_OFFSET", "0"))
+                page_limit = int(owner_env["FM_TELEGRAM_PAGE_LIMIT"]) if page_kind is not None else None
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise TelegramError("Telegram page is malformed") from exc
+            return portable_snapshot("--all-decisions" in argv, page_kind, page_offset, page_limit)
         if command == "fm-inbox.sh" and len(argv) >= 4 and argv[1] == "note":
             request_index = argv.index("--request-id") + 1
             return portable_note(validate_text(stdin, "note"), argv[request_index])
@@ -1694,6 +1715,8 @@ def _durable_note_owner_result(output: str) -> str | None:
     note_id = value.get("id")
     if not isinstance(note_id, str) or NOTE_ID_RE.fullmatch(note_id) is None:
         return None
+    if value.get("announced") is not True and value.get("acknowledged") is not True:
+        raise DurableOwnerError(output.strip())
     return output.strip()
 
 
@@ -1776,6 +1799,12 @@ def _compact_bearings_output(value: dict[str, Any]) -> str:
             "decisions_open": rows("decisions_open"),
             "omitted": [],
         }
+        if isinstance(value.get("pagination"), dict):
+            compact["pagination"] = {
+                key: value["pagination"].get(key)
+                for key in ("page", "page_size", "next_page", "next_command")
+                if key in value["pagination"]
+            }
         omitted: list[dict[str, Any]] = []
         if isinstance(existing, list):
             for item in existing[:4]:
@@ -1825,14 +1854,82 @@ def _telegram_owner_error(exc: TelegramError) -> str:
     return message
 
 
-def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
+def _telegram_page_output(output: str, command: str, page: int, page_size: int, collection: str) -> str:
+    try:
+        value = json.loads(output)
+    except (TypeError, ValueError):
+        return _telegram_owner_output(output)
+    if not isinstance(value, dict) or value.get("schema") != "fm-bearings.v1" or not isinstance(value.get(collection), list):
+        return _telegram_owner_output(output)
+    rows = value[collection]
+    has_more = len(rows) > page_size
+    value[collection] = rows[:page_size]
+    next_page = page + 1 if has_more else None
+    value["pagination"] = {
+        "page": page,
+        "page_size": page_size,
+        "next_page": next_page,
+        "next_command": f"{command} {next_page}" if next_page is not None else None,
+    }
+    return _telegram_owner_output(json.dumps(value, separators=(",", ":")))
+
+
+def _telegram_page_size() -> int:
+    raw = os.environ.get("FM_TELEGRAM_PAGE_SIZE", str(DEFAULT_TELEGRAM_PAGE_SIZE))
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        raise TelegramError(f"Telegram page size must be between 1 and {MAX_TELEGRAM_PAGE_SIZE}")
+    value = int(raw)
+    if value < 1 or value > MAX_TELEGRAM_PAGE_SIZE:
+        raise TelegramError(f"Telegram page size must be between 1 and {MAX_TELEGRAM_PAGE_SIZE}")
+    return value
+
+
+def _telegram_page_number(text: str, command: str) -> int:
+    if text == command:
+        return 1
+    prefix = f"{command} "
+    if not text.startswith(prefix):
+        raise TelegramError("unsupported Telegram command")
+    raw = text[len(prefix):]
+    if re.fullmatch(r"[0-9]{1,6}", raw) is None:
+        raise TelegramError(f"{command} page must be between 1 and {MAX_TELEGRAM_PAGE}")
+    page = int(raw)
+    if page < 1 or page > MAX_TELEGRAM_PAGE:
+        raise TelegramError(f"{command} page must be between 1 and {MAX_TELEGRAM_PAGE}")
+    return page
+
+
+def _telegram_snapshot_page(command: str, page: int, page_size: int) -> str:
+    collection = "in_flight" if command == "/status" else "decisions_open"
+    offset = (page - 1) * page_size
+    limit = page_size + 1
+    env_extra = {
+        "FM_TELEGRAM_PAGE_KIND": collection,
+        "FM_TELEGRAM_PAGE_OFFSET": str(offset),
+        "FM_TELEGRAM_PAGE_LIMIT": str(limit),
+    }
+    if collection == "in_flight":
+        env_extra.update({"FM_BEARINGS_IN_FLIGHT": str(limit), "FM_BEARINGS_IN_FLIGHT_OFFSET": str(offset)})
+    else:
+        env_extra.update({"FM_BEARINGS_DECISIONS": str(limit), "FM_BEARINGS_DECISIONS_OFFSET": str(offset), "FM_BEARINGS_DECISIONS_PAGED": "1"})
+    arguments = [str(root() / "bin/fm-bearings-snapshot.sh"), "--json"]
+    if command == "/decisions":
+        arguments.append("--all-decisions")
+    return owner_result(arguments, env_extra=env_extra, page=(command, page, page_size, collection))
+
+
+def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None, page: tuple[str, int, int, str] | None = None) -> str:
     try:
         output = owner(argv, stdin, env_extra)
     except DurableOwnerError as exc:
         raise DurableOwnerError(_telegram_owner_error(exc)) from exc
     except TelegramError as exc:
         raise TelegramError(_telegram_owner_error(exc)) from exc
-    result = _telegram_owner_output(output)
+    if page is not None:
+        command, page_number, page_size, collection = page
+        result = _telegram_page_output(output, command, page_number, page_size, collection)
+    else:
+        result = _telegram_owner_output(output)
     return telegram_response(result)
 
 
@@ -1843,10 +1940,10 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
     if not identity(record, user_id, chat_id):
         raise TelegramError("Telegram identity is not paired")
     text = validate_text(text)
-    if text == "/status":
-        return owner_result([str(root() / "bin/fm-bearings-snapshot.sh"), "--json"])
-    if text == "/decisions":
-        return owner_result([str(root() / "bin/fm-bearings-snapshot.sh"), "--json", "--all-decisions"])
+    if text == "/status" or text.startswith("/status "):
+        return _telegram_snapshot_page("/status", _telegram_page_number(text, "/status"), _telegram_page_size())
+    if text == "/decisions" or text.startswith("/decisions "):
+        return _telegram_snapshot_page("/decisions", _telegram_page_number(text, "/decisions"), _telegram_page_size())
     if text.startswith("/note "):
         body = validate_text(text[6:], "note")
         return owner_result([str(root() / "bin/fm-inbox.sh"), "note", "--request-id", f"telegram-{update_id}", "--json", "-"], body)
