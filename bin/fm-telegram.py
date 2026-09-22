@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -36,6 +37,9 @@ TOKEN_RE = re.compile(r"^[0-9]+:[A-Za-z0-9_-]{20,}$")
 ID_RE = re.compile(r"^[0-9]+$")
 CHAT_ID_RE = re.compile(r"^-?[0-9]+$")
 WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+NOTE_ID_RE = re.compile(r"^[0-9]+-[A-Za-z0-9._-]+$")
+FROMFIRST_MARK = "[fm-from-firstmate]\u2063"
 
 
 
@@ -473,17 +477,14 @@ def setup(token: str, machine: bool) -> dict[str, Any]:
         "schema": "fm-telegram-setup.v1",
         "bot_username": username,
         "deep_link": link,
-        "qr": picture or None,
+        "qr": picture,
         "nonce_expires_at": record["nonce_expires_at"],
     }
     if machine:
         return output
     print(f"Telegram bot: @{username}")
     print(f"Pairing link: {link}")
-    if picture:
-        print(picture, end="")
-    else:
-        print("QR unavailable; open the pairing link above.")
+    print(picture, end="")
     return output
 
 
@@ -540,26 +541,195 @@ def read_key_value(path: Path) -> dict[str, str]:
     return values
 
 
+def _portable_status_unstamped(line: str) -> str:
+    rest = line
+    kept = ""
+    while "[at=" in rest and "]" in rest:
+        before, after = rest.split("[at=", 1)
+        if ":" in before:
+            break
+        kept += before.rstrip()
+        rest = after.split("]", 1)[1]
+    return kept + rest
+
+
+def _portable_decisions(status_path: Path, task_id: str, kind: str) -> list[dict[str, str]]:
+    if status_path.is_symlink() or not status_path.is_file():
+        return []
+    open_decisions: dict[str, dict[str, str]] = {}
+    try:
+        lines = status_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        unstamped = _portable_status_unstamped(line)
+        head, separator, note = unstamped.partition(":")
+        head = head.strip()
+        verb = head.split("[", 1)[0].strip()
+        words = verb.split()
+        if len(words) > 1 and all(re.fullmatch(r"corr=[0-9A-Fa-f]{16}", word) for word in words[1:]):
+            verb = words[0]
+        if verb in ("done", "failed") and separator and kind in ("ship", "scout"):
+            open_decisions.clear()
+            continue
+        if verb not in ("needs-decision", "blocked", "resolved", "captain-held"):
+            continue
+        before_key = re.search(r"\[key=([^\]]+)\]", head)
+        key = before_key.group(1) if before_key else ""
+        if not key and separator:
+            note_head = note.lstrip()
+            note_key = re.match(r"\[key=([^\]]+)\]", note_head)
+            if note_key:
+                key = note_key.group(1)
+                note = note_head[note_key.end():].lstrip()
+        if not key:
+            key = "default"
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", key):
+            continue
+        note = note.strip() if separator else ""
+        if key.startswith("pending-reply-") and not re.match(r"pending-reply-[^:]+:", note):
+            continue
+        if verb in ("resolved", "captain-held"):
+            open_decisions.pop(key, None)
+        else:
+            open_decisions.pop(key, None)
+            open_decisions[key] = {"id": task_id, "key": key, "verb": verb, "summary": note}
+    return list(open_decisions.values())
+
+
 def portable_snapshot(all_decisions: bool) -> str:
-    tasks = []
+    tasks: list[dict[str, Any]] = []
+    decisions: list[dict[str, str]] = []
     state = operational_state_dir()
     for meta in sorted(state.glob("*.meta")):
+        if meta.is_symlink() or not meta.is_file():
+            continue
         values = read_key_value(meta)
         task_id = values.get("id", meta.stem)
         if not WORKER_RE.fullmatch(task_id):
             continue
-        row: dict[str, Any] = {"id": task_id, "kind": values.get("kind"), "backend": values.get("backend"), "target": values.get("target")}
+        kind = values.get("kind") or "ship"
+        row: dict[str, Any] = {"id": task_id, "kind": kind, "backend": values.get("backend", "tmux"), "target": values.get("window", "")}
         status_path = state / f"{task_id}.status"
         if status_path.is_file() and not status_path.is_symlink():
             try:
-                row["latest_event"] = status_path.read_text(encoding="utf-8", errors="replace").splitlines()[-1:]
+                status_lines = status_path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
-                row["latest_event"] = []
+                status_lines = []
+            row["latest_event"] = status_lines[-1] if status_lines else ""
+        task_decisions = _portable_decisions(status_path, task_id, kind)
+        decisions.extend(task_decisions)
         tasks.append(row)
-    result: dict[str, Any] = {"schema": "fm-bearings-snapshot.v1", "tasks": tasks}
-    if all_decisions:
-        result["decisions"] = []
+    visible_decisions = decisions if all_decisions else decisions[:20]
+    result: dict[str, Any] = {
+        "schema": "fm-bearings.v1",
+        "generated": iso_now(),
+        "tasks": tasks,
+        "in_flight": tasks,
+        "decisions_open": visible_decisions,
+        "decisions": visible_decisions,
+    }
     return json.dumps(result, sort_keys=True, separators=(",", ":"))
+
+
+def _portable_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _portable_lock_stale_after() -> float:
+    try:
+        value = float(os.environ.get("FM_LOCK_STALE_AFTER", "2"))
+    except ValueError:
+        value = 2
+    return value if value > 0 else 2
+
+
+def _portable_lock_is_stale(path: Path) -> bool:
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return False
+    if age < _portable_lock_stale_after():
+        return False
+    owner = path / "owner"
+    try:
+        parts = owner.read_text(encoding="ascii").strip().split("\t")
+        pid = int(parts[0]) if parts else 0
+    except (OSError, ValueError, UnicodeError):
+        pid = 0
+    return not _portable_pid_alive(pid)
+
+
+def portable_lock_acquire(path: Path) -> str:
+    ensure_private_dir(path.parent)
+    token = secrets.token_hex(8)
+    deadline = time.time() + 5
+    while True:
+        if path.is_symlink():
+            raise TelegramError(f"unsafe portable lock: {path}")
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            if _portable_lock_is_stale(path):
+                reclaimed = path.parent / f".{path.name}.reclaim.{os.getpid()}.{token}"
+                try:
+                    path.rename(reclaimed)
+                    if reclaimed.is_dir():
+                        shutil.rmtree(reclaimed)
+                    else:
+                        reclaimed.unlink(missing_ok=True)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    pass
+                continue
+            if time.time() >= deadline:
+                raise TelegramError(f"portable lock could not be acquired: {path}")
+            time.sleep(0.05)
+        except OSError as exc:
+            raise TelegramError(f"portable lock could not be acquired: {path}") from exc
+        else:
+            atomic_write(path / "owner", f"{os.getpid()}\t{token}\n".encode("ascii"))
+            return token
+
+
+def portable_lock_release(path: Path, token: str) -> None:
+    owner = path / "owner"
+    try:
+        value = owner.read_text(encoding="ascii").strip().split("\t")
+        if len(value) != 2 or value[1] != token:
+            return
+        shutil.rmtree(path)
+    except (FileNotFoundError, OSError, UnicodeError):
+        return
+
+
+def _portable_wake_append_locked(state: Path, target: str, summary: str) -> None:
+    sequence_path = state / ".wake-queue.seq"
+    try:
+        sequence = int(sequence_path.read_text(encoding="utf-8").strip()) if sequence_path.exists() else 0
+    except (OSError, ValueError):
+        sequence = 0
+    sequence += 1
+    atomic_write(sequence_path, f"{sequence}\n".encode("utf-8"))
+    queue = state / ".wake-queue"
+    if queue.is_symlink() or (queue.exists() and not queue.is_file()):
+        raise TelegramError("unsafe portable wake queue")
+    safe_summary = bounded(summary).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    with queue.open("a", encoding="utf-8") as stream:
+        stream.write(f"{now()}\t{sequence}\tcheck\t{target}\t{safe_summary}\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def portable_wake(note_id: str, body: str) -> None:
@@ -569,67 +739,104 @@ def portable_wake(note_id: str, body: str) -> None:
     ensure_private_dir(marker_dir)
     marker = marker_dir / note_id
     lock = state / ".wake-queue.lock"
-    deadline = time.time() + 5
-    while True:
-        try:
-            os.mkdir(lock, 0o700)
-            break
-        except FileExistsError:
-            if time.time() >= deadline:
-                raise TelegramError("portable inbox wake could not be locked")
-            time.sleep(0.05)
-        except OSError as exc:
-            raise TelegramError("portable inbox wake could not be locked") from exc
+    token = portable_lock_acquire(lock)
     try:
         if marker.is_symlink() or (marker.exists() and not marker.is_file()):
             raise TelegramError("portable inbox announcement marker is unsafe")
         if marker.exists():
             return
-        sequence_path = state / ".wake-queue.seq"
-        try:
-            sequence = int(sequence_path.read_text(encoding="utf-8").strip()) if sequence_path.exists() else 0
-        except (OSError, ValueError):
-            sequence = 0
-        sequence += 1
-        atomic_write(sequence_path, f"{sequence}\n".encode("utf-8"))
-        with (state / ".wake-queue").open("a", encoding="utf-8") as stream:
-            stream.write(f"{now()}\t{sequence}\tcheck\tinbox:{note_id}\tcheck: captain inbox note {note_id} - {bounded(body).replace(chr(10), ' ')}\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        _portable_wake_append_locked(state, f"inbox:{note_id}", f"check: captain inbox note {note_id} - {bounded(body)}")
         atomic_write(marker, f"{iso_now()}\n".encode("utf-8"))
     except OSError as exc:
         raise TelegramError("portable inbox wake could not be persisted") from exc
     finally:
+        portable_lock_release(lock, token)
+
+
+def portable_task_wake(target: str, record_path: Path) -> None:
+    state = operational_state_dir()
+    lock = state / ".wake-queue.lock"
+    token = portable_lock_acquire(lock)
+    try:
+        record_dir = record_path.parent
+        if record_dir.name == "handled":
+            record_dir = record_dir.parent
+        path_text = str(record_dir).replace("\\", "/").replace("'", "'\\\\''")
+        summary = f": Firstmate instruction waiting: list '{path_text}'/*.msg and, in numeric order, read and act on each, then mv each handled file to '{path_text}'/handled/."
+        _portable_wake_append_locked(state, f"inbox:{target}", summary)
+    finally:
+        portable_lock_release(lock, token)
+
+
+def _portable_atomic_claim(path: Path, data: bytes) -> bool:
+    ensure_private_dir(path.parent)
+    if path.is_symlink():
+        raise TelegramError(f"unsafe portable reservation: {path}")
+    tmp = path.parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
         try:
-            lock.rmdir()
+            os.link(tmp, path)
+        except FileExistsError:
+            return False
         except OSError:
-            pass
+            lock = path.parent / f".{path.name}.lock"
+            token = portable_lock_acquire(lock)
+            try:
+                if path.exists():
+                    return False
+                atomic_write(path, data)
+                return True
+            finally:
+                portable_lock_release(lock, token)
+        return True
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _portable_reservation_id(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        raise TelegramError("portable inbox request is unsafe")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise TelegramError("portable inbox request is unreadable") from exc
+    note_id = lines[0].strip() if lines else ""
+    if not NOTE_ID_RE.fullmatch(note_id):
+        if not lines or not "".join(lines).strip():
+            path.unlink()
+            return None
+        raise TelegramError("portable inbox request is malformed")
+    return note_id
 
 
 def portable_note(body: str, request_id: str) -> str:
+    body = validate_text(body, "note")
+    if not REQUEST_ID_RE.fullmatch(request_id):
+        raise TelegramError("portable inbox request ID is malformed")
     directory = operational_state_dir() / "inbox"
     request_dir = directory / ".requests"
     ensure_private_dir(directory)
     ensure_private_dir(request_dir)
     request_path = request_dir / request_id
     created = False
-    if request_path.exists():
-        if request_path.is_symlink() or not request_path.is_file():
-            raise TelegramError("portable inbox request is unsafe")
-        note_id = request_path.read_text(encoding="utf-8").splitlines()[0]
-    else:
-        note_id = f"{now()}-{secrets.token_hex(4)}"
-        try:
-            fd = os.open(request_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            note_id = request_path.read_text(encoding="utf-8").splitlines()[0]
-        except OSError as exc:
-            raise TelegramError("portable inbox request could not be reserved") from exc
-        else:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(note_id + "\n")
+    note_id = _portable_reservation_id(request_path) if request_path.exists() else None
+    if note_id is None:
+        candidate = f"{now()}-{secrets.token_hex(4)}"
+        if _portable_atomic_claim(request_path, f"{candidate}\n".encode("ascii")):
+            note_id = candidate
             created = True
+        else:
+            note_id = _portable_reservation_id(request_path)
+            if note_id is None:
+                raise TelegramError("portable inbox request could not be recovered")
     note_path = directory / f"{note_id}.note"
+    if note_path.is_symlink() or (note_path.exists() and not note_path.is_file()):
+        raise TelegramError("portable inbox note is unsafe")
     if not note_path.exists():
         note = f"id={note_id}\nat={iso_now()}\nsource=telegram\nannounce_marker=1\nrequest_id={request_id}\n--\n{body}\n"
         atomic_write(note_path, note.encode("utf-8"))
@@ -637,35 +844,72 @@ def portable_note(body: str, request_id: str) -> str:
     return json.dumps({"schema": "fm-inbox-note.v1", "outcome": "created" if created else "replay", "id": note_id, "request_id": request_id, "saved": True, "announced": True, "acknowledged": False, "path": str(note_path)}, separators=(",", ":"))
 
 
-def portable_send(target: str, body: str) -> str:
-    state = operational_state_dir()
-    meta = state / f"{target}.meta"
-    if not meta.is_file() or meta.is_symlink():
+def _portable_record_body(path: Path) -> str | None:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return content.split("\n--\n", 1)[1] if "\n--\n" in content else None
+
+
+def portable_task_id(target: str, state: Path) -> str:
+    if state.joinpath(f"{target}.meta").is_file():
+        return target
+    if target.startswith("fm-") and state.joinpath(f"{target[3:]}.meta").is_file():
+        return target[3:]
+    raise TelegramError("Firstmate owner script rejected request")
+
+
+def portable_send(target: str, body: str, delivery_id: str) -> str:
+    body = validate_text(body, "steer")
+    if body.lstrip().startswith(("/", "$")):
+        raise TelegramError("steer text cannot start with a parser-native prefix")
+    if not WORKER_RE.fullmatch(target) or not re.fullmatch(r"[a-f0-9]{16}", delivery_id):
         raise TelegramError("Firstmate owner script rejected request")
-    inbox = state / f"{target}.inbox"
+    state = operational_state_dir()
+    task_id = portable_task_id(target, state)
+    meta = state / f"{task_id}.meta"
+    if meta.is_symlink() or read_key_value(meta).get("kind") != "secondmate":
+        raise TelegramError("Firstmate owner script rejected request")
+    inbox = state / f"{task_id}.inbox"
     handled = inbox / "handled"
     ensure_private_dir(inbox)
     ensure_private_dir(handled)
-    records = list(inbox.glob("*.msg")) + list(handled.glob("*.msg"))
-    for record in records:
-        if record.is_symlink() or not record.is_file():
-            continue
-        try:
-            content = record.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if "\n--\n" in content and content.split("\n--\n", 1)[1] == body:
-            return f"steer delivered to {target}"
-    numbers = []
-    for record in records:
-        try:
-            numbers.append(int(record.stem))
-        except ValueError:
-            pass
-    sequence = f"{max(numbers, default=0) + 1:03d}"
-    record_path = inbox / f"{sequence}.msg"
-    record = f"schema=fm-task-inbox.v1\nat={iso_now()}\n--\n{body}"
-    atomic_write(record_path, record.encode("utf-8"))
+    wire_body = f"{FROMFIRST_MARK}delivery={delivery_id} {body}"
+    lock = inbox / ".seq.lock"
+    token = portable_lock_acquire(lock)
+    record_path: Path | None = None
+    try:
+        records = list(inbox.glob("*.msg")) + list(handled.glob("*.msg"))
+        for record in records:
+            if record.is_symlink() or not record.is_file():
+                continue
+            existing = _portable_record_body(record)
+            if existing is None:
+                continue
+            match = re.match(rf"^{re.escape(FROMFIRST_MARK)}delivery=([a-f0-9]{{16}}) (.*)$", existing, re.DOTALL)
+            if match and match.group(1) == delivery_id:
+                if existing != wire_body:
+                    raise TelegramError("Firstmate delivery ID was reused for different text")
+                record_path = record
+                break
+        if record_path is None:
+            numbers = []
+            for record in records:
+                try:
+                    numbers.append(int(record.stem))
+                except ValueError:
+                    pass
+            sequence = f"{max(numbers, default=0) + 1:03d}"
+            record_path = inbox / f"{sequence}.msg"
+            record = f"schema=fm-task-inbox.v1\nat={iso_now()}\ndelivery=fire-and-forget\n--\n{wire_body}"
+            atomic_write(record_path, record.encode("utf-8"))
+    finally:
+        portable_lock_release(lock, token)
+    try:
+        portable_task_wake(task_id, record_path)
+    except TelegramError:
+        pass
     return f"steer delivered to {target}"
 
 
@@ -676,8 +920,15 @@ def portable_owner(argv: list[str], stdin: str) -> str:
     if command == "fm-inbox.sh" and len(argv) >= 4 and argv[1] == "note":
         request_index = argv.index("--request-id") + 1
         return portable_note(validate_text(stdin, "note"), argv[request_index])
-    if command == "fm-send.sh" and len(argv) >= 3:
-        return portable_send(argv[1], validate_text(argv[-1], "steer"))
+    if command == "fm-send.sh" and len(argv) >= 5 and "--fire-and-forget" in argv:
+        flag = argv.index("--fire-and-forget")
+        if flag + 2 >= len(argv):
+            raise TelegramError("Firstmate owner script rejected request")
+        delivery_id = argv[flag + 1]
+        body = validate_text(" ".join(argv[flag + 2:]), "steer")
+        if body.lstrip().startswith(("/", "$")):
+            raise TelegramError("steer text cannot start with a parser-native prefix")
+        return portable_send(argv[1], body, delivery_id)
     raise TelegramError("Firstmate owner script unavailable on this platform")
 
 
@@ -880,8 +1131,14 @@ def complete_update(record: dict[str, Any]) -> bool:
         record.update({"state": "complete", "delivery": "not-applicable"})
         record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
         return True
+    sequence = record.get("outbound_sequence")
+    if sequence is None:
+        sequence = str(record["update_id"])
+        record["outbound_sequence"] = sequence
+        record["state"] = "response_pending"
+        record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
     try:
-        sequence = send_message(chat_id, str(record["update_id"]), str(record.get("command", "rejected")), str(record.get("reply", "")), record.get("outbound_sequence"))
+        send_message(chat_id, str(record["update_id"]), str(record.get("command", "rejected")), str(record.get("reply", "")), sequence)
     except TelegramError:
         record["delivery"] = "pending"
         record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
@@ -1020,7 +1277,7 @@ def worker_loop() -> None:
         time.sleep(0.1)
     while worker_path().exists():
         try:
-            _poll(False)
+            poll(False)
         except TelegramError:
             time.sleep(5)
 
@@ -1037,13 +1294,14 @@ def portable_enable() -> str:
             path.unlink(missing_ok=True)
         else:
             if pid <= 0:
-                return "Telegram polling already enabled"
-            try:
-                os.kill(pid, 0)
-            except OSError:
                 path.unlink(missing_ok=True)
             else:
-                return "Telegram polling already enabled"
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    path.unlink(missing_ok=True)
+                else:
+                    return "Telegram polling already enabled"
     ensure_private_dir(path.parent)
     record_json(path.parent, path.name, {"schema": "fm-telegram-worker.v1", "pid": 0, "at": iso_now()})
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)

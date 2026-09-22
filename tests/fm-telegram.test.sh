@@ -76,13 +76,145 @@ assert_contains "$setup" 'firstmate_test_bot' 'setup prints bot username'
 assert_contains "$setup" 'https://t.me/firstmate_test_bot?start=' 'setup prints Telegram deep link'
 assert_contains "$setup" '"qr":' 'machine setup records QR field'
 assert_not_contains "$setup" '"qr": null' 'machine setup always includes bundled QR output'
+decoded_link=$(python3 - "$setup" <<'PY'
+import json
+import re
+import sys
+
+setup = json.loads(sys.argv[1])
+expected = setup["deep_link"]
+rows = setup["qr"].rstrip("\n").splitlines()
+assert rows and len({len(row) for row in rows}) == 1
+assert len(rows[0]) % 2 == 0 and len(rows) == len(rows[0]) // 2
+full = [[row[column:column + 2] == "██" for column in range(0, len(row), 2)] for row in rows]
+assert all(cell in ("██", "  ") for row in rows for cell in re.findall("..", row))
+quiet = 4
+size = len(full) - quiet * 2
+assert size == len(full[0]) - quiet * 2 and size >= 21
+modules = [row[quiet:-quiet] for row in full[quiet:-quiet]]
+version = (size - 17) // 4
+blocks = {
+    1: ((1, 26, 16),), 2: ((1, 44, 28),), 3: ((1, 70, 44),),
+    4: ((2, 50, 32),), 5: ((2, 67, 43),), 6: ((4, 43, 27),),
+    7: ((4, 49, 31),), 8: ((2, 60, 38), (2, 61, 39)),
+    9: ((3, 58, 36), (2, 59, 37)), 10: ((4, 69, 43), (1, 70, 44)),
+}
+alignment = {
+    2: (6, 18), 3: (6, 22), 4: (6, 26), 5: (6, 30), 6: (6, 34),
+    7: (6, 22, 38), 8: (6, 24, 42), 9: (6, 26, 46), 10: (6, 28, 50),
+}
+def finder(row, column):
+    for dy in range(-1, 8):
+        for dx in range(-1, 8):
+            y, x = row + dy, column + dx
+            if 0 <= y < size and 0 <= x < size:
+                modules[y][x] = 0 <= dx <= 6 and 0 <= dy <= 6 and (dx in (0, 6) or dy in (0, 6) or 2 <= dx <= 4 and 2 <= dy <= 4)
+
+modules = [[None] * size for _ in range(size)]
+finder(0, 0)
+finder(size - 7, 0)
+finder(0, size - 7)
+for coordinate in alignment.get(version, ()):
+    for row in alignment.get(version, ()):
+        if modules[row][coordinate] is not None:
+            continue
+        for dy in range(-2, 3):
+            for dx in range(-2, 3):
+                modules[row + dy][coordinate + dx] = max(abs(dx), abs(dy)) != 1
+for index in range(8, size - 8):
+    if modules[6][index] is None:
+        modules[6][index] = index % 2 == 0
+    if modules[index][6] is None:
+        modules[index][6] = index % 2 == 0
+modules[size - 8][8] = True
+for index in range(15):
+    if index < 6:
+        modules[index][8] = False
+    elif index < 8:
+        modules[index + 1][8] = False
+    else:
+        modules[size - 15 + index][8] = False
+    if index < 8:
+        modules[8][size - index - 1] = False
+    elif index == 8:
+        modules[8][7] = False
+    else:
+        modules[8][15 - index - 1] = False
+format_bits = 0
+for index in range(15):
+    if index < 6:
+        bit = full[quiet + index][quiet + 8]
+    elif index < 8:
+        bit = full[quiet + index + 1][quiet + 8]
+    else:
+        bit = full[quiet + size - 15 + index][quiet + 8]
+    format_bits |= int(bit) << index
+mask = ((format_bits ^ 0x5412) >> 10) & 7
+def mask_bit(row, column):
+    if mask == 0: return (row + column) % 2 == 0
+    if mask == 1: return row % 2 == 0
+    if mask == 2: return column % 3 == 0
+    if mask == 3: return (row + column) % 3 == 0
+    if mask == 4: return (row // 2 + column // 3) % 2 == 0
+    if mask == 5: return row * column % 2 + row * column % 3 == 0
+    if mask == 6: return (row * column % 2 + row * column % 3) % 2 == 0
+    return ((row * column) % 3 + (row + column) % 2) % 2 == 0
+bits = []
+row = size - 1
+upward = True
+column = size - 1
+while column > 0:
+    if column == 6:
+        column -= 1
+    for _ in range(size):
+        row_index = row if upward else size - 1 - row
+        for column_index in (column, column - 1):
+            if modules[row_index][column_index] is None:
+                bits.append(int(full[quiet + row_index][quiet + column_index] ^ mask_bit(row_index, column_index)))
+        row -= 1
+    row = size - 1
+    upward = not upward
+    column -= 2
+spec = blocks[version]
+total_codewords = sum(count * total for count, total, _ in spec)
+bits = bits[:total_codewords * 8]
+codewords = [sum(bits[index + offset] << (7 - offset) for offset in range(8)) for index in range(0, len(bits), 8)]
+block_data = []
+block_total = []
+for count, total, data_count in spec:
+    block_total.extend([total] * count)
+    block_data.extend([data_count] * count)
+block_bytes = [[] for _ in block_data]
+position = 0
+for index in range(max(block_data)):
+    for block_index, data_count in enumerate(block_data):
+        if index < data_count:
+            block_bytes[block_index].append(codewords[position])
+            position += 1
+for index in range(max(total - data for total, data in zip(block_total, block_data))):
+    for block_index, total in enumerate(block_total):
+        data_count = block_data[block_index]
+        if index < total - data_count:
+            position += 1
+assert position == len(codewords)
+payload = bytes(value for block, data_count in zip(block_bytes, block_data) for value in block[:data_count])
+payload_bits = [(value >> shift) & 1 for value in payload for shift in range(7, -1, -1)]
+assert int("".join(map(str, payload_bits[:4])), 2) == 4
+length = int("".join(map(str, payload_bits[4:12])), 2)
+data_bits = payload_bits[12:12 + length * 8]
+data = bytes(sum(data_bits[index + offset] << (7 - offset) for offset in range(8)) for index in range(0, len(data_bits), 8))
+assert data.decode() == expected
+print(expected)
+PY
+)
+assert_equals "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["deep_link"])' <<<"$setup")" "$decoded_link" 'bundled QR decodes to the exact Telegram deep link'
 assert_present "$home/config/telegram-bot-token" 'setup stores token'
 assert_present "$home/state/telegram/pairing.json" 'setup stores pairing state'
 assert_equals '600' "$(stat -c '%a' "$home/config/telegram-bot-token")" 'token file is private'
 if grep -F '123456:' "$home/state/telegram/pairing.json" "$home/state/telegram"/* 2>/dev/null; then
   fail 'Telegram token leaked into state records'
 fi
-pass 'setup stores token privately and prints a QR-compatible deep link'
+pass 'setup stores token privately and prints a decodable QR deep link'
 
 nonce=$(python3 -c 'import json,sys,urllib.parse; print(urllib.parse.parse_qs(urllib.parse.urlparse(json.load(sys.stdin)["deep_link"]).query)["start"][0])' <<<"$setup")
 if grep -F '"nonce"' "$home/state/telegram/pairing.json" >/dev/null 2>&1; then
