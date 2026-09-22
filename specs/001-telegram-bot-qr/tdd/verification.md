@@ -2,7 +2,7 @@
 feature: telegram-bot-qr
 verdict: BLOCKED
 standard: .specify/extensions/tdd/templates/tdd-test-quality-rubric.md
-verified_at: 5746eee6
+verified_at: f0e0b854
 behaviors: 9
 proven: 0
 likely: 9
