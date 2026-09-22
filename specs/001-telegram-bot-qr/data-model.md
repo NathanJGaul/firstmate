@@ -6,7 +6,7 @@
 
 ## Pairing Record
 
-`state/telegram/pairing.json` stores `schema`, `bot_username`, `nonce_hash`, `nonce_expires_at`, `paired_user_id`, `paired_chat_id`, and `paired_at`.
+`state/telegram/pairing.json` stores `schema`, `bot_username`, `nonce_hash`, `nonce_expires_at`, `paired_user_id`, `paired_chat_id`, `paired_at`, and the update ID of a polling pairing effect when present.
 
 Pairing starts with empty identity fields and never stores the raw nonce.
 Successful pairing atomically replaces the nonce hash with a fresh nonce hash and records both identities.

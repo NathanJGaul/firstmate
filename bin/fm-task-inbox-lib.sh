@@ -39,6 +39,7 @@
 #   at=<utc timestamp>
 #   delivery=fire-and-forget   present only when the re-ring ladder must ignore it
 #                              (it still gets one retry ring; see below)
+#   idempotency-key=<key>     optional transport retry identity
 #   --
 #   <exact message text; newlines are legal; a marked secondmate request keeps
 #    its from-firstmate marker and corr token verbatim in this body>
@@ -201,8 +202,8 @@ fm_task_inbox_lock_acquire() {  # <lock-path>
 
 # Write one record into the next sequence slot: temp-write, then atomic
 # rename. Prints the record path. Caller must hold .seq.lock.
-_fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
-  local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0
+_fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode] [idempotency-key]
+  local dir=$1 text=$2 delivery_mode=${3:-} idempotency_key=${4:-} seq tmp rec status=0
   seq=$(fm_task_inbox_next_seq "$dir")
   rec="$dir/$seq.msg"
   tmp=$(mktemp "$dir/.staging.XXXXXX") || return 1
@@ -210,6 +211,7 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     printf 'schema=%s\n' "$FM_TASK_INBOX_SCHEMA"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     [ "$delivery_mode" != fire-and-forget ] || printf 'delivery=fire-and-forget\n'
+    [ -z "$idempotency_key" ] || printf 'idempotency-key=%s\n' "$idempotency_key"
     printf -- '--\n'
     printf '%s' "$text"
   } > "$tmp" && mv "$tmp" "$rec" || status=1
@@ -231,19 +233,18 @@ fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
   printf '%s' "$rec"
 }
 
-# Durably enqueue one steer at most once: when a record with the exact same
-# body already exists - unhandled or already acknowledged in handled/ - no new
-# record is written and the existing record's path is printed instead.
-# This is the enqueue primitive for a transport that can fail with completion
-# unknown (the remote steer leg over ssh): the caller's safe recovery is to run
-# the same enqueue again, and this dedup is what makes the re-run land on the
-# same record instead of a duplicate the worker would act on twice. Two
-# distinct logical requests never collapse in practice because a marked
-# secondmate request embeds a per-request correlation token in its body. The
-# local plane keeps plain fm_task_inbox_write: its outcome is synchronous, so
-# a repeated identical local steer is a deliberate new instruction.
-fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock want have f rec='' status=0
+# Durably enqueue one steer at most once: without an idempotency key, an
+# identical body is reused; with a key, only that key is reused. In both cases
+# an unhandled or already acknowledged record is returned instead of creating a
+# duplicate. This is the enqueue primitive for a transport that can fail with
+# completion unknown: the caller's safe recovery is to run the same enqueue
+# again, and the key or body match makes the re-run land on the same record.
+fm_task_inbox_idempotency_key() {  # <record-path>
+  awk -F= '$1 == "idempotency-key" { print $2; found=1; exit } END { if (!found) exit 1 }' "$1"
+}
+
+fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode] [idempotency-key]
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock want have f rec='' status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
   mkdir -p "$dir/handled" || return 1
   lock="$dir/.seq.lock"
@@ -260,7 +261,16 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
             *) continue ;;
           esac
         fi
-        if [ "$delivery_mode" = fire-and-forget ]; then
+        if [ -n "$idempotency_key" ]; then
+          existing_key=$(fm_task_inbox_idempotency_key "$f" 2>/dev/null || true)
+          [ "$existing_key" = "$idempotency_key" ] || continue
+          if [ "$delivery_mode" = fire-and-forget ]; then
+            fm_task_inbox_is_fire_and_forget "$f" || { status=1; break; }
+          elif fm_task_inbox_is_fire_and_forget "$f"; then
+            status=1
+            break
+          fi
+        elif [ "$delivery_mode" = fire-and-forget ]; then
           fm_task_inbox_is_fire_and_forget "$f" || continue
         elif fm_task_inbox_is_fire_and_forget "$f"; then
           continue
@@ -274,7 +284,14 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
             *) continue ;;
           esac
         fi
-        cmp -s "$want" "$have" || continue
+        if [ -n "$idempotency_key" ]; then
+          if ! cmp -s "$want" "$have"; then
+            status=1
+            break
+          fi
+        elif ! cmp -s "$want" "$have"; then
+          continue
+        fi
         [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
         rec=$f
         break
@@ -288,7 +305,7 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
     status=1
   fi
   if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
-    rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
+    rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode" "$idempotency_key") || status=1
   fi
   fm_lock_release "$lock"
   [ "$status" -eq 0 ] || return 1
