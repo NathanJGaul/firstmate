@@ -173,13 +173,19 @@ fm_task_inbox_seq_of() {  # <basename>
 # Next unused sequence, scanning the inbox root AND handled/ so an
 # acknowledged sequence is never reissued. Caller must hold .seq.lock.
 fm_task_inbox_next_seq() {  # <inbox-dir>
-  local dir=$1 max=0 d f n
+  local dir=$1 max=0 d f n reserved
   for d in "$dir" "$dir/handled"; do
     for f in "$d"/*.msg; do
       [ -e "$f" ] || continue
       n=$(fm_task_inbox_seq_of "${f##*/}") || continue
       [ "$n" -le "$max" ] || max=$n
     done
+  done
+  for f in "$dir/.idempotency"/*.reservation; do
+    [ -e "$f" ] || continue
+    reserved=$(awk -F= '$1 == "record" { print $2; exit }' "$f" 2>/dev/null || true)
+    n=$(fm_task_inbox_seq_of "$reserved") || continue
+    [ "$n" -le "$max" ] || max=$n
   done
   printf '%03d' "$((max + 1))"
 }
@@ -202,10 +208,8 @@ fm_task_inbox_lock_acquire() {  # <lock-path>
 
 # Write one record into the next sequence slot: temp-write, then atomic
 # rename. Prints the record path. Caller must hold .seq.lock.
-_fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode] [idempotency-key]
-  local dir=$1 text=$2 delivery_mode=${3:-} idempotency_key=${4:-} seq tmp rec status=0
-  seq=$(fm_task_inbox_next_seq "$dir")
-  rec="$dir/$seq.msg"
+_fm_task_inbox_write_record_at_locked() {  # <inbox-dir> <record-name> <text> [delivery-mode] [idempotency-key]
+  local dir=$1 record_name=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} tmp status=0
   tmp=$(mktemp "$dir/.staging.XXXXXX") || return 1
   {
     printf 'schema=%s\n' "$FM_TASK_INBOX_SCHEMA"
@@ -214,9 +218,15 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode] [id
     [ -z "$idempotency_key" ] || printf 'idempotency-key=%s\n' "$idempotency_key"
     printf -- '--\n'
     printf '%s' "$text"
-  } > "$tmp" && mv "$tmp" "$rec" || status=1
+  } > "$tmp" && mv "$tmp" "$dir/$record_name" || status=1
   [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
-  printf '%s' "$rec"
+  printf '%s' "$dir/$record_name"
+}
+
+_fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode] [idempotency-key]
+  local dir=$1 text=$2 delivery_mode=${3:-} idempotency_key=${4:-} seq
+  seq=$(fm_task_inbox_next_seq "$dir")
+  _fm_task_inbox_write_record_at_locked "$dir" "$seq.msg" "$text" "$delivery_mode" "$idempotency_key"
 }
 
 # Durably enqueue one steer: temp-write, then atomic rename into the next
@@ -243,25 +253,60 @@ fm_task_inbox_idempotency_key() {  # <record-path>
   awk -F= '$1 == "idempotency-key" { print $2; found=1; exit } END { if (!found) exit 1 }' "$1"
 }
 
+_fm_task_inbox_write_reservation_locked() {  # <inbox-dir> <record-name> <text> [delivery-mode] <idempotency-key>
+  local dir=$1 record_name=$2 text=$3 delivery_mode=${4:-} idempotency_key=$5 tmp status=0
+  tmp=$(mktemp "$dir/.idempotency/.reservation.XXXXXX") || return 1
+  {
+    printf 'schema=fm-task-inbox-reservation.v1\n'
+    printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    [ "$delivery_mode" != fire-and-forget ] || printf 'delivery=fire-and-forget\n'
+    printf 'idempotency-key=%s\nrecord=%s\n--\n%s' "$idempotency_key" "$record_name" "$text"
+  } > "$tmp" && mv "$tmp" "$dir/.idempotency/$idempotency_key.reservation" || status=1
+  [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
+}
+
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode] [idempotency-key]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock want have f rec='' status=0
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' f want have reservation record_name existing_key status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || return 1
+  mkdir -p "$dir/handled" "$dir/.idempotency" || return 1
   lock="$dir/.seq.lock"
   fm_task_inbox_lock_acquire "$lock" || return 1
-  if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
-    if printf '%s' "$text" > "$want"; then
-      for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-        if [ ! -e "$f" ]; then
-          case "$f" in
-            "$dir"/*.msg)
-              f="$dir/handled/${f##*/}"
-              [ -e "$f" ] || continue
-              ;;
-            *) continue ;;
-          esac
+  if [ -n "$idempotency_key" ]; then
+    case "$idempotency_key" in ''|*[!A-Za-z0-9._:-]*) status=1 ;; esac
+    reservation="$dir/.idempotency/$idempotency_key.reservation"
+    if [ "$status" -eq 0 ] && [ -e "$reservation" ]; then
+      existing_key=$(fm_task_inbox_idempotency_key "$reservation" 2>/dev/null || true)
+      [ "$existing_key" = "$idempotency_key" ] || status=1
+      if [ "$status" -eq 0 ] && want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
+        printf '%s' "$text" > "$want" || status=1
+        fm_task_inbox_body "$reservation" > "$have" 2>/dev/null || status=1
+        cmp -s "$want" "$have" || status=1
+        if [ "$delivery_mode" = fire-and-forget ]; then
+          fm_task_inbox_is_fire_and_forget "$reservation" || status=1
+        elif fm_task_inbox_is_fire_and_forget "$reservation"; then
+          status=1
         fi
-        if [ -n "$idempotency_key" ]; then
+        record_name=$(awk -F= '$1 == "record" { print $2; exit }' "$reservation" 2>/dev/null || true)
+        case "$record_name" in ''|*[!0-9.]*|*.msg.msg) status=1 ;; esac
+        case "$record_name" in *.msg) ;; *) status=1 ;; esac
+        rm -f "$want" "$have"
+      else
+        status=1
+      fi
+      if [ "$status" -eq 0 ]; then
+        if [ -f "$dir/handled/$record_name" ]; then
+          rec="$dir/handled/$record_name"
+        elif [ -f "$dir/$record_name" ]; then
+          rec="$dir/$record_name"
+        else
+          rec=$(_fm_task_inbox_write_record_at_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key") || status=1
+        fi
+      fi
+    elif [ "$status" -eq 0 ]; then
+      if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
+        printf '%s' "$text" > "$want" || status=1
+        for f in "$dir"/*.msg "$dir/handled"/*.msg; do
+          [ -e "$f" ] || continue
           existing_key=$(fm_task_inbox_idempotency_key "$f" 2>/dev/null || true)
           [ "$existing_key" = "$idempotency_key" ] || continue
           if [ "$delivery_mode" = fire-and-forget ]; then
@@ -270,42 +315,57 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
             status=1
             break
           fi
-        elif [ "$delivery_mode" = fire-and-forget ]; then
-          fm_task_inbox_is_fire_and_forget "$f" || continue
-        elif fm_task_inbox_is_fire_and_forget "$f"; then
-          continue
-        fi
-        if ! fm_task_inbox_body "$f" > "$have" 2>/dev/null; then
-          case "$f" in
-            "$dir"/*.msg)
-              f="$dir/handled/${f##*/}"
-              fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
-              ;;
-            *) continue ;;
-          esac
-        fi
-        if [ -n "$idempotency_key" ]; then
-          if ! cmp -s "$want" "$have"; then
-            status=1
+          fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
+          if cmp -s "$want" "$have"; then
+            [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
+            rec=$f
             break
           fi
-        elif ! cmp -s "$want" "$have"; then
-          continue
+          status=1
+          break
+        done
+        rm -f "$want" "$have"
+      else
+        status=1
+      fi
+      if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
+        record_name=$(fm_task_inbox_next_seq "$dir").msg
+        _fm_task_inbox_write_reservation_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key" || status=1
+        if [ "$status" -eq 0 ]; then
+          rec=$(_fm_task_inbox_write_record_at_locked "$dir" "$record_name" "$text" "$delivery_mode" "$idempotency_key") || status=1
         fi
-        [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
-        rec=$f
-        break
-      done
+      elif [ "$status" -eq 0 ]; then
+        _fm_task_inbox_write_reservation_locked "$dir" "${rec##*/}" "$text" "$delivery_mode" "$idempotency_key" || status=1
+      fi
+    fi
+  else
+    if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
+      if printf '%s' "$text" > "$want"; then
+        for f in "$dir"/*.msg "$dir/handled"/*.msg; do
+          [ -e "$f" ] || continue
+          if [ "$delivery_mode" = fire-and-forget ]; then
+            fm_task_inbox_is_fire_and_forget "$f" || continue
+          elif fm_task_inbox_is_fire_and_forget "$f"; then
+            continue
+          fi
+          fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
+          if cmp -s "$want" "$have"; then
+            [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
+            rec=$f
+            break
+          fi
+        done
+      else
+        status=1
+      fi
+      rm -f "$want" "$have"
     else
+      rm -f "${want:-}" "${have:-}" 2>/dev/null || true
       status=1
     fi
-    rm -f "$want" "$have"
-  else
-    rm -f "${want:-}" 2>/dev/null || true
-    status=1
-  fi
-  if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
-    rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode" "$idempotency_key") || status=1
+    if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
+      rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
+    fi
   fi
   fm_lock_release "$lock"
   [ "$status" -eq 0 ] || return 1

@@ -51,6 +51,15 @@ FROMFIRST_MARK = "[fm-from-firstmate]\u2063"
 _PORTABLE_DEADLINE: float | None = None
 
 
+def _portable_timeout(default: float) -> float:
+    if _PORTABLE_DEADLINE is None:
+        return default
+    remaining = _PORTABLE_DEADLINE - time.monotonic()
+    if remaining <= 0:
+        raise TelegramError("Firstmate owner call timed out")
+    return min(default, remaining)
+
+
 class TelegramError(Exception):
     pass
 
@@ -92,15 +101,17 @@ def _windows_private_path(path: Path) -> None:
         principal = f"{principal}\\{username}"
     else:
         try:
-            result = subprocess.run(["whoami"], capture_output=True, text=True, timeout=5, check=False)
-        except (OSError, subprocess.SubprocessError) as exc:
+            result = subprocess.run(["whoami"], capture_output=True, text=False, timeout=_portable_timeout(5), check=False)
+            principal = result.stdout.decode("utf-8").strip()
+        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
             raise TelegramError("Windows private ACL could not identify the current user") from exc
-        principal = result.stdout.strip()
     if not principal or "\n" in principal or "\r" in principal:
         raise TelegramError("Windows private ACL could not identify the current user")
     try:
-        reset = subprocess.run(["icacls", str(path), "/reset"], capture_output=True, text=True, timeout=5, check=False)
-        restrict = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"], capture_output=True, text=True, timeout=5, check=False)
+        _portable_check_deadline()
+        reset = subprocess.run(["icacls", str(path), "/reset"], capture_output=True, text=False, timeout=_portable_timeout(5), check=False)
+        _portable_check_deadline()
+        restrict = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"], capture_output=True, text=False, timeout=_portable_timeout(5), check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise TelegramError(f"Windows private ACL is unavailable: {path}") from exc
     if reset.returncode != 0 or restrict.returncode != 0:
@@ -108,13 +119,16 @@ def _windows_private_path(path: Path) -> None:
 
 
 def _secure_private_path(path: Path, mode: int) -> None:
+    _portable_check_deadline()
     os.chmod(path, mode)
     _windows_private_path(path)
 
 
 def ensure_private_dir(path: Path) -> None:
     try:
+        _portable_check_deadline()
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _portable_check_deadline()
         if path.is_symlink() or not path.is_dir():
             raise TelegramError(f"unsafe state directory: {path}")
         _secure_private_path(path, 0o700)
@@ -128,12 +142,15 @@ def atomic_write(path: Path, data: bytes) -> None:
         raise TelegramError(f"unsafe state path: {path}")
     tmp = path.parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
     try:
+        _portable_check_deadline()
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
+        _portable_check_deadline()
         _secure_private_path(tmp, 0o600)
+        _portable_check_deadline()
         os.replace(tmp, path)
     except OSError as exc:
         raise TelegramError(f"private state could not be persisted: {path}") from exc
@@ -626,6 +643,10 @@ def operational_state_dir() -> Path:
     return Path(os.environ.get("FM_STATE_OVERRIDE", home() / "state"))
 
 
+def operational_data_dir() -> Path:
+    return Path(os.environ.get("FM_DATA_OVERRIDE", home() / "data"))
+
+
 def _portable_check_deadline() -> None:
     if _PORTABLE_DEADLINE is not None and time.monotonic() >= _PORTABLE_DEADLINE:
         raise TelegramError("Firstmate owner call timed out")
@@ -670,6 +691,109 @@ def _portable_read_status(path: Path) -> list[str]:
     if len(raw) > PORTABLE_MAX_STATUS_BYTES:
         raise TelegramError("portable status log is too large")
     return raw.decode("utf-8", errors="replace").splitlines()
+
+
+def _portable_read_backlog() -> list[dict[str, Any]]:
+    path = operational_data_dir() / "backlog.md"
+    if path.is_symlink() or not path.is_file():
+        return []
+    try:
+        if path.stat().st_size > PORTABLE_MAX_STATUS_BYTES:
+            raise TelegramError("portable backlog is too large")
+        with path.open("rb") as stream:
+            raw = stream.read(PORTABLE_MAX_STATUS_BYTES + 1)
+    except TelegramError:
+        raise
+    except OSError as exc:
+        raise TelegramError("portable backlog could not be read") from exc
+    _portable_check_deadline()
+    if len(raw) > PORTABLE_MAX_STATUS_BYTES:
+        raise TelegramError("portable backlog is too large")
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    section = ""
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    row_re = re.compile(r"^[-*]\s+\[[ xX]\]\s+(?P<id>[A-Za-z0-9._-]+)\s+-\s+(?P<rest>.*)$")
+    for line in lines:
+        _portable_check_deadline()
+        heading = re.match(r"^##\s+(.+?)\s*$", line)
+        if heading:
+            title = heading.group(1).strip().lower()
+            section = {"in flight": "in_flight", "queued": "queued", "done": "done"}.get(title, "")
+            current = None
+            continue
+        match = row_re.match(line)
+        if match is None:
+            bold = re.match(r"^[-*]\s+\*\*(?P<id>[A-Za-z0-9._-]+)\*\*\s+-\s+(?P<rest>.*)$", line)
+            if bold is not None:
+                match = bold
+        if match and section:
+            rest = match.group("rest")
+            fields: dict[str, str] = {}
+            for key, value in re.findall(r"\(([^():]+):\s*([^)]*)\)", rest):
+                fields[key.strip()] = value.strip()
+            title = re.sub(r"\s+\([^)]*\)", "", rest).strip()
+            current = {
+                "id": match.group("id"),
+                "state": section,
+                "title": title[:128],
+                "kind": fields.get("kind", "ship"),
+                "hold_kind": fields.get("hold-kind", ""),
+                "hold_reason": fields.get("hold", ""),
+                "hold_until": fields.get("hold-until", ""),
+                "since": fields.get("since", ""),
+                "hold_set": "",
+                "blocked_by": re.findall(r"blocked-by:\s*([A-Za-z0-9._-]+)", rest),
+            }
+            records.append(current)
+            if len(records) > PORTABLE_MAX_RECORDS:
+                raise TelegramError("portable backlog has too many records")
+            continue
+        if current is not None:
+            stamp = re.match(r"^\s*Captain hold set:\s*(\d{4}-\d{2}-\d{2}(?:T[^ ]+)?)\s*$", line)
+            if stamp:
+                current["hold_set"] = stamp.group(1)
+    return records
+
+
+def _portable_hold_bucket(record: dict[str, Any], records: list[dict[str, Any]]) -> str | None:
+    if record.get("state") == "done" or record.get("hold_kind") != "captain" or not record.get("hold_reason"):
+        return None
+    done = {item["id"] for item in records if item.get("state") == "done"}
+    if any(blocker not in done for blocker in record.get("blocked_by", [])):
+        return "blocked"
+    hold_until = str(record.get("hold_until", ""))
+    today = datetime.now(timezone.utc).date()
+    if hold_until:
+        try:
+            if datetime.fromisoformat(hold_until + ("T00:00:00+00:00" if len(hold_until) == 10 else "")).date() > today:
+                return "dated"
+        except ValueError:
+            pass
+    stamp = str(record.get("hold_set") or record.get("since") or "")
+    age_limit = os.environ.get("FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS", "14")
+    try:
+        age_limit_value = max(0, int(age_limit))
+    except ValueError:
+        age_limit_value = 14
+    if stamp:
+        try:
+            if (today - datetime.fromisoformat(stamp + ("T00:00:00+00:00" if len(stamp) == 10 else "")).date()).days >= age_limit_value:
+                return "aged"
+        except ValueError:
+            pass
+    return "live"
+
+
+def _portable_backlog_decisions(records: list[dict[str, Any]], all_decisions: bool) -> list[dict[str, str]]:
+    decisions: list[dict[str, str]] = []
+    for record in records:
+        _portable_check_deadline()
+        bucket = _portable_hold_bucket(record, records)
+        if bucket is None or not all_decisions and bucket != "live":
+            continue
+        decisions.append({"id": record["id"], "key": record["id"], "verb": "captain-hold", "summary": str(record.get("hold_reason") or record.get("title") or record["id"])[:256], "owner": "(main)"})
+    return decisions
 
 
 def _portable_status_unstamped(line: str) -> str:
@@ -731,20 +855,26 @@ PORTABLE_STATE_MAP = {
 def _portable_status_fold(lines: list[str], task_id: str, kind: str) -> tuple[list[dict[str, str]], tuple[str, str] | None]:
     open_decisions: list[dict[str, str]] = []
     latest: tuple[str, str] | None = None
+    pause = os.environ.get("FM_CLASSIFY_PAUSED_VERB", "paused")
+    resolve = os.environ.get("FM_CLASSIFY_RESOLVE_VERB", "resolved")
+    held = os.environ.get("FM_CLASSIFY_CAPTAIN_HELD_VERB", "captain-held")
+    verbs = {"working", "needs-decision", "blocked", "done", "failed", pause, resolve, held}
     for line in lines:
         _portable_check_deadline()
         unstamped = _portable_status_unstamped(line)
         if ":" not in unstamped and re.search(r"\[key=[^\]]+\]", unstamped) is None:
             continue
         verb = _portable_status_verb(unstamped)
-        if verb not in ("working", "needs-decision", "blocked", "paused", "done", "failed", "resolved", "captain-held"):
+        if verb not in verbs:
             continue
         note = _portable_status_note(unstamped)
         latest = (verb, note)
         if verb in ("done", "failed") and ":" in unstamped and kind in ("ship", "scout"):
             open_decisions.clear()
             continue
-        if verb not in ("needs-decision", "blocked", "resolved", "captain-held"):
+        if verb == "working" and kind in ("ship", "scout"):
+            open_decisions.clear()
+        if verb not in ("needs-decision", "blocked", resolve, held):
             continue
         key = _portable_status_key(unstamped)
         if key is None:
@@ -754,6 +884,8 @@ def _portable_status_fold(lines: list[str], task_id: str, kind: str) -> tuple[li
         open_decisions = [entry for entry in open_decisions if entry["key"] != key]
         if verb in ("needs-decision", "blocked"):
             open_decisions.append({"id": task_id, "key": key, "verb": verb, "summary": note})
+    if latest is not None:
+        latest = (latest[0], latest[1])
     return open_decisions, latest
 
 
@@ -764,16 +896,9 @@ def _portable_state_projection(open_decisions: list[dict[str, str]], latest: tup
     if latest is None:
         return "unknown", ""
     verb, note = latest
-    return PORTABLE_STATE_MAP.get(verb, "unknown"), note[:256] if verb in PORTABLE_STATE_MAP and PORTABLE_STATE_MAP[verb] != "unknown" else ""
-
-
-def _portable_decisions(lines: list[str], task_id: str, kind: str) -> list[dict[str, str]]:
-    return _portable_status_fold(lines, task_id, kind)[0]
-
-
-def _portable_current_state(lines: list[str], task_id: str = "", kind: str = "ship") -> tuple[str, str]:
-    decisions, latest = _portable_status_fold(lines, task_id, kind)
-    return _portable_state_projection(decisions, latest)
+    pause = os.environ.get("FM_CLASSIFY_PAUSED_VERB", "paused")
+    state = "paused" if verb == pause else PORTABLE_STATE_MAP.get(verb, "unknown")
+    return state, note[:256] if state != "unknown" else ""
 
 
 def portable_snapshot(all_decisions: bool) -> str:
@@ -781,9 +906,15 @@ def portable_snapshot(all_decisions: bool) -> str:
     tasks: list[dict[str, Any]] = []
     decisions: list[dict[str, str]] = []
     state = operational_state_dir()
-    meta_paths = sorted(state.glob("*.meta"))
-    if len(meta_paths) > PORTABLE_MAX_TASKS:
-        raise TelegramError("portable status snapshot has too many tasks")
+    backlog = _portable_read_backlog()
+    backlog_by_id = {record["id"]: record for record in backlog}
+    meta_paths: list[Path] = []
+    for meta in state.glob("*.meta"):
+        _portable_check_deadline()
+        meta_paths.append(meta)
+        if len(meta_paths) > PORTABLE_MAX_TASKS:
+            raise TelegramError("portable status snapshot has too many tasks")
+    meta_paths.sort()
     for meta in meta_paths:
         _portable_check_deadline()
         if meta.is_symlink() or not meta.is_file():
@@ -801,17 +932,29 @@ def portable_snapshot(all_decisions: bool) -> str:
         status_lines = _portable_read_status(status_path)
         task_decisions, latest = _portable_status_fold(status_lines, task_id, kind)
         current_state, doing = _portable_state_projection(task_decisions, latest)
+        backlog_record = backlog_by_id.get(task_id)
+        if backlog_record is not None:
+            if backlog_record.get("state") == "done":
+                current_state, doing = "done", str(backlog_record.get("title") or "")[:256]
+            elif backlog_record.get("hold_kind") == "captain" and backlog_record.get("hold_reason") and current_state != "working":
+                current_state, doing = "parked", str(backlog_record.get("hold_reason"))[:256]
         row: dict[str, Any] = {
             "id": task_id,
             "kind": kind,
             "state": current_state,
             "backend": str(backend or "unknown")[:128],
             "target": str(target or "")[:256],
-            "name": str(values.get("title") or task_id)[:128],
+            "name": str(values.get("title") or (backlog_record or {}).get("title") or task_id)[:128],
             "doing": doing,
         }
         decisions.extend(task_decisions)
         tasks.append(row)
+    backlog_decisions = _portable_backlog_decisions(backlog, all_decisions)
+    backlog_all_decisions = _portable_backlog_decisions(backlog, True)
+    decisions = backlog_decisions + [
+        decision for decision in decisions
+        if not any(existing["id"] == decision["id"] and existing["key"] == decision["key"] for existing in backlog_all_decisions)
+    ]
     visible_decisions = decisions if all_decisions else decisions[:20]
     omitted = []
     if not all_decisions and len(decisions) > len(visible_decisions):
@@ -936,8 +1079,9 @@ def _portable_lock_is_stale(path: Path) -> bool:
 def portable_lock_acquire(path: Path) -> str:
     ensure_private_dir(path.parent)
     token = secrets.token_hex(8)
-    deadline = time.time() + 5
+    deadline = time.monotonic() + _portable_timeout(5)
     while True:
+        _portable_check_deadline()
         if path.is_symlink():
             raise TelegramError(f"unsafe portable lock: {path}")
         candidate = path.parent / f".{path.name}.candidate.{os.getpid()}.{token}"
@@ -967,14 +1111,14 @@ def portable_lock_acquire(path: Path) -> str:
                 except OSError:
                     pass
                 continue
-            if time.time() >= deadline:
+            if time.monotonic() >= deadline:
                 raise TelegramError(f"portable lock could not be acquired: {path}")
-            time.sleep(0.05)
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
         except OSError as exc:
             if candidate.exists():
                 shutil.rmtree(candidate, ignore_errors=True)
-            if path.exists() and time.time() < deadline:
-                time.sleep(0.05)
+            if path.exists() and time.monotonic() < deadline:
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
                 continue
             raise TelegramError(f"portable lock could not be acquired: {path}") from exc
 
@@ -1209,6 +1353,77 @@ def portable_target_is_remote(target: str, state: Path) -> bool:
     return bool(values.get("remote_host"))
 
 
+def _portable_delivery_reservation(inbox: Path, delivery_id: str) -> Path:
+    if re.fullmatch(r"[a-f0-9]{16}", delivery_id) is None:
+        raise TelegramError("Firstmate owner script rejected request")
+    return inbox / ".idempotency" / f"{delivery_id}.reservation"
+
+
+def _portable_reserved_record_name(path: Path) -> str:
+    name = _portable_record_field(path, "record") or ""
+    if re.fullmatch(r"[0-9]{1,12}\.msg", name) is None:
+        raise TelegramError("portable inbox reservation is malformed")
+    return name
+
+
+def _portable_delivery_match(path: Path, delivery_id: str, wire_body: str, fire_and_forget: bool) -> bool:
+    if path.is_symlink() or not path.is_file():
+        return False
+    existing_key = _portable_record_field(path, "idempotency-key")
+    legacy_match = re.match(rf"^{re.escape(FROMFIRST_MARK)}delivery=([a-f0-9]{{16}}) (.*)$", _portable_record_body(path) or "", re.DOTALL)
+    if existing_key != delivery_id and not (existing_key is None and legacy_match and legacy_match.group(1) == delivery_id):
+        return False
+    existing = _portable_record_body(path)
+    if existing != wire_body or (_portable_record_field(path, "delivery") == "fire-and-forget") != fire_and_forget:
+        raise TelegramError("Firstmate delivery ID was reused for different text")
+    return True
+
+
+def _portable_find_delivery(inbox: Path, handled: Path, delivery_id: str, wire_body: str, fire_and_forget: bool) -> Path | None:
+    count = 0
+    for directory in (inbox, handled):
+        for path in directory.glob("*.msg"):
+            _portable_check_deadline()
+            count += 1
+            if count > PORTABLE_MAX_RECORDS:
+                raise TelegramError("portable task inbox has too many records")
+            if _portable_delivery_match(path, delivery_id, wire_body, fire_and_forget):
+                return path
+    return None
+
+
+def _portable_next_inbox_sequence(inbox: Path, handled: Path) -> str:
+    numbers: list[int] = []
+    count = 0
+    for directory in (inbox, handled):
+        for path in directory.glob("*.msg"):
+            _portable_check_deadline()
+            count += 1
+            if count > PORTABLE_MAX_RECORDS:
+                raise TelegramError("portable task inbox has too many records")
+            try:
+                numbers.append(int(path.stem))
+            except ValueError:
+                continue
+    reservation_dir = inbox / ".idempotency"
+    for path in reservation_dir.glob("*.reservation"):
+        _portable_check_deadline()
+        name = _portable_record_field(path, "record") or ""
+        if re.fullmatch(r"[0-9]{1,12}\.msg", name):
+            numbers.append(int(name[:-4]))
+    return f"{max(numbers, default=0) + 1:03d}.msg"
+
+
+def _portable_inbox_record_text(record_name: str, body: str, delivery_id: str, fire_and_forget: bool) -> bytes:
+    delivery_line = "delivery=fire-and-forget\n" if fire_and_forget else ""
+    return f"schema=fm-task-inbox.v1\nat={iso_now()}\n{delivery_line}idempotency-key={delivery_id}\n--\n{body}".encode("utf-8")
+
+
+def _portable_reservation_text(record_name: str, body: str, delivery_id: str, fire_and_forget: bool) -> bytes:
+    delivery_line = "delivery=fire-and-forget\n" if fire_and_forget else ""
+    return f"schema=fm-task-inbox-reservation.v1\nat={iso_now()}\n{delivery_line}idempotency-key={delivery_id}\nrecord={record_name}\n--\n{body}".encode("utf-8")
+
+
 def portable_send(target: str, body: str, delivery_id: str, fire_and_forget: bool) -> str:
     _portable_check_deadline()
     body = validate_steer_text(body)
@@ -1235,45 +1450,43 @@ def portable_send(target: str, body: str, delivery_id: str, fire_and_forget: boo
         handled = inbox / "handled"
         ensure_private_dir(inbox)
         ensure_private_dir(handled)
+        reservation_dir = inbox / ".idempotency"
+        ensure_private_dir(reservation_dir)
         wire_body = f"{FROMFIRST_MARK}delivery={delivery_id} {body}" if fire_and_forget else body
         lock = inbox / ".seq.lock"
         inbox_token = portable_lock_acquire(lock)
         try:
-            records = list(inbox.glob("*.msg")) + list(handled.glob("*.msg"))
-            if len(records) > PORTABLE_MAX_RECORDS:
-                raise TelegramError("portable task inbox has too many records")
-            for record in records:
-                _portable_check_deadline()
-                if record.is_symlink() or not record.is_file():
-                    continue
-                existing_key = _portable_record_field(record, "idempotency-key")
-                legacy_match = re.match(rf"^{re.escape(FROMFIRST_MARK)}delivery=([a-f0-9]{{16}}) (.*)$", _portable_record_body(record) or "", re.DOTALL)
-                if existing_key != delivery_id and not (existing_key is None and legacy_match and legacy_match.group(1) == delivery_id):
-                    continue
-                existing = _portable_record_body(record)
-                if existing != wire_body or (_portable_record_field(record, "delivery") == "fire-and-forget") != fire_and_forget:
+            reservation = _portable_delivery_reservation(inbox, delivery_id)
+            if reservation.is_symlink() or (reservation.exists() and not reservation.is_file()):
+                raise TelegramError("portable inbox reservation is unsafe")
+            if reservation.is_file():
+                if not _portable_delivery_match(reservation, delivery_id, wire_body, fire_and_forget):
                     raise TelegramError("Firstmate delivery ID was reused for different text")
-                record_path = record
-                break
-            if record_path is None:
-                numbers = []
-                for record in records:
-                    _portable_check_deadline()
-                    try:
-                        numbers.append(int(record.stem))
-                    except ValueError:
-                        pass
-                sequence = f"{max(numbers, default=0) + 1:03d}"
-                delivery_line = "delivery=fire-and-forget\n" if fire_and_forget else ""
-                record_path = inbox / f"{sequence}.msg"
-                record = f"schema=fm-task-inbox.v1\nat={iso_now()}\n{delivery_line}idempotency-key={delivery_id}\n--\n{wire_body}"
-                atomic_write(record_path, record.encode("utf-8"))
+                record_name = _portable_reserved_record_name(reservation)
+                root_record = inbox / record_name
+                handled_record = handled / record_name
+                if handled_record.is_file():
+                    record_path = handled_record
+                elif root_record.is_file():
+                    record_path = root_record
+                else:
+                    record_path = root_record
+                    atomic_write(record_path, _portable_inbox_record_text(record_name, wire_body, delivery_id, fire_and_forget))
+            else:
+                record_path = _portable_find_delivery(inbox, handled, delivery_id, wire_body, fire_and_forget)
+                if record_path is not None:
+                    atomic_write(reservation, _portable_reservation_text(record_path.name, wire_body, delivery_id, fire_and_forget))
+                else:
+                    record_name = _portable_next_inbox_sequence(inbox, handled)
+                    atomic_write(reservation, _portable_reservation_text(record_name, wire_body, delivery_id, fire_and_forget))
+                    record_path = inbox / record_name
+                    atomic_write(record_path, _portable_inbox_record_text(record_name, wire_body, delivery_id, fire_and_forget))
         finally:
             portable_lock_release(lock, inbox_token)
             inbox_token = None
     finally:
         if inbox_token is not None:
-            portable_lock_release(inbox, inbox_token)
+            portable_lock_release(inbox / ".seq.lock", inbox_token)
         portable_lock_release(meta_lock, meta_token)
     if record_path is None:
         raise TelegramError("Firstmate owner script rejected request")
@@ -1336,15 +1549,20 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
             raise TelegramError("Firstmate owner response is too large")
         return output
     try:
-        proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home()), **(env_extra or {})}, input=stdin, text=True, capture_output=True, timeout=20, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
+        input_bytes = stdin.encode("utf-8")
+        proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home()), **(env_extra or {})}, input=input_bytes, text=False, capture_output=True, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError, UnicodeEncodeError) as exc:
         raise TelegramError("Firstmate owner script unavailable") from exc
+    try:
+        stdout = proc.stdout.decode("utf-8")
+    except (AttributeError, UnicodeDecodeError) as exc:
+        raise TelegramError("Firstmate owner returned malformed Unicode") from exc
     if proc.returncode != 0:
-        partial = _durable_note_owner_result(proc.stdout)
+        partial = _durable_note_owner_result(stdout)
         if partial is not None:
             return partial
         raise TelegramError("Firstmate owner script rejected request")
-    output = proc.stdout.strip() or "completed"
+    output = stdout.strip() or "completed"
     if utf8_length(output, "Firstmate owner response") > MAX_RESPONSE_BYTES:
         raise TelegramError("Firstmate owner response is too large")
     return output
@@ -1363,8 +1581,21 @@ def _telegram_owner_output(output: str) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
+def _telegram_owner_error(exc: TelegramError) -> str:
+    message = str(exc)
+    if "/" in message or "\\" in message or re.search(r"[A-Za-z]:", message):
+        return "Firstmate owner request failed"
+    return message
+
+
 def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
-    return telegram_response(_telegram_owner_output(owner(argv, stdin, env_extra)))
+    try:
+        output = owner(argv, stdin, env_extra)
+    except DurableOwnerError as exc:
+        raise DurableOwnerError(_telegram_owner_error(exc)) from exc
+    except TelegramError as exc:
+        raise TelegramError(_telegram_owner_error(exc)) from exc
+    return telegram_response(_telegram_owner_output(output))
 
 
 def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
@@ -1473,14 +1704,21 @@ def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
         chat_id = identity_value(chat.get("id") if isinstance(chat, dict) else None, CHAT_ID_RE)
         text = message.get("text", "")
     valid_message = user_id is not None and chat_id is not None and isinstance(text, str)
+    validation_error = None
     if valid_message:
-        oversized = utf8_length(text, "Telegram message") > MAX_COMMAND_BYTES
+        try:
+            oversized = utf8_length(text, "Telegram message") > MAX_COMMAND_BYTES
+        except TelegramError:
+            valid_message = False
+            oversized = False
+            validation_error = "Telegram message contains malformed Unicode"
+            text = "[malformed Unicode]"
     else:
         oversized = False
     pairing_hash = None
-    if not valid_message:
+    if not valid_message and validation_error is None:
         text = ""
-    else:
+    elif valid_message:
         text, pairing_hash = redact_pairing_text(text)
     return {
         "schema": "fm-telegram-inbox.v1",
@@ -1491,6 +1729,7 @@ def update_message(update: dict[str, Any], update_id: str) -> dict[str, Any]:
         "text": bounded(text),
         "pairing_nonce_hash": pairing_hash,
         "valid_message": valid_message,
+        "validation_error": validation_error,
         "oversized": oversized,
         "state": "pending",
         "effect": "pending",
@@ -1549,7 +1788,7 @@ def apply_effect(record: dict[str, Any]) -> None:
     command = text.split(" ", 1)[0] if text else "rejected"
     try:
         if not record.get("valid_message"):
-            raise TelegramError("Telegram message identity is malformed")
+            raise TelegramError(str(record.get("validation_error") or "Telegram message identity is malformed"))
         if record.get("oversized"):
             raise TelegramError("text is empty or too large")
         if text.startswith("/start "):
