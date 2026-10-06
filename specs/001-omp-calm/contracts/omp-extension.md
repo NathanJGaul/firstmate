@@ -10,14 +10,14 @@
 
 - active: write `on\n`;
 - inactive: write `off\n`;
-- write failure: leave the current state unchanged and notify the operator;
-- successful toggle: redraw supported presentation surfaces without starting a model turn.
+- write failure: leave the current state unchanged and notify the operator, or emit the notification adapter diagnostic when that seam is unavailable;
+- successful toggle: redraw supported presentation surfaces without starting a model turn, and report a redraw failure as a warning while retaining retryable restoration state.
 
 ## Lifecycle
 
-- `session_start`: reread the shared preference, reset animation state, restore the default working message, and clear any prior timer.
+- `session_start`: reread the shared preference, reset animation state, clear pending redraw restoration, and restore the default working message only when Calm owns it.
 - `agent_start`: if active, start the one managed working-message timer.
-- `agent_end` and `session_shutdown`: clear the timer and restore OMP's default working message.
+- terminal `agent_end` (an event without `willContinue: true`) and `session_shutdown`: clear the timer, retaining its handle until clearing succeeds, and restore OMP's default working message only when Calm owns it.
 
 ## Diagnostics
 

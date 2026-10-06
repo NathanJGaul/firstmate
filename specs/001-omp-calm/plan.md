@@ -91,7 +91,7 @@ docs/
 - The default export from `.omp/extensions/fm-calm.ts` receives OMP `ExtensionAPI` and registers only through verified extension methods.
 - `/calm` toggles the shared preference, refreshes supported rows through OMP's redraw action, and reports persistence failures without changing the current active state.
 - OMP lifecycle handlers use `session_start`, `agent_start`, `agent_end`, and `session_shutdown`; no handler injects model messages or changes session entries.
-- The working adapter updates `ctx.ui.setWorkingMessage()` from the shared animation on the managed timer and restores the host default by passing `undefined` when Calm is off or the run ends.
+- The working adapter updates `ctx.ui.setWorkingMessage()` from the shared animation on the managed timer and restores the host default by passing `undefined` only after Calm has taken ownership and the run is off or terminal.
 
 ## Implementation Phases
 
@@ -119,7 +119,7 @@ docs/
 ## Risk Controls
 
 - OMP-specific state is factory-local so child sessions and reloads do not share active presentation state.
-- Timers use OMP's managed timer API and are stopped on every terminal lifecycle path.
+- Timers use OMP's managed timer API, retain handles until `clearTimer` succeeds, and are stopped on every terminal lifecycle path.
 - OMP does not claim native tools or unsupported transcript classes, so their execution and ordinary rendering remain host-owned.
 - Missing UI or renderer methods are caught per adapter and surfaced with the adapter name.
 - No unsupported transcript filtering, input interception, context mutation, persistence rewrite, or installed OMP patching is allowed.

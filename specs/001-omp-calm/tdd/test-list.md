@@ -46,7 +46,9 @@ Each behavior is observable through the OMP extension registration and lifecycle
 ## Invariants and edge cases still to place
 
 - A write failure must not publish the new active state.
-- A timer must not survive `agent_end` or `session_shutdown`.
+- A timer must not survive terminal `agent_end` or `session_shutdown`, and a failed clear must retain its handle for retry.
+- A `willContinue: true` `agent_end` must not stop the logical run.
+- Calm must not call stock working-message restoration unless it owns the working surface.
 - Native tools must remain host-owned and ordinary in OMP because no supported native tool-row renderer is available.
 - `on`, legacy `max`, `off`, absent, and unrecognized preference values must retain the shared interpretation.
 - Unsupported operational-user and assistant-working-note rows must remain ordinary in OMP 18.6.1.

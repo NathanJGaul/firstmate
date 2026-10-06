@@ -33,7 +33,7 @@ const pi = {
 };
 extension.default(pi);
 if (!commands.has("calm")) throw new Error("the OMP extension did not register /calm");
-await commands.get("calm").handler("", { ui: { notify(message, level) { notifications.push({ message, level }); } } });
+await commands.get("calm").handler("", { ui: { notify(message, level) { notifications.push({ message, level }); }, getToolsExpanded() { return false; }, setToolsExpanded() {} } });
 const preference = readFileSync(${home@Q} + "/config/calm", "utf8");
 if (preference !== "on\\n") throw new Error("/calm did not persist the shared on preference");
 if (sentMessages !== 0) throw new Error("/calm sent a transcript row");
@@ -148,6 +148,7 @@ test_calm_toggle_off_restores_stock_and_clears_timer() {
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
 const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a3");
 const events = new Map();
 const commands = new Map();
@@ -225,8 +226,10 @@ if (intervals.length !== 1) throw new Error("agent_start did not create one mana
 const first = messages.at(-1);
 intervals[0].callback();
 if (messages.at(-1) === first) throw new Error("managed timer did not advance the working frame");
+await events.get("agent_end")({ willContinue: true }, context);
+if (cleared.length !== 0 || messages.at(-1) === undefined) throw new Error("continuing agent_end interrupted the working presentation");
 await events.get("agent_end")({}, context);
-if (cleared.length !== 1 || messages.at(-1) !== undefined) throw new Error("agent_end did not clean up the working presentation");
+if (cleared.length !== 1 || messages.at(-1) !== undefined) throw new Error("terminal agent_end did not clean up the working presentation");
 await events.get("agent_start")({}, context);
 await events.get("session_shutdown")({}, context);
 if (cleared.length !== 2 || messages.at(-1) !== undefined) throw new Error("session_shutdown did not clean up the working presentation");
@@ -247,15 +250,16 @@ import { pathToFileURL } from "node:url";
 process.env.FM_HOME = ${home@Q};
 const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a7");
 const events = new Map();
-const messages = [];
+let workingLabel = "foreign extension label";
+let setWorkingMessageCalls = 0;
 const intervals = [];
-const context = { ui: { setWorkingMessage(message) { messages.push(message); } }, setInterval(callback) { intervals.push(callback); return callback; }, clearTimer() {} };
+const context = { ui: { setWorkingMessage(message) { setWorkingMessageCalls += 1; workingLabel = message ?? "OMP default"; } }, setInterval(callback) { intervals.push(callback); return callback; }, clearTimer() {} };
 const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {} };
 extension.default(pi);
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
 if (intervals.length !== 0) throw new Error("Calm off created a working timer");
-if (messages.at(-1) !== undefined) throw new Error("Calm off replaced the stock working row");
+if (setWorkingMessageCalls !== 0 || workingLabel !== "foreign extension label") throw new Error("Calm off replaced the stock working row");
 console.log("a7-ok");
 JS
   out=$(run_node "$TMP_ROOT/a7.mjs" 2>&1) || fail "A7 Calm off: $out"
@@ -271,6 +275,7 @@ test_omp_adapter_failures_are_isolated_and_diagnosed() {
   cat >"$TMP_ROOT/a9.mjs" <<JS
 import { pathToFileURL } from "node:url";
 process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: undefined });
 const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a9");
 const diagnostics = [];
 const previousError = console.error;
@@ -281,9 +286,10 @@ extension.default({ on(name, handler) { events.set(name, handler); }, registerCo
 const context = { ui: { setWorkingMessage() {} } };
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
+await commands.get("calm").handler("", context);
 console.error = previousError;
 if (!commands.has("calm")) throw new Error("preference command was lost with unsupported OMP seams");
-for (const name of ["legacy custom-message renderer", "generic transcript-row renderer", "working-message timer"]) {
+for (const name of ["legacy custom-message renderer", "generic transcript-row renderer", "working-message timer", "working-message width", "notification"]) {
   if (!diagnostics.some((line) => line.includes(name))) throw new Error("missing diagnostic for " + name);
 }
 console.log("a9-ok " + diagnostics.length);
@@ -306,6 +312,7 @@ const diagnostics = [];
 const previousError = console.error;
 console.error = (message) => diagnostics.push(String(message));
 const commands = new Map();
+const events = new Map();
 const calls = [];
 let expanded = true;
 let failOnce = true;
@@ -325,16 +332,18 @@ const context = {
   },
 };
 const pi = {
-  on() {},
+  on(name, handler) { events.set(name, handler); },
   registerCommand(name, command) { commands.set(name, command); },
   registerMessageRenderer() {},
 };
 extension.default(pi);
 await commands.get("calm").handler("", context);
+await events.get("session_start")({}, context);
+await commands.get("calm").handler("", context);
 await commands.get("calm").handler("", context);
 console.error = previousError;
-const expected = [false, true, true, false, true];
-if (JSON.stringify(calls) !== JSON.stringify(expected)) throw new Error("failed redraw restoration was not retried before the next toggle");
+const expected = [false, true, false, true, false, true];
+if (JSON.stringify(calls) !== JSON.stringify(expected)) throw new Error("session replacement did not clear stale redraw restoration");
 if (!expanded) throw new Error("redraw retry did not preserve the original expansion state");
 if (!diagnostics.some((line) => line.includes("supported-surface redraw restoration") && line.includes("restore failed after mutation"))) throw new Error("redraw restoration failure was not diagnosed");
 console.log("a11-ok");
@@ -353,6 +362,7 @@ test_omp_adapter_invocation_failures_are_isolated() {
 import { pathToFileURL } from "node:url";
 process.env.FM_HOME = ${home@Q};
 const extensionUrl = pathToFileURL(${EXTENSION@Q}).href;
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
 const diagnostics = [];
 const previousError = console.error;
 console.error = (message) => diagnostics.push(String(message));
@@ -369,8 +379,12 @@ const load = async (name, context, start = true, toggle = false, end = false) =>
 await load("working", { ui: { setWorkingMessage() { throw new Error("working failed"); } }, setInterval() { throw new Error("interval failed"); }, clearTimer() {} });
 await load("timer", { ui: { setWorkingMessage() {} }, setInterval() { throw new Error("interval failed"); }, clearTimer() {} });
 const messages = [];
-await load("clear", { ui: { setWorkingMessage(message) { messages.push(message); } }, setInterval(callback) { return { callback }; }, clearTimer() { throw new Error("clear failed"); } }, true, false, true);
+let clearAttempts = 0;
+let retainedTimer;
+await load("clear", { ui: { setWorkingMessage(message) { messages.push(message); } }, setInterval(callback) { retainedTimer = { callback }; return retainedTimer; }, clearTimer() { clearAttempts += 1; if (clearAttempts === 1) throw new Error("clear failed"); } }, true, false, true);
 if (messages.at(-1) !== undefined) throw new Error("stock working message was not attempted after clear failure");
+retainedTimer.callback();
+if (clearAttempts !== 2) throw new Error("failed timer cleanup was not retried with the retained handle");
 await load("redraw", { ui: { setWorkingMessage() {}, getToolsExpanded() { throw new Error("redraw failed"); }, setToolsExpanded() {} }, setInterval() { return {}; }, clearTimer() {} }, false, true);
 console.error = previousError;
 for (const [name, detail] of [["working-message", "working failed"], ["working-message timer", "interval failed"], ["working-message timer", "clear failed"], ["supported-surface redraw", "redraw failed"]]) {

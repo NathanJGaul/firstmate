@@ -27,7 +27,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 
 ## Verification runs
 
-- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds.
+- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 11 checks.
 - `bin/fm-doc-audience-check.sh`: `ok surfaces=102 local_links=454`.
 - `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`: compatibility cases report the installed Pi package is absent; the interactive run fails at `rendered export DOM violated the Calm conversation boundary`.
 - OMP `18.6.1` inactive and active `--no-session --no-tools -p` smokes load the extension, report the deliberate generic-row diagnostic, and exit cleanly.
@@ -36,7 +36,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 
 ### HIGH
 
-1. **Test-first ordering is not proven.** The final native ownership guard and deferred registration correction were test-after changes, and there are no feature commits to establish test-before-code ordering.
+1. **Test-first ordering is not proven.** The final working-surface ownership guard and redraw-restoration correction were test-after changes, and there are no feature commits to establish test-before-code ordering.
 2. **Pi regression criterion is blocked.** The focused Pi suite has an observed export-DOM failure unrelated to the OMP runtime smoke, and several compatibility checks cannot load the installed Pi package. The failure was not suppressed or repaired in this task.
 
 ### MEDIUM
