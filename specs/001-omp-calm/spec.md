@@ -39,7 +39,7 @@ An OMP user with Calm enabled sees the shared compact animated working presentat
 
 1. **Given** an OMP run is active and Calm is enabled, **When** working activity is displayed, **Then** OMP shows the animated Calm working ship at the available width and removes it when the run settles, aborts, or fails.
 2. **Given** Calm is enabled, **When** the supported synthetic custom-message row or another OMP transcript class is rendered, **Then** the supported row occupies no transcript height while unsupported rows, genuine user prompts, substantive assistant text, and the final answer remain visible.
-3. **Given** Calm is disabled, **When** the same run or a newly rendered synthetic row is rendered, **Then** OMP leaves its ordinary working and transcript presentation unchanged; a mounted supported synthetic row is invalidated so OMP can remount it ordinarily.
+3. **Given** Calm is disabled, **When** the same run or a newly rendered synthetic row is rendered, **Then** OMP leaves its ordinary working and transcript presentation unchanged; a mounted supported synthetic row is invalidated and redrawn ordinarily.
 4. **Given** a supported hidden row is rendered while Calm is enabled, **When** execution completes or the session is exported, **Then** the original message, model context, tool execution, session data, and export remain complete and unchanged.
 
 ---
@@ -64,7 +64,7 @@ An OMP user can use Calm when supported presentation seams are available, and an
 - OMP's working presentation is resized, hidden temporarily, or re-mounted during one logical run.
 - An unsupported assistant working-note or operational-input row is rendered while Calm is active; OMP leaves it visible without filtering or mutation.
 - A supported OMP presentation method is missing, throws during installation, or is replaced by a later OMP release.
-- Calm is toggled while rows from the current run are already on screen; the supported custom-message component invalidation requests a remount for mounted synthetic rows, while unsupported rows remain ordinary.
+- Calm is toggled while rows from the current run are already on screen; the supported custom-message component invalidation requests a redraw for mounted synthetic rows, while unsupported rows remain ordinary.
 
 ## Requirements
 

@@ -29,8 +29,28 @@ export type CalmOmpComponent = {
   dispose?: () => void;
 };
 
-export function createEmptyCalmComponent(): CalmOmpComponent {
-  return { render: () => [], invalidate: () => {}, dispose: () => {} };
+function ordinaryCalmContentRows(content: unknown): string[] {
+  if (typeof content === "string") return content.split(/\r?\n/u);
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part) => {
+    if (typeof part !== "object" || part === null || !("type" in part) || !("text" in part)) return [];
+    const text = (part as { type?: unknown; text?: unknown }).text;
+    return (part as { type?: unknown }).type === "text" && typeof text === "string"
+      ? text.split(/\r?\n/u)
+      : [];
+  });
+}
+
+export function createCalmSyntheticComponent(
+  content: unknown,
+  hidden: () => boolean,
+): CalmOmpComponent {
+  const ordinaryRows = ordinaryCalmContentRows(content);
+  return {
+    render: () => hidden() ? [] : ordinaryRows,
+    invalidate: () => {},
+    dispose: () => {},
+  };
 }
 
 export {

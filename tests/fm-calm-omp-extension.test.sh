@@ -133,12 +133,20 @@ const renderSynthetic = () => renderers.get("firstmate-synthetic-input-presentat
 const hidden = renderSynthetic();
 if (!hidden || hidden.render(80).length !== 0) throw new Error("Calm-on legacy custom row was not hidden");
 let invalidations = 0;
+let requestedRenders = 0;
 const invalidate = hidden.invalidate;
 hidden.invalidate = () => { invalidations += 1; invalidate(); };
-await commands.get("calm").handler("", { ui: { notify() {} } });
+await commands.get("calm").handler("", { ui: { notify() {}, requestRender() { requestedRenders += 1; } } });
 if (invalidations !== 1) throw new Error("an already-mounted synthetic row was not invalidated on toggle");
-if (hidden.render(80).length !== 0) throw new Error("Calm-off invalidation changed the mounted hidden component directly");
-if (renderSynthetic() !== undefined) throw new Error("a newly rendered synthetic row did not restore ordinary rendering");
+if (requestedRenders !== 1) throw new Error("Calm-off toggle did not request an OMP redraw");
+const restored = hidden.render(80);
+if (restored.length === 0 || !restored.join("\\n").includes("internal")) throw new Error("Calm-off redraw did not restore the mounted synthetic row");
+const ordinary = renderSynthetic();
+if (!ordinary || !ordinary.render(80).join("\\n").includes("internal")) throw new Error("a newly rendered synthetic row did not restore ordinary rendering");
+await commands.get("calm").handler("", { ui: { notify() {}, requestRender() { requestedRenders += 1; } } });
+if (requestedRenders !== 2 || hidden.render(80).length !== 0) throw new Error("Calm-on toggle did not hide the mounted synthetic row");
+const newlyRendered = renderSynthetic();
+if (!newlyRendered || newlyRendered.render(80).length !== 0) throw new Error("a newly rendered synthetic row did not hide under Calm");
 if (inspectedNativeTools || registeredTools !== 0) throw new Error("Calm claimed native tool presentation without a supported renderer seam");
 console.log("a6-ok");
 JS

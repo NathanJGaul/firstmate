@@ -22,7 +22,7 @@ import {
   CALM_WORKING_SHIP_TICK_MS,
   calmOmpPresentationHides,
   createCalmWorkingShipSprite,
-  createEmptyCalmComponent,
+  createCalmSyntheticComponent,
   type CalmOmpComponent,
   installCalmAdapter,
   renderCalmWorkingShipMessage,
@@ -33,6 +33,7 @@ import {
 } from "../../.claude/mods/firstmate-calm/lib/fm-calm-visibility.ts";
 type OmpUi = {
   notify?: (message: string, level?: string) => void;
+  requestRender?: () => void;
   setWorkingMessage?: (message?: string) => void;
 };
 
@@ -157,6 +158,17 @@ export default function (pi: OmpExtensionApi): void {
       );
       succeeded = invalidated && succeeded;
     }
+    if (mountedSyntheticRows.size > 0) {
+      const redrawRequested = installAdapter(
+        "legacy custom-message renderer redraw",
+        () => {
+          if (!latestContext?.ui?.requestRender) throw new Error("OMP extension API does not expose ui.requestRender");
+          latestContext.ui.requestRender();
+        },
+        "legacy custom-message renderer redraw",
+      );
+      succeeded = redrawRequested && succeeded;
+    }
     return succeeded;
   };
   const rememberRunContext = (ctx: OmpExtensionContext): void => {
@@ -166,9 +178,11 @@ export default function (pi: OmpExtensionApi): void {
 
   const installLegacyMessageRenderer = (): void => {
     if (!pi.registerMessageRenderer) throw new Error("OMP extension API does not expose registerMessageRenderer");
-    pi.registerMessageRenderer(FIRSTMATE_SYNTHETIC_PRESENTATION_TYPE, () => {
-      if (!calmOmpPresentationHides(calmActive, "synthetic-user")) return undefined;
-      const component = createEmptyCalmComponent();
+    pi.registerMessageRenderer(FIRSTMATE_SYNTHETIC_PRESENTATION_TYPE, (message) => {
+      const component = createCalmSyntheticComponent(
+        message.content,
+        () => calmOmpPresentationHides(calmActive, "synthetic-user"),
+      );
       mountedSyntheticRows.add(component);
       const dispose = component.dispose;
       component.dispose = () => {
@@ -303,9 +317,9 @@ export default function (pi: OmpExtensionApi): void {
       sessionId += 1;
       activeRun = undefined;
       calmActive = readCalmPreference(calmActive);
+      latestContext = ctx;
       invalidateMountedSyntheticRows();
       workingShip.reset();
-      latestContext = ctx;
       restoreStockWorkingMessage(ctx);
     });
     pi.on("agent_start", (_event, ctx) => startWorkingPresentation(ctx));
@@ -333,6 +347,7 @@ export default function (pi: OmpExtensionApi): void {
           return;
         }
         calmActive = next;
+        latestContext = ctx;
         let presentationSucceeded = invalidateMountedSyntheticRows();
         if (activeRun) {
           rememberRunContext(ctx);

@@ -56,7 +56,7 @@ Each behavior is observable through the OMP extension registration and lifecycle
 - A `willContinue: true` `agent_end` must not stop the logical run.
 - Calm must not call stock working-message restoration unless it owns the working surface.
 - Native tools must remain host-owned and ordinary in OMP because no supported native tool-row renderer is available.
-- A mounted synthetic custom entry is invalidated on toggle through the component seam; unsupported transcript rows remain host-owned.
+- A mounted synthetic custom entry is invalidated and redrawn on toggle through the component seam; unsupported transcript rows remain host-owned.
 - A new logical run must survive deferred presentation cleanup, continuing events, and presentation-only toggles within its session, then resume after cleanup or re-enabling Calm.
 - `on`, legacy `max`, `off`, absent, and unrecognized preference values must retain the shared interpretation.
 - Unsupported operational-user and assistant-working-note rows must remain ordinary in OMP 18.6.1.
