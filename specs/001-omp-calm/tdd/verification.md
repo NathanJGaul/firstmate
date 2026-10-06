@@ -1,6 +1,6 @@
 ---
 feature: 001-omp-calm
-verified_at: 6f0f1399
+verified_at: 56df0413
 verdict: PASS_WITH_GAPS
 criteria_checked: 14
 criteria_covered: 13
@@ -28,7 +28,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 ## Verification runs
 
 - `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures; the OMP script covers A1-A10, A12-A17, and U2, including preference-read recovery, temporary timer-seam recovery, and mounted synthetic-component invalidation.
-- `bin/fm-doc-audience-check.sh`: `ok surfaces=102 local_links=454`.
+- `bin/fm-doc-audience-check.sh`: `ok surfaces=116 local_links=457`.
 - `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`: compatibility cases report the installed Pi package is absent; the interactive run fails at `rendered export DOM violated the Calm conversation boundary`.
 - OMP `18.6.1` inactive and active `--no-session --no-tools -p` smokes load the extension, report the deliberate generic-row diagnostic, and exit cleanly.
 
