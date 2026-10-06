@@ -62,10 +62,19 @@ const pi = {
 };
 extension.default(pi);
 if (!events.has("session_start") || !events.has("agent_start")) throw new Error("session lifecycle was not registered");
-const context = { ui: { setWorkingMessage(message) { working.push(message); } } };
+const intervals = [];
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 12 });
+const context = { ui: { setWorkingMessage(message) { working.push(message); } }, setInterval(callback) { intervals.push(callback); return callback; }, clearTimer() {} };
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
-if (working.length === 0) throw new Error("agent_start did not restore active Calm presentation");
+const active = working.at(-1);
+if (typeof active !== "string" || !active.includes("╲")) throw new Error("agent_start did not render active Calm presentation");
+const visibleWidth = (message) => Math.max(...message.split("\\n").map((row) => Array.from(row.replaceAll(/\\x1b\\[[0-9;]*m/g, "")).length));
+if (visibleWidth(active) > 10) throw new Error("active Calm presentation exceeded the available width");
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 30 });
+intervals[0]();
+const resized = working.at(-1);
+if (typeof resized !== "string" || visibleWidth(resized) > 28 || resized === active) throw new Error("active Calm presentation did not follow a resize");
 console.log("a2-ok");
 JS
   out=$(run_node "$TMP_ROOT/a2.mjs" 2>&1) || fail "A2 session restoration: $out"
@@ -115,6 +124,7 @@ const pi = {
   getAllTools() { return [
     { name: "read", description: "native read", parameters: { type: "object" }, sourceInfo: { source: "builtin" } },
     { name: "bash", description: "foreign bash", parameters: { type: "object" }, sourceInfo: { source: "extension" } },
+    { name: "edit", description: "unowned edit", parameters: { type: "object" } },
   ]; },
   registerTool(tool) { tools.push(tool); },
 };
@@ -126,6 +136,7 @@ if (!hidden || hidden.render(80).length !== 0) throw new Error("Calm-on legacy c
 const read = tools.find((tool) => tool.name === "read");
 if (!read) throw new Error("native read wrapper was not registered");
 if (tools.some((tool) => tool.name === "bash")) throw new Error("foreign bash tool was claimed by Calm");
+if (tools.some((tool) => tool.name === "edit")) throw new Error("tool without builtin ownership metadata was claimed by Calm");
 if (read.renderCall?.().render(80).length !== 0 || read.renderResult?.().render(80).length !== 0) throw new Error("Calm-on native tool rows were not hidden");
 let delegated = false;
 const result = await read.execute("call-1", { path: "file" }, "signal", "updates", { invokeTool: async (params, options) => { delegated = params.path === "file" && options.signal === "signal" && options.onUpdate === "updates"; return { content: [{ type: "text", text: "ok" }] }; } });
@@ -153,15 +164,20 @@ const events = new Map();
 const commands = new Map();
 const messages = [];
 const cleared = [];
-const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {} }, setInterval(callback) { return { callback }; }, clearTimer(timer) { cleared.push(timer); } };
+const redraws = [];
+let expanded = true;
+const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {}, getToolsExpanded() { return expanded; }, setToolsExpanded(next) { redraws.push(next); expanded = next; } }, setInterval(callback) { return { callback }; }, clearTimer(timer) { cleared.push(timer); } };
 const pi = { on(name, handler) { events.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, registerMessageRenderer() {}, getAllTools() { return []; }, registerTool() {} };
 extension.default(pi);
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
+await events.get("agent_end")({}, context);
 await commands.get("calm").handler("", context);
 if (readFileSync(${home@Q} + "/config/calm", "utf8") !== "off\\n") throw new Error("toggle off did not persist");
 if (messages.at(-1) !== undefined) throw new Error("toggle off did not restore the stock working row");
 if (cleared.length !== 1) throw new Error("toggle off did not clear the managed timer");
+await commands.get("calm").handler("", context);
+if (redraws.length !== 4 || redraws[0] !== false || redraws[1] !== true || redraws[2] !== false || redraws[3] !== true) throw new Error("Calm toggle did not redraw supported surfaces in both directions");
 console.log("a3-ok");
 JS
   out=$(run_node "$TMP_ROOT/a3.mjs" 2>&1) || fail "A3 toggle off: $out"
@@ -269,11 +285,12 @@ console.error = (message) => diagnostics.push(String(message));
 const commands = new Map();
 const events = new Map();
 extension.default({ on(name, handler) { events.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); } });
-await events.get("session_start")({}, {});
-await events.get("agent_start")({}, {});
+const context = { ui: { setWorkingMessage() {} } };
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
 console.error = previousError;
 if (!commands.has("calm")) throw new Error("preference command was lost with unsupported OMP seams");
-for (const name of ["working-message", "legacy custom-message renderer", "native built-in tool wrappers", "generic transcript-row renderer"]) {
+for (const name of ["legacy custom-message renderer", "native built-in tool wrappers", "generic transcript-row renderer", "working-message timer"]) {
   if (!diagnostics.some((line) => line.includes(name))) throw new Error("missing diagnostic for " + name);
 }
 console.log("a9-ok " + diagnostics.length);

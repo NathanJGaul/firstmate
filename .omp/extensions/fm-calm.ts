@@ -29,11 +29,12 @@ import {
 } from "./lib/fm-calm-omp-presentation.ts";
 import {
   FIRSTMATE_SYNTHETIC_PRESENTATION_TYPE,
-  type CalmTranscriptClass,
 } from "../../.claude/mods/firstmate-calm/lib/fm-calm-visibility.ts";
 type OmpUi = {
   notify?: (message: string, level?: string) => void;
   setWorkingMessage?: (message?: string) => void;
+  getToolsExpanded?: () => boolean;
+  setToolsExpanded?: (expanded: boolean) => void;
 };
 
 type OmpExtensionContext = {
@@ -79,7 +80,14 @@ const extensionFile = fileURLToPath(import.meta.url);
 const extensionRoot = resolve(dirname(extensionFile), "../..");
 const sharedPolicyRoot = resolve(extensionRoot, ".claude/mods/firstmate-calm");
 const preferencePath = calmPreferencePath(process.env, sharedPolicyRoot);
-const WORKING_MESSAGE_WIDTH = 40;
+const DEFAULT_WORKING_MESSAGE_WIDTH = 40;
+const WORKING_MESSAGE_MARGIN = 2;
+
+function workingMessageWidth(): number {
+  const columns = process.stdout.columns;
+  if (typeof columns !== "number" || !Number.isFinite(columns)) return DEFAULT_WORKING_MESSAGE_WIDTH;
+  return Math.max(0, Math.floor(columns) - WORKING_MESSAGE_MARGIN);
+}
 
 function loadCalmPreference(): boolean {
   try {
@@ -115,12 +123,40 @@ function clearManagedTimer(ctx: OmpExtensionContext, timer: unknown): void {
 export default function (pi: OmpExtensionApi): void {
   let calmActive = loadCalmPreference();
   let workingMessageAdapterAvailable: boolean | undefined;
+  let workingTimerAdapterAvailable: boolean | undefined;
+  let redrawAdapterAvailable: boolean | undefined;
   const ensureWorkingMessageAdapter = (ctx: OmpExtensionContext): boolean => {
     if (workingMessageAdapterAvailable !== undefined) return workingMessageAdapterAvailable;
     workingMessageAdapterAvailable = installCalmAdapter("working-message", () => {
       if (!ctx.ui?.setWorkingMessage) throw new Error("OMP extension API does not expose ui.setWorkingMessage");
     });
     return workingMessageAdapterAvailable;
+  };
+  const ensureWorkingTimerAdapter = (ctx: OmpExtensionContext): boolean => {
+    if (workingTimerAdapterAvailable !== undefined) return workingTimerAdapterAvailable;
+    workingTimerAdapterAvailable = installCalmAdapter("working-message timer", () => {
+      if (!ctx.setInterval || !ctx.clearTimer) {
+        throw new Error("OMP extension API does not expose the managed setInterval/clearTimer pair");
+      }
+    });
+    return workingTimerAdapterAvailable;
+  };
+  const redrawSupportedSurfaces = (ctx: OmpExtensionContext): void => {
+    if (redrawAdapterAvailable === false) return;
+    const redraw = (): void => {
+      const ui = ctx.ui;
+      if (!ui?.getToolsExpanded || !ui.setToolsExpanded) {
+        throw new Error("OMP extension API does not expose getToolsExpanded/setToolsExpanded");
+      }
+      const expanded = ui.getToolsExpanded();
+      ui.setToolsExpanded(!expanded);
+      ui.setToolsExpanded(expanded);
+    };
+    if (redrawAdapterAvailable === undefined) {
+      redrawAdapterAvailable = installCalmAdapter("supported-surface redraw", redraw);
+      return;
+    }
+    installCalmAdapter("supported-surface redraw", redraw);
   };
   let agentRunActive = false;
   let workingTimer: unknown;
@@ -145,7 +181,7 @@ export default function (pi: OmpExtensionApi): void {
     for (const name of nativeToolNames) {
       const native = tools.find((tool) => tool.name === name);
       if (!native) continue;
-      if (native.sourceInfo && native.sourceInfo.source !== "builtin") continue;
+      if (native.sourceInfo?.source !== "builtin") continue;
       const wrapper: OmpToolDefinition = {
         name: native.name,
         label: native.name,
@@ -191,17 +227,18 @@ export default function (pi: OmpExtensionApi): void {
       restoreStockWorkingMessage(ctx);
       return;
     }
-    ctx.ui!.setWorkingMessage!(renderCalmWorkingShipMessage(workingShip, WORKING_MESSAGE_WIDTH));
+    ctx.ui!.setWorkingMessage!(renderCalmWorkingShipMessage(workingShip, workingMessageWidth()));
   };
 
   const startWorkingPresentation = (ctx: OmpExtensionContext): void => {
     latestContext = ctx;
     agentRunActive = true;
-    if (!ensureWorkingMessageAdapter(ctx)) return;
+    const workingMessageAvailable = ensureWorkingMessageAdapter(ctx);
+    const workingTimerAvailable = calmActive && ensureWorkingTimerAdapter(ctx);
+    if (!workingMessageAvailable) return;
     refreshWorkingMessage(ctx);
-    if (!calmActive || workingTimer !== undefined) return;
-    if (!ctx.setInterval || !ctx.clearTimer) return;
-    workingTimer = ctx.setInterval(() => {
+    if (!calmActive || workingTimer !== undefined || !workingTimerAvailable) return;
+    workingTimer = ctx.setInterval!(() => {
       workingShip.tick();
       refreshWorkingMessage(ctx);
     }, CALM_WORKING_SHIP_TICK_MS);
@@ -245,8 +282,11 @@ export default function (pi: OmpExtensionApi): void {
         if (next) {
           installCalmAdapter("native built-in tool wrappers", installNativeToolAdapters);
         }
-        if (latestContext && agentRunActive) refreshWorkingMessage(latestContext);
-        else if (!next) restoreStockWorkingMessage(ctx);
+        if (latestContext && agentRunActive) {
+          if (next) startWorkingPresentation(latestContext);
+          else refreshWorkingMessage(latestContext);
+        } else if (!next) restoreStockWorkingMessage(ctx);
+        redrawSupportedSurfaces(ctx);
         notify(ctx, `Firstmate Calm: ${next ? "on" : "off"}`, "info");
       },
     });
