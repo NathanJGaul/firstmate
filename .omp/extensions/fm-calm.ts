@@ -145,6 +145,10 @@ export default function (pi: OmpExtensionApi): void {
   let latestContext: OmpExtensionContext | undefined;
   let sessionId = 0;
   const workingShip: CalmWorkingShipSprite = createCalmWorkingShipSprite();
+  const rememberRunContext = (ctx: OmpExtensionContext): void => {
+    latestContext = ctx;
+    if (activeRun) activeRun.context = ctx;
+  };
 
   const installLegacyMessageRenderer = (): void => {
     if (!pi.registerMessageRenderer) throw new Error("OMP extension API does not expose registerMessageRenderer");
@@ -201,7 +205,7 @@ export default function (pi: OmpExtensionApi): void {
   };
 
   const refreshWorkingMessage = (ctx: OmpExtensionContext): boolean => {
-    latestContext = ctx;
+    rememberRunContext(ctx);
     if (!calmActive || !activeRun) return restoreStockWorkingMessage(ctx);
     const width = getWorkingMessageWidth();
     if (width === undefined) {
@@ -215,7 +219,7 @@ export default function (pi: OmpExtensionApi): void {
   };
 
   const startWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
-    latestContext = ctx;
+    rememberRunContext(ctx);
     const run = activeRun ?? { sessionId, context: ctx };
     run.context = ctx;
     activeRun = run;
@@ -284,7 +288,11 @@ export default function (pi: OmpExtensionApi): void {
     });
     pi.on("agent_start", (_event, ctx) => startWorkingPresentation(ctx));
     pi.on("agent_end", (event, ctx) => {
-      if (!agentEndWillContinue(event)) stopWorkingPresentation(ctx);
+      if (agentEndWillContinue(event)) {
+        rememberRunContext(ctx);
+        return;
+      }
+      stopWorkingPresentation(ctx);
     });
     pi.on("session_shutdown", (_event, ctx) => stopWorkingPresentation(ctx));
   });
@@ -305,9 +313,10 @@ export default function (pi: OmpExtensionApi): void {
         calmActive = next;
         let presentationSucceeded = true;
         if (activeRun) {
+          rememberRunContext(ctx);
           presentationSucceeded = next
-            ? startWorkingPresentation(activeRun.context)
-            : refreshWorkingMessage(activeRun.context);
+            ? startWorkingPresentation(ctx)
+            : refreshWorkingMessage(ctx);
         } else if (!next) {
           presentationSucceeded = restoreStockWorkingMessage(ctx);
         }

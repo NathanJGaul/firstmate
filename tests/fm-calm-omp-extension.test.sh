@@ -145,6 +145,59 @@ JS
 
 test_omp_supported_rows_leave_native_tools_untouched
 
+test_calm_current_context_drives_recovery_and_cleanup() {
+  local home out
+  home="$TMP_ROOT/home-a18"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a18.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a18");
+const events = new Map();
+const commands = new Map();
+const firstMessages = [];
+const continuingMessages = [];
+const commandMessages = [];
+const cleared = [];
+const timer = { callback: undefined };
+const firstContext = {
+  ui: { setWorkingMessage(message) { firstMessages.push(message); } },
+  setInterval(callback) { timer.callback = callback; return timer; },
+  clearTimer(handle) { cleared.push(handle); },
+};
+const continuingContext = { ui: { setWorkingMessage(message) { continuingMessages.push(message); } } };
+const commandContext = {
+  ui: {
+    setWorkingMessage(message) { commandMessages.push(message); },
+    notify() {},
+  },
+};
+const pi = {
+  on(name, handler) { events.set(name, handler); },
+  registerCommand(name, command) { commands.set(name, command); },
+  registerMessageRenderer() {},
+};
+extension.default(pi);
+await events.get("session_start")({}, firstContext);
+await events.get("agent_start")({}, firstContext);
+if (firstMessages.length !== 1 || typeof firstMessages[0] !== "string") throw new Error("initial context did not render Calm");
+await events.get("agent_end")({ willContinue: true }, continuingContext);
+timer.callback();
+if (continuingMessages.length !== 1 || typeof continuingMessages[0] !== "string") throw new Error("continuing lifecycle context was not used");
+if (firstMessages.length !== 1) throw new Error("continuing lifecycle reused the stale context");
+await commands.get("calm").handler("", commandContext);
+if (commandMessages.length !== 1 || commandMessages[0] !== undefined) throw new Error("command context did not restore the working surface");
+if (firstMessages.length !== 1 || continuingMessages.length !== 1) throw new Error("command cleanup reused a stale context");
+if (cleared.length !== 1 || cleared[0] !== timer) throw new Error("timer cleanup did not use its owning handle");
+console.log("a18-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a18.mjs" 2>&1) || fail "A18 current context: $out"
+  assert_contains "$out" "a18-ok" "A18 current context did not complete"
+  pass "OMP uses current lifecycle and command contexts while retaining timer ownership"
+}
+
 test_calm_preference_read_failure_preserves_state() {
   local home out
   home="$TMP_ROOT/home-a16"
@@ -736,6 +789,7 @@ test_calm_timer_setup_failure_does_not_publish_unmanaged_message
 test_omp_adapter_invocation_failures_are_isolated
 test_calm_preference_read_failure_preserves_state
 test_omp_timer_adapter_retries_after_temporary_unavailability
+test_calm_current_context_drives_recovery_and_cleanup
 
 test_calm_command_enables_shared_preference_without_transcript_row
 test_calm_session_restores_shared_preference
