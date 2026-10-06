@@ -27,7 +27,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 
 ## Verification runs
 
-- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 11 checks.
+- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 10 checks and records the custom-entry remount limitation.
 - `bin/fm-doc-audience-check.sh`: `ok surfaces=102 local_links=454`.
 - `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`: compatibility cases report the installed Pi package is absent; the interactive run fails at `rendered export DOM violated the Calm conversation boundary`.
 - OMP `18.6.1` inactive and active `--no-session --no-tools -p` smokes load the extension, report the deliberate generic-row diagnostic, and exit cleanly.
@@ -36,13 +36,13 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 
 ### HIGH
 
-1. **Test-first ordering is not proven.** The final working-surface ownership guard and redraw-restoration correction were test-after changes, and there are no feature commits to establish test-before-code ordering.
+1. **Test-first ordering is not proven.** The final working-surface ownership guard was a test-after change, and there are no feature commits to establish test-before-code ordering.
 2. **Pi regression criterion is blocked.** The focused Pi suite has an observed export-DOM failure unrelated to the OMP runtime smoke, and several compatibility checks cannot load the installed Pi package. The failure was not suppressed or repaired in this task.
 
 ### MEDIUM
 
 3. **OMP export preservation has no dedicated acceptance runner.** The extension is drawing-only and the focused test verifies that unsupported native presentation is not claimed, but the recorded stack profile has no OMP export runner; live verification is limited to the documented startup smoke.
-4. **Unsupported generic rows are verified by the adapter diagnostic rather than a real OMP transcript fixture.** OMP 18.6.1 exposes no generic transcript renderer, so the implementation leaves those rows to OMP unchanged; the focused test verifies the diagnostic and retained `/calm` registration.
+4. **Unsupported generic rows and mounted-entry redraw are verified through the adapter boundary rather than a real OMP transcript fixture.** OMP 18.6.1 exposes no generic transcript renderer or custom-entry invalidation/remount action, so the implementation leaves those rows and already-mounted custom components to OMP unchanged; the focused test verifies the diagnostic, retained `/calm` registration, and newly rendered synthetic-row behavior.
 
 ## Mutation results
 

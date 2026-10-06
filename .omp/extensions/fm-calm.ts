@@ -33,8 +33,6 @@ import {
 type OmpUi = {
   notify?: (message: string, level?: string) => void;
   setWorkingMessage?: (message?: string) => void;
-  getToolsExpanded?: () => boolean;
-  setToolsExpanded?: (expanded: boolean) => void;
 };
 
 type OmpExtensionContext = {
@@ -137,35 +135,6 @@ export default function (pi: OmpExtensionApi): void {
     }
     workingMessageWidthAvailable = true;
     return width;
-  };
-  let pendingExpansionRestoration: boolean | undefined;
-  const restoreExpansionState = (ui: OmpUi, expanded: boolean): boolean => {
-    pendingExpansionRestoration = expanded;
-    const restored = installCalmAdapter("supported-surface redraw restoration", () => {
-      ui.setToolsExpanded!(expanded);
-    });
-    if (restored) pendingExpansionRestoration = undefined;
-    return restored;
-  };
-  const redrawSupportedSurfaces = (ctx: OmpExtensionContext): boolean => {
-    const redraw = (): void => {
-      const ui = ctx.ui;
-      if (!ui?.getToolsExpanded || !ui.setToolsExpanded) {
-        throw new Error("OMP extension API does not expose getToolsExpanded/setToolsExpanded");
-      }
-      if (pendingExpansionRestoration !== undefined && !restoreExpansionState(ui, pendingExpansionRestoration)) {
-        throw new Error("OMP tool expansion state restoration failed");
-      }
-      const expanded = ui.getToolsExpanded();
-      try {
-        ui.setToolsExpanded(!expanded);
-      } finally {
-        if (!restoreExpansionState(ui, expanded)) {
-          throw new Error("OMP tool expansion state restoration failed");
-        }
-      }
-    };
-    return installCalmAdapter("supported-surface redraw", redraw);
   };
   let agentRunActive = false;
   let workingTimer: unknown;
@@ -270,7 +239,6 @@ export default function (pi: OmpExtensionApi): void {
     pi.on("session_start", (_event, ctx) => {
       calmActive = loadCalmPreference();
       agentRunActive = false;
-      pendingExpansionRestoration = undefined;
       workingShip.reset();
       latestContext = ctx;
       restoreStockWorkingMessage(ctx);
@@ -300,12 +268,7 @@ export default function (pi: OmpExtensionApi): void {
           if (next) startWorkingPresentation(latestContext);
           else refreshWorkingMessage(latestContext);
         } else if (!next) restoreStockWorkingMessage(ctx);
-        const redrawSucceeded = redrawSupportedSurfaces(ctx);
-        notify(
-          ctx,
-          `Firstmate Calm: ${next ? "on" : "off"}${redrawSucceeded ? "" : " (presentation redraw pending)"}`,
-          redrawSucceeded ? "info" : "warning",
-        );
+        notify(ctx, `Firstmate Calm: ${next ? "on" : "off"}`, "info");
       },
     });
   });

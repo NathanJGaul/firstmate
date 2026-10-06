@@ -89,7 +89,7 @@ docs/
 ## Interface Contracts
 
 - The default export from `.omp/extensions/fm-calm.ts` receives OMP `ExtensionAPI` and registers only through verified extension methods.
-- `/calm` toggles the shared preference, refreshes supported rows through OMP's redraw action, and reports persistence failures without changing the current active state.
+- `/calm` toggles the shared preference; newly rendered or host-remounted supported rows use the new state, while OMP's lack of custom-entry invalidation leaves already-mounted entries unchanged. Persistence failures do not change the current active state.
 - OMP lifecycle handlers use `session_start`, `agent_start`, `agent_end`, and `session_shutdown`; no handler injects model messages or changes session entries.
 - The working adapter updates `ctx.ui.setWorkingMessage()` from the shared animation on the managed timer and restores the host default by passing `undefined` only after Calm has taken ownership and the run is off or terminal.
 

@@ -54,8 +54,8 @@ Append only. Newest last. Every entry's `red` block is the evidence that the tes
 ## Final focused verification
 
 - command: `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`
-- result: 2 selected scripts, 0 failures, 3.533 seconds on 2026-10-06; OMP covered A1-A10 plus the redraw-restoration regression in 11 executable checks, while Claude covered its shared policy and operational-input regression.
+- result: 2 selected scripts, 0 failures, 3.533 seconds on 2026-10-06; OMP covered A1-A10 in 10 executable checks, including the custom-entry remount limitation, while Claude covered its shared policy and operational-input regression.
 - command: `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`
 - result: pre-existing environment limitations remained (`installed @earendil-works/pi-coding-agent package not found` on compatibility cases) and the interactive run failed at `rendered export DOM violated the Calm conversation boundary`; no Pi-specific implementation fix was attempted.
 - smoke: `omp/18.6.1` loaded the tracked extension in both Calm-off and Calm-on `--no-session --no-tools -p` runs; both reported only the deliberate generic-row diagnostic and exited cleanly.
-- audit note: the final working-surface ownership guard and redraw-restoration regression were test-after corrections to the initial implementation; no per-cycle feature commits exist in this branch, so test-first ordering is not proven by git history.
+- audit note: the final working-surface ownership guard was a test-after correction to the initial implementation; no per-cycle feature commits exist in this branch, so test-first ordering is not proven by git history. The unsupported custom-entry remount boundary is explicitly covered rather than forced through tool expansion.

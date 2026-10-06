@@ -11,11 +11,11 @@
 - active: write `on\n`;
 - inactive: write `off\n`;
 - write failure: leave the current state unchanged and notify the operator, or emit the notification adapter diagnostic when that seam is unavailable;
-- successful toggle: redraw supported presentation surfaces without starting a model turn, and report a redraw failure as a warning while retaining retryable restoration state.
+- successful toggle: update the factory-local presentation choice without starting a model turn; newly rendered or host-remounted synthetic entries use the new choice, while already-mounted entries remain unchanged because OMP exposes no supported custom-entry invalidation or remount action.
 
 ## Lifecycle
 
-- `session_start`: reread the shared preference, reset animation state, clear pending redraw restoration, and restore the default working message only when Calm owns it.
+- `session_start`: reread the shared preference, reset animation state, and restore the default working message only when Calm owns it.
 - `agent_start`: if active, start the one managed working-message timer.
 - terminal `agent_end` (an event without `willContinue: true`) and `session_shutdown`: clear the timer, retaining its handle until clearing succeeds, and restore OMP's default working message only when Calm owns it.
 

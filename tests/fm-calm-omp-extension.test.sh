@@ -33,7 +33,7 @@ const pi = {
 };
 extension.default(pi);
 if (!commands.has("calm")) throw new Error("the OMP extension did not register /calm");
-await commands.get("calm").handler("", { ui: { notify(message, level) { notifications.push({ message, level }); }, getToolsExpanded() { return false; }, setToolsExpanded() {} } });
+await commands.get("calm").handler("", { ui: { notify(message, level) { notifications.push({ message, level }); } } });
 const preference = readFileSync(${home@Q} + "/config/calm", "utf8");
 if (preference !== "on\\n") throw new Error("/calm did not persist the shared on preference");
 if (sentMessages !== 0) throw new Error("/calm sent a transcript row");
@@ -118,8 +118,10 @@ const renderers = new Map();
 let inspectedNativeTools = false;
 let registeredTools = 0;
 const events = new Map();
+const commands = new Map();
 const pi = {
   on(name, handler) { events.set(name, handler); },
+  registerCommand(name, command) { commands.set(name, command); },
   registerMessageRenderer(name, renderer) { renderers.set(name, renderer); },
   getAllTools() { inspectedNativeTools = true; return [{ name: "read", description: "native read", parameters: { type: "object" }, sourceInfo: { source: "builtin" } }]; },
   registerTool() { registeredTools += 1; },
@@ -127,8 +129,12 @@ const pi = {
 extension.default(pi);
 await events.get("session_start")({}, { ui: { setWorkingMessage() {} } });
 if (!renderers.has("firstmate-synthetic-input-presentation")) throw new Error("legacy custom-message renderer was not registered");
-const hidden = renderers.get("firstmate-synthetic-input-presentation")({ content: "internal", customType: "firstmate-synthetic-input-presentation" }, {}, {});
+const renderSynthetic = () => renderers.get("firstmate-synthetic-input-presentation")({ content: "internal", customType: "firstmate-synthetic-input-presentation" }, {}, {});
+const hidden = renderSynthetic();
 if (!hidden || hidden.render(80).length !== 0) throw new Error("Calm-on legacy custom row was not hidden");
+await commands.get("calm").handler("", { ui: { notify() {} } });
+if (hidden.render(80).length !== 0) throw new Error("an already-mounted synthetic row unexpectedly changed without host remount");
+if (renderSynthetic() !== undefined) throw new Error("a newly rendered synthetic row did not restore ordinary rendering");
 if (inspectedNativeTools || registeredTools !== 0) throw new Error("Calm claimed native tool presentation without a supported renderer seam");
 console.log("a6-ok");
 JS
@@ -155,9 +161,7 @@ const commands = new Map();
 const messages = [];
 const cleared = [];
 const timers = [];
-const redraws = [];
-let expanded = true;
-const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {}, getToolsExpanded() { return expanded; }, setToolsExpanded(next) { redraws.push(next); expanded = next; } }, setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; }, clearTimer(timer) { cleared.push(timer); } };
+const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {} }, setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; }, clearTimer(timer) { cleared.push(timer); } };
 const pi = { on(name, handler) { events.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, registerMessageRenderer() {} };
 extension.default(pi);
 await events.get("session_start")({}, context);
@@ -170,7 +174,6 @@ if (cleared.length !== 1) throw new Error("active toggle off did not clear the m
 await events.get("agent_end")({}, context);
 await commands.get("calm").handler("", context);
 await commands.get("calm").handler("", context);
-if (redraws.length !== 6 || redraws[0] !== false || redraws[1] !== true || redraws[2] !== false || redraws[3] !== true || redraws[4] !== false || redraws[5] !== true) throw new Error("Calm toggle did not redraw supported surfaces in both directions");
 console.log("a3-ok");
 JS
   out=$(run_node "$TMP_ROOT/a3.mjs" 2>&1) || fail "A3 toggle off: $out"
@@ -299,60 +302,6 @@ JS
   pass "OMP reports each unsupported Calm seam independently while retaining /calm"
 }
 
-test_calm_redraw_restoration_is_retryable() {
-  local home out
-  home="$TMP_ROOT/home-a11"
-  mkdir -p "$home/config"
-  printf 'on\n' >"$home/config/calm"
-  cat >"$TMP_ROOT/a11.mjs" <<JS
-import { pathToFileURL } from "node:url";
-process.env.FM_HOME = ${home@Q};
-const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a11");
-const diagnostics = [];
-const previousError = console.error;
-console.error = (message) => diagnostics.push(String(message));
-const commands = new Map();
-const events = new Map();
-const calls = [];
-let expanded = true;
-let failOnce = true;
-const context = {
-  ui: {
-    setWorkingMessage() {},
-    notify() {},
-    getToolsExpanded() { return expanded; },
-    setToolsExpanded(next) {
-      calls.push(next);
-      expanded = next;
-      if (next && failOnce) {
-        failOnce = false;
-        throw new Error("restore failed after mutation");
-      }
-    },
-  },
-};
-const pi = {
-  on(name, handler) { events.set(name, handler); },
-  registerCommand(name, command) { commands.set(name, command); },
-  registerMessageRenderer() {},
-};
-extension.default(pi);
-await commands.get("calm").handler("", context);
-await events.get("session_start")({}, context);
-await commands.get("calm").handler("", context);
-await commands.get("calm").handler("", context);
-console.error = previousError;
-const expected = [false, true, false, true, false, true];
-if (JSON.stringify(calls) !== JSON.stringify(expected)) throw new Error("session replacement did not clear stale redraw restoration");
-if (!expanded) throw new Error("redraw retry did not preserve the original expansion state");
-if (!diagnostics.some((line) => line.includes("supported-surface redraw restoration") && line.includes("restore failed after mutation"))) throw new Error("redraw restoration failure was not diagnosed");
-console.log("a11-ok");
-JS
-  out=$(run_node "$TMP_ROOT/a11.mjs" 2>&1) || fail "A11 redraw restoration retry: $out"
-  assert_contains "$out" "a11-ok" "A11 redraw restoration retry did not complete"
-  pass "OMP redraw retries expansion restoration after a partial failure"
-}
-
 test_omp_adapter_invocation_failures_are_isolated() {
   local home out
   home="$TMP_ROOT/home-a10"
@@ -385,9 +334,8 @@ await load("clear", { ui: { setWorkingMessage(message) { messages.push(message);
 if (messages.at(-1) !== undefined) throw new Error("stock working message was not attempted after clear failure");
 retainedTimer.callback();
 if (clearAttempts !== 2) throw new Error("failed timer cleanup was not retried with the retained handle");
-await load("redraw", { ui: { setWorkingMessage() {}, getToolsExpanded() { throw new Error("redraw failed"); }, setToolsExpanded() {} }, setInterval() { return {}; }, clearTimer() {} }, false, true);
 console.error = previousError;
-for (const [name, detail] of [["working-message", "working failed"], ["working-message timer", "interval failed"], ["working-message timer", "clear failed"], ["supported-surface redraw", "redraw failed"]]) {
+for (const [name, detail] of [["working-message", "working failed"], ["working-message timer", "interval failed"], ["working-message timer", "clear failed"]]) {
   if (!diagnostics.some((line) => line.includes(name) && line.includes(detail))) throw new Error("missing invocation diagnostic for " + name + ": " + detail);
 }
 console.log("a10-ok");
@@ -402,7 +350,6 @@ test_calm_write_failure_preserves_active_state
 test_calm_working_timer_is_managed_across_settle_and_shutdown
 test_calm_off_keeps_ordinary_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
-test_calm_redraw_restoration_is_retryable
 test_omp_adapter_invocation_failures_are_isolated
 
 test_calm_command_enables_shared_preference_without_transcript_row

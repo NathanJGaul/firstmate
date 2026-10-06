@@ -38,4 +38,3 @@ Current adapters:
 - `working-message`: managed timer plus `setWorkingMessage`.
 - `legacy-message`: `registerMessageRenderer` for the existing synthetic presentation custom type.
 - `generic-transcript-row`: intentionally unsupported in OMP 18.6.1 because no generic row renderer exists; operational-user and assistant-working-note rows remain ordinary behind this diagnosed boundary.
-
