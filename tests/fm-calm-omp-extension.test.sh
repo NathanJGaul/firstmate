@@ -145,6 +145,93 @@ JS
 
 test_omp_supported_rows_leave_native_tools_untouched
 
+test_calm_preference_read_failure_preserves_state() {
+  local home out
+  home="$TMP_ROOT/home-a16"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a16.mjs" <<JS
+import { mkdirSync, rmSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a16");
+const events = new Map();
+const messages = [];
+const diagnostics = [];
+const previousError = console.error;
+console.error = (message) => diagnostics.push(String(message));
+const context = {
+  ui: { setWorkingMessage(message) { messages.push(message); } },
+  setInterval(callback) { return { callback }; },
+  clearTimer() {},
+};
+const pi = {
+  on(name, handler) { events.set(name, handler); },
+  registerCommand() {},
+  registerMessageRenderer() {},
+};
+extension.default(pi);
+await events.get("session_start")({}, context);
+rmSync(${home@Q} + "/config/calm");
+mkdirSync(${home@Q} + "/config/calm");
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+console.error = previousError;
+if (typeof messages.at(-1) !== "string") throw new Error("preference read failure turned active Calm off");
+if (diagnostics.filter((line) => line.includes("preference read") && line.includes("EISDIR")).length !== 1) {
+  throw new Error("preference read failure was not diagnosed once");
+}
+console.log("a16-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a16.mjs" 2>&1) || fail "A16 preference read failure: $out"
+  assert_contains "$out" "a16-ok" "A16 preference read failure did not complete"
+  pass "OMP preserves Calm state and bounds preference read diagnostics"
+}
+
+test_omp_timer_adapter_retries_after_temporary_unavailability() {
+  local home out
+  home="$TMP_ROOT/home-a17"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a17.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a17");
+const events = new Map();
+const messages = [];
+const timers = [];
+const diagnostics = [];
+const previousError = console.error;
+console.error = (message) => diagnostics.push(String(message));
+const pi = {
+  on(name, handler) { events.set(name, handler); },
+  registerCommand() {},
+  registerMessageRenderer() {},
+};
+extension.default(pi);
+const firstContext = { ui: { setWorkingMessage(message) { messages.push(message); } } };
+await events.get("session_start")({}, firstContext);
+await events.get("agent_start")({}, firstContext);
+const secondContext = {
+  ui: { setWorkingMessage(message) { messages.push(message); } },
+  setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; },
+  clearTimer() {},
+};
+await events.get("agent_start")({}, secondContext);
+console.error = previousError;
+if (timers.length !== 1 || typeof messages.at(-1) !== "string") throw new Error("a recovered timer seam did not restore Calm activity");
+if (diagnostics.filter((line) => line.includes("working-message timer")).length !== 1) {
+  throw new Error("temporary timer unavailability was not diagnosed once");
+}
+console.log("a17-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a17.mjs" 2>&1) || fail "A17 timer seam recovery: $out"
+  assert_contains "$out" "a17-ok" "A17 timer seam recovery did not complete"
+  pass "OMP retries a working timer seam when a later context provides it"
+}
+
 test_calm_toggle_off_restores_stock_and_clears_timer() {
   local home out
   home="$TMP_ROOT/home-a3"
@@ -647,6 +734,8 @@ test_calm_unusable_width_leaves_stock_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
 test_calm_timer_setup_failure_does_not_publish_unmanaged_message
 test_omp_adapter_invocation_failures_are_isolated
+test_calm_preference_read_failure_preserves_state
+test_omp_timer_adapter_retries_after_temporary_unavailability
 
 test_calm_command_enables_shared_preference_without_transcript_row
 test_calm_session_restores_shared_preference

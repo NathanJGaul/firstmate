@@ -31,6 +31,8 @@ Each behavior is observable through the OMP extension registration and lifecycle
 | A13 | A new logical run is active immediately and resumes presentation after retained timer cleanup succeeds | FR-005 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_retries_after_timer_clear_failure`) |
 | A14 | A non-positive usable working width leaves OMP's stock working surface untouched and reports the width seam | FR-005, FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_unusable_width_leaves_stock_working_surface`) |
 | A15 | A deferred logical run survives continuing events and presentation-only Calm toggles and resumes in the same session after cleanup | FR-005, FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_survives_presentation_toggle`) |
+| A16 | A non-missing preference read failure preserves the last known Calm state and emits one bounded diagnostic | FR-002, FR-007 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_preference_read_failure_preserves_state`) |
+| A17 | A temporary timer seam failure is retried when a later agent context provides the managed timer API | FR-005, FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_timer_adapter_retries_after_temporary_unavailability`) |
 
 ## Inner loop: unit behaviors
 

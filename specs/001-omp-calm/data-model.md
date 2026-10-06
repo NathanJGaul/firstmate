@@ -19,7 +19,7 @@ The preference is the existing cross-harness file. OMP must not create a second 
 | animation | shared sprite state | factory | One instance survives hide/show within a session and resets at `session_start`. |
 | timer | managed timer handle plus owning run or absent | active run or pending cleanup | One timer while the working presentation is active; retain its handle and owner until clearing succeeds before starting a replacement or completing cleanup. |
 | workingMessageOwned | boolean | factory/session | Only a successful Calm working-message write grants ownership; stock restoration is skipped while this is false, and a failed reset leaves ownership set for retry. |
-| adapter availability | independent booleans | factory | One failed seam does not disable other seams. |
+| adapter seams | independent presentation attempts | factory | One failed seam does not disable other seams, and a temporarily unavailable working seam can recover on a later attempt. |
 
 No field is persisted or appended to the transcript.
 

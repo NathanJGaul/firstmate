@@ -68,14 +68,6 @@ function workingMessageWidth(): number | undefined {
   return width > 0 ? width : undefined;
 }
 
-function loadCalmPreference(): boolean {
-  try {
-    return parseCalmPreference(readFileSync(preferencePath, "utf8"));
-  } catch {
-    return false;
-  }
-}
-
 function persistCalmPreference(active: boolean): void {
   mkdirSync(dirname(preferencePath), { recursive: true });
   const temporaryPath = `${preferencePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -109,25 +101,28 @@ export default function (pi: OmpExtensionApi): void {
       ctx.ui.notify(message, level);
     });
   };
-  let calmActive = loadCalmPreference();
-  let workingMessageAdapterAvailable: boolean | undefined;
-  let workingTimerAdapterAvailable: boolean | undefined;
-  const ensureWorkingMessageAdapter = (ctx: OmpExtensionContext): boolean => {
-    if (workingMessageAdapterAvailable !== undefined) return workingMessageAdapterAvailable;
-    workingMessageAdapterAvailable = installAdapter("working-message", () => {
-      if (!ctx.ui?.setWorkingMessage) throw new Error("OMP extension API does not expose ui.setWorkingMessage");
-    });
-    return workingMessageAdapterAvailable;
-  };
-  const ensureWorkingTimerAdapter = (ctx: OmpExtensionContext): boolean => {
-    if (workingTimerAdapterAvailable !== undefined) return workingTimerAdapterAvailable;
-    workingTimerAdapterAvailable = installAdapter("working-message timer", () => {
-      if (!ctx.setInterval || !ctx.clearTimer) {
-        throw new Error("OMP extension API does not expose the managed setInterval/clearTimer pair");
+  const readCalmPreference = (fallback: boolean): boolean => {
+    try {
+      return parseCalmPreference(readFileSync(preferencePath, "utf8"));
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+        return false;
       }
-    });
-    return workingTimerAdapterAvailable;
+      installAdapter("preference read", () => {
+        throw error;
+      });
+      return fallback;
+    }
   };
+  let calmActive = readCalmPreference(false);
+  const ensureWorkingMessageAdapter = (ctx: OmpExtensionContext): boolean => installAdapter("working-message", () => {
+    if (!ctx.ui?.setWorkingMessage) throw new Error("OMP extension API does not expose ui.setWorkingMessage");
+  });
+  const ensureWorkingTimerAdapter = (ctx: OmpExtensionContext): boolean => installAdapter("working-message timer", () => {
+    if (!ctx.setInterval || !ctx.clearTimer) {
+      throw new Error("OMP extension API does not expose the managed setInterval/clearTimer pair");
+    }
+  });
   const getWorkingMessageWidth = (): number | undefined => {
     const width = workingMessageWidth();
     if (width === undefined) {
@@ -282,7 +277,7 @@ export default function (pi: OmpExtensionApi): void {
     pi.on("session_start", (_event, ctx) => {
       sessionId += 1;
       activeRun = undefined;
-      calmActive = loadCalmPreference();
+      calmActive = readCalmPreference(calmActive);
       workingShip.reset();
       latestContext = ctx;
       restoreStockWorkingMessage(ctx);
