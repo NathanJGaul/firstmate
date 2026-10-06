@@ -1,0 +1,24 @@
+scenario=OMP Calm leaves unsupported arbitrary custom entries visible
+herdr_session=fm-lab-fm-calm-live-296289-23143
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                         Tip: With default keybindings, Ctrl+D deletes the character under the
+                         cursor instead of quitting your draft — see /hotkeys for your exit key
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                      │
+│  live-arbitrary-presentation                                                                                        │
+│                                                                                                                      │
+│ LIVE_ARBITRARY_ENTRY                                                                                                 │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+❯
+ 󰵗 · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?2 ·  14.5%/200K 󰁨 · 󰙺
+
+unsupported_entry_visible=1

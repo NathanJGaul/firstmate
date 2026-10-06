@@ -1,0 +1,40 @@
+Live product: OMP 18.6.1 in Herdr lab fm-lab-calm-omp-live-364801-20702
+After the real model turn reached CALM_SHIP_DONE and agent_end, the Calm ship was absent and the native OMP status/composer surface remained.
+
+   - Prefer cursor positioning and bounded row writes over blindly appending strings.
+    This avoids apparent overflow caused by confusing encoded length with terminal display
+    width.
+ 5. Use an explicit viewport or off-screen frame buffer
+    Construct each frame in a two-dimensional buffer whose dimensions exactly match the
+    available terminal area. Draw the boat, water, sky, and decorations into that buffer
+    using clipped writes, then emit the completed frame.
+    A frame buffer provides clear invariants:
+   - Every valid cell has coordinates inside [0, width) × [0, height).
+   - Drawing operations ignore or clip out-of-range cells.
+   - Overlapping elements are resolved before output.
+   - The final output cannot contain a row wider than the viewport.
+    It also prevents flicker and inconsistent partial frames. For efficiency, maintain the
+    previous frame and emit only changed cells or changed spans, while retaining the same
+    bounds checks.
+ 6. Handle resizing and animation state as separate transitions
+    When the terminal becomes narrower, the existing boat position may no longer be valid.
+    Reconcile the animation state immediately after a resize:
+    ```text
+boat_x = min(boat_x, terminal_width - boat_width)
+boat_x = max(boat_x, 0)
+    ```
+    If the new width is smaller than the boat itself, choose an explicit policy:
+   - Scale the boat down.
+   - Switch to a compact sprite.
+   - Clip the sprite.
+   - Pause and display a resize prompt.
+   - Hide the animation until enough width returns.
+    Do not let the animation loop continue using stale dimensions. Resize handling should
+    invalidate cached layout data, recalculate sprite extents, clear or redraw affected rows,
+    and then resume motion from a valid position.
+
+ CALM_SHIP_DONE
+
+
+ 󰵗   GPT-5.6 Luna   …/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached ?1  󰙺 0.00 ★ 1 ─7%─󰁨272K─
+╰─

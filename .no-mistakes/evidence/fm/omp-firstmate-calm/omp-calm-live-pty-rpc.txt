@@ -1,0 +1,14 @@
+Real OMP 18.6.1 RPC-over-sized-PTY active Calm smoke
+command: omp --mode rpc --no-session --no-tools --no-skills --no-rules --no-lsp --no-pty --cwd /home/nathanjgaul/.no-mistakes/worktrees/4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ --model calm-live/delayed --extension /home/nathanjgaul/.no-mistakes/worktrees/4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ/live-omp-provider.ts
+pty window: rows=40 cols=120 (TIOCSWINSZ before OMP startup)
+--- selected product frames ---
+[0m[31mFirstmate Calm: generic transcript-row renderer presentation adapter unavailable, skipping. OMP exposes no generic transcript-row renderer; unsupported rows remain visible[0m
+{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
+{"type":"extension_ui_request","id":"159c18d768b22023","method":"notify","message":"Firstmate Calm: on","notifyType":"info"}
+{"id":"work","type":"response","command":"prompt","success":true}
+{"type":"agent_start"}
+{"type":"agent_end","messages":[{"role":"user","content":[{"type":"text","text":"hello"}],"attribution":"user","timestamp":1791323147682},{"role":"assistant","content":[{"type":"text","text":"CALM_LIVE_RESPONSE"}],"api":"calm-live-api","provider":"calm-live","model":"delayed","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1791323154413}],"isTerminal":true,"yielded":true}
+{"type":"prompt_result","id":"work","agentInvoked":true,"status":"completed","sessionSettled":true}
+observed ship frame: False
+observed stock restore request: False
+shared preference: on

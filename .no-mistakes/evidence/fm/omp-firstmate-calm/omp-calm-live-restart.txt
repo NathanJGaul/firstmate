@@ -1,0 +1,12 @@
+Real OMP 18.6.1 cross-process Calm preference smoke
+command: omp --mode rpc --no-session --no-tools --no-skills --no-rules --no-lsp --no-pty --cwd /home/nathanjgaul/.no-mistakes/worktrees/4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ --model calm-live/idle --extension /home/nathanjgaul/.no-mistakes/worktrees/4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ/live-omp-provider.ts
+session 1 result: on
+session 2 result after startup reload and /calm: off
+--- session-1 selected product frames ---
+out: {"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
+out: {"type":"extension_ui_request","id":"159c194586725c13","method":"notify","message":"Firstmate Calm: on","notifyType":"info"}
+out: {"id":"first-on","type":"response","command":"prompt","success":true}
+--- session-2 selected product frames ---
+out: {"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
+out: {"type":"extension_ui_request","id":"159c194677ba6425","method":"notify","message":"Firstmate Calm: off","notifyType":"info"}
+out: {"id":"second-off","type":"response","command":"prompt","success":true}

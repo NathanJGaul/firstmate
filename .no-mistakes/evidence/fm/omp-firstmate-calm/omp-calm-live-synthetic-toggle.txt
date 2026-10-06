@@ -1,0 +1,96 @@
+Live product: OMP 18.6.1 in Herdr lab fm-lab-calm-omp-live-364801-20702
+A temporary test extension emitted a real custom entry with customType=firstmate-synthetic-input-presentation and content LIVE_SYNTHETIC_ROW.
+The same mounted entry was hidden under Calm, restored by toggling Calm off, and hidden again by toggling Calm on.
+
+--- Calm on immediately after emission (entry absent) ---
+    A frame buffer provides clear invariants:
+   - Every valid cell has coordinates inside [0, width) × [0, height).
+   - Drawing operations ignore or clip out-of-range cells.
+   - Overlapping elements are resolved before output.
+   - The final output cannot contain a row wider than the viewport.
+    It also prevents flicker and inconsistent partial frames. For efficiency, maintain the
+    previous frame and emit only changed cells or changed spans, while retaining the same
+    bounds checks.
+ 6. Handle resizing and animation state as separate transitions
+    When the terminal becomes narrower, the existing boat position may no longer be valid.
+    Reconcile the animation state immediately after a resize:
+    ```text
+boat_x = min(boat_x, terminal_width - boat_width)
+boat_x = max(boat_x, 0)
+    ```
+    If the new width is smaller than the boat itself, choose an explicit policy:
+   - Scale the boat down.
+   - Switch to a compact sprite.
+   - Clip the sprite.
+   - Pause and display a resize prompt.
+   - Hide the animation until enough width returns.
+    Do not let the animation loop continue using stale dimensions. Resize handling should
+    invalidate cached layout data, recalculate sprite extents, clear or redraw affected rows,
+    and then resume motion from a valid position.
+
+ CALM_SHIP_DONE
+
+
+ 󰵗   GPT-5.6 Luna   …/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached ?1  󰙺 0.00 ★ 1 ─7%─󰁨272K─
+╰─
+--- Calm off (existing entry restored) ---
+   - Overlapping elements are resolved before output.
+   - The final output cannot contain a row wider than the viewport.
+    It also prevents flicker and inconsistent partial frames. For efficiency, maintain the
+    previous frame and emit only changed cells or changed spans, while retaining the same
+    bounds checks.
+ 6. Handle resizing and animation state as separate transitions
+    When the terminal becomes narrower, the existing boat position may no longer be valid.
+    Reconcile the animation state immediately after a resize:
+    ```text
+boat_x = min(boat_x, terminal_width - boat_width)
+boat_x = max(boat_x, 0)
+    ```
+    If the new width is smaller than the boat itself, choose an explicit policy:
+   - Scale the boat down.
+   - Switch to a compact sprite.
+   - Clip the sprite.
+   - Pause and display a resize prompt.
+   - Hide the animation until enough width returns.
+    Do not let the animation loop continue using stale dimensions. Resize handling should
+    invalidate cached layout data, recalculate sprite extents, clear or redraw affected rows,
+    and then resume motion from a valid position.
+
+ CALM_SHIP_DONE
+
+LIVE_SYNTHETIC_ROW
+
+ Warning: Firstmate Calm: off (presentation update pending)
+
+ 󰵗   GPT-5.6 Luna   …/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached ?1  󰙺 0.00 ★ 1 ─7%─󰁨272K─
+╰─
+--- Calm on again (existing entry hidden) ---
+   - The final output cannot contain a row wider than the viewport.
+    It also prevents flicker and inconsistent partial frames. For efficiency, maintain the
+    previous frame and emit only changed cells or changed spans, while retaining the same
+    bounds checks.
+ 6. Handle resizing and animation state as separate transitions
+    When the terminal becomes narrower, the existing boat position may no longer be valid.
+    Reconcile the animation state immediately after a resize:
+    ```text
+boat_x = min(boat_x, terminal_width - boat_width)
+boat_x = max(boat_x, 0)
+    ```
+    If the new width is smaller than the boat itself, choose an explicit policy:
+   - Scale the boat down.
+   - Switch to a compact sprite.
+   - Clip the sprite.
+   - Pause and display a resize prompt.
+   - Hide the animation until enough width returns.
+    Do not let the animation loop continue using stale dimensions. Resize handling should
+    invalidate cached layout data, recalculate sprite extents, clear or redraw affected rows,
+    and then resume motion from a valid position.
+
+ CALM_SHIP_DONE
+
+ Warning: Firstmate Calm: off (presentation update pending)
+
+ Warning: Firstmate Calm: on (presentation update pending)
+
+ 󰵗   GPT-5.6 Luna   …/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached ?1  󰙺 0.00 ★ 1 ─7%─󰁨272K─
+╰─

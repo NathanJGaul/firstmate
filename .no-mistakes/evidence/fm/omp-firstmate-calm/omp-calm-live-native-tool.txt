@@ -1,0 +1,30 @@
+Live product: OMP 18.6.1 in Herdr lab fm-lab-calm-native-tool-414333-269
+Calm was enabled in an interactive sized Herdr pane. A real model turn was instructed to use the native read tool exactly once.
+The native tool row remained visible under Calm; the real assistant response settled afterward.
+
+
+                               ████████████
+                                  ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                  ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                  ▒▒  ██                  █
+                                      ██       v18.6.1
+
+            Tip: Drop the word `ultrathink` in your message for harder multi-step
+                        reasoning — watch it glow rainbow as you type
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.7.0 is available. Run: omp update
+──────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ Use the read tool exactly once to read README.md, then reply with exactly NATIVE_TOOL_DONE.
+ Do not answer before using the tool.
+
+
+  Read README.md
+
+ NATIVE_TOOL_DONE
+
+ 󰵗   GPT-5.6 Luna   …3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached  󰙺 0.01 ★ 1 ─11%─󰁨272K─
+╰─

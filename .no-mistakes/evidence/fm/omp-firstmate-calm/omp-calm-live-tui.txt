@@ -1,0 +1,56 @@
+scenario=OMP /calm shared preference and visible working presentation
+herdr_session=fm-lab-fm-calm-live-256909-6980
+
+-- after /calm (preference is on) --
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                        Tip: Press ← ← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.7.0 is available. Run: omp update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Firstmate Calm: on
+
+❯                                                                                          󰘶 󰌒 to change thinking effort
+ 󰵗 · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?1 ·  14.5%/200K 󰁨 · 󰙺
+
+-- busy prompt --
+
+-- sample 01 --
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                        Tip: Press ← ← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.7.0 is available. Run: omp update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Firstmate Calm: on
+
+
+ Run the shell command sleep 8; after it finishes, reply exactly CALM-LIVE-DONE and nothing else.
+
+
+  󱊷  [33m◿│◣
+ ╲▁▁▁╱▁▁▁▁▁▁▂▂▃▃▄▄▄▄▄▄▃▃▂▂▁▁▁▁▁▁▂▂▂▃▃▃▃▄▄▄▄▄▄▃▃▃▂▂▂▁▁▁▁▁▁▂▂▃▃▃▄▄▄▄▄▄▃▃▃▂▂▁▁▁▁▁▁▂▂▂▃▃▃▄▄▄▄▄▃▃▃▂▂▁▁▁▁▁▂▂[34m▂[39m▃▃▃▄▄▄▄▄▄
+
+❯
+ ⠧ 0s · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?1 ·  14.5%/200K 󰁨 · 󰙺
+
+ship_glyph_seen=1
+preference=on

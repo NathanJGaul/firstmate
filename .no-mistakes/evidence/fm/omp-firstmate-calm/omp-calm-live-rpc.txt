@@ -1,0 +1,13 @@
+Real OMP 18.6.1 JSON-RPC smoke driven from the worktree
+command: omp --mode rpc --no-session --no-tools --no-skills --no-rules --no-lsp --no-pty --cwd /home/nathanjgaul/.no-mistakes/worktrees/4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ --model calm-live/delayed --extension /home/nathanjgaul/.no-mistakes/worktrees/4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ/live-omp-provider.ts
+tracked Calm extension: auto-discovered from .omp/extensions (not passed with -e)
+--- selected product frames ---
+stderr: Firstmate Calm: generic transcript-row renderer presentation adapter unavailable, skipping. OMP exposes no generic transcript-row renderer; unsupported rows remain visible
+stdout: {"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
+stdout: {"type":"extension_ui_request","id":"159c188a970c1184","method":"notify","message":"Firstmate Calm: on","notifyType":"info"}
+stdout: {"id":"calm-on","type":"response","command":"prompt","success":true}
+stdout: {"type":"prompt_result","id":"calm-on","agentInvoked":false,"status":"completed","sessionSettled":true}
+stdout: {"type":"extension_ui_request","id":"159c188a974c1185","method":"notify","message":"Firstmate Calm: off","notifyType":"info"}
+stdout: {"id":"calm-off","type":"response","command":"prompt","success":true}
+shared preference after two toggles: off
+provider model was local deterministic fixture; no network credentials used

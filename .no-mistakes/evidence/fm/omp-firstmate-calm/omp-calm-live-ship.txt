@@ -1,0 +1,52 @@
+Live product: OMP 18.6.1 in Herdr lab fm-lab-calm-omp-live-364801-20702
+Action: enabled Calm, submitted a real model turn, captured the visible working surface before completion.
+Expected: bounded two-row ANSI sailboat replaces the stock working row.
+
+
+                               ████████████
+                                  ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                  ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                  ▒▒  ██                  █
+                                      ██       v18.6.1
+
+              Tip: Find out which model you emotionally abuse the most with `omp
+                                            stats`
+
+ Warning: Firstmate Calm: off (presentation update pending)
+
+ Warning: Firstmate Calm: on (presentation update pending)
+
+
+ Give a careful, detailed explanation of six techniques for keeping a terminal sailboat
+ animation within its available width, then finish with exactly CALM_SHIP_DONE.
+
+
+  󱊷  ◿│◣
+ ╲▁▁▁╱▁▁▁▁▁▂▂▃▃▃▄▄▄▄▄▃▃▃▂▂▁▁▁▁▁▁▂▂▂▃▃39mm▃▄▄▄▄▄▄▄▃▃▃▂▂▁▁▁▁▁▁▂▂▂▃▃▃▄▄▄▄▄▃▃▃▂▂▂▁▁▁▁▁▁▂▂▃▃▃
+ ⠦ 0s   GPT-5.6 Luna   …c0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached ?1  󰙺 ─9%─󰁨272K─
+╰─
+
+--- ANSI capture ---
+
+                               [0m[38;2;248;79;204m█[0m[38;2;239;81;208m█[0m[38;2;230;82;211m█[0m[38;2;220;84;215m█[0m[38;2;211;86;219m█[0m[38;2;202;88;222m█[0m[38;2;193;89;226m█[0m[38;2;184;91;229m█[0m[38;2;175;93;233m█[0m[38;2;165;95;237m█[0m[38;2;156;96;240m█[0m[38;2;147;98;244m█[0m    
+                                  [0m[38;2;195;89;225m█[0m[38;2;186;91;229m█[0m  [0m[38;2;158;96;239m█[0m[38;2;149;98;243m█[0m       [0m[1m▄▀▀▄ █▀▄▀▄ █▀▀▄[0m
+                                  [0m[38;2;170;94;235m█[0m[38;2;161;95;239m█[0m  [0m[38;2;127;114;242m█[0m[38;2;114;126;240m█[0m       [0m[1m▀▄▄▀ █ █ █ █▄▄▀[0m
+                                  [0m[38;2;144;101;244m▒[0m[38;2;130;112;242m▒[0m  [0m[38;2;90;145;238m█[0m[38;2;77;156;236m█[0m       [0m[1m           █[0m
+                                      [0m[38;2;53;175;234m█[0m[38;2;40;186;232m█[0m       [0m[38;2;106;99;120mv18.6.1[0m
+
+              [0m[3m[38;2;200;93;138mTip: [0m[3m[38;2;141;134;156mFind out which model you emotionally abuse the most with `omp[0m
+                                            [0m[3m[38;2;141;134;156mstats`[0m
+
+ [0m[38;2;240;163;92mWarning: Firstmate Calm: off (presentation update pending)[0m                                   
+
+ [0m[38;2;240;163;92mWarning: Firstmate Calm: on (presentation update pending)[0m                                    
+
+[0m[48;2;23;19;41m                                                                                              [0m
+[0m[48;2;23;19;41m [0m[38;2;229;229;231m[48;2;23;19;41mGive a careful, detailed explanation of six techniques for keeping a terminal sailboat       [0m
+[0m[48;2;23;19;41m [0m[38;2;229;229;231m[48;2;23;19;41manimation within its available width, then finish with exactly CALM_SHIP_DONE.[0m[48;2;23;19;41m               [0m
+[0m[48;2;23;19;41m                                                                                              [0m
+
+ [0m[38;2;141;134;156m 󱊷[0m [0m[38;2;106;99;120m [0m[38;5;3m◿│◣[0m                                                                                      
+ [0m[38;5;3m╲▁▁▁╱[0m[38;5;4m▁▁▁▁▁▂▂▃▃▃▄▄▄▄▄▃▃▃▂▂▁▁▁▁▁▁▂▂▂▃▃[0m[38;2;141;134;156m39[0m[1m[38;2;224;122;63mm[0m[38;2;141;134;156mm▃[0m[38;5;4m▄▄▄▄▄▄▄▃▃▃▂▂▁▁▁▁▁▁▂▂▂▃▃▃▄▄▄▄▄▃▃▃▂▂▂▁▁▁▁▁▁▂▂▃▃▃[0m
+[0m[38;2;18;16;37m[0m[48;2;18;16;37m [0m[38;2;147;107;100m[48;2;18;16;37m⠦ 0s[0m[48;2;18;16;37m [0m[38;2;44;38;68m[48;2;18;16;37m[0m[48;2;18;16;37m [0m[38;2;200;93;138m[48;2;18;16;37m GPT-5.6 Luna[0m[48;2;18;16;37m [0m[38;2;44;38;68m[48;2;18;16;37m[0m[48;2;18;16;37m [0m[38;2;75;163;166m[48;2;18;16;37m …c0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ[0m[48;2;18;16;37m [0m[38;2;44;38;68m[48;2;18;16;37m[0m[48;2;18;16;37m [0m[38;2;240;163;92m[48;2;18;16;37m detached [0m[38;2;75;163;166m[48;2;18;16;37m?1[0m[48;2;18;16;37m [0m[38;2;44;38;68m[48;2;18;16;37m[0m[48;2;18;16;37m [0m[38;2;224;122;63m[48;2;18;16;37m󰙺[0m[48;2;18;16;37m [0m[38;2;18;16;37m[0m[38;2;200;93;138m─9%[0m[38;2;30;27;58m─[0m[38;2;150;94;117m󰁨272K[0m[38;2;30;27;58m─[0m
+[0m[38;2;21;20;42m╰─ [0m                                                                                           

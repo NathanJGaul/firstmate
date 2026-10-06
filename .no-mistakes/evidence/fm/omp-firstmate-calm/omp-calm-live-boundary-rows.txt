@@ -1,0 +1,32 @@
+Live product: OMP 18.6.1 in Herdr lab fm-lab-calm-omp-live-364801-20702
+Calm was on. A temporary probe emitted one operational-shaped custom row and one arbitrary unsupported custom row.
+Both remained visible because Calm only owns the supported Firstmate synthetic renderer seam.
+
+
+                               ████████████
+                                  ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                  ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                  ▒▒  ██                  █
+                                      ██       v18.6.1
+
+           Tip: Try starting your prompt with a ->, and writing a list (1. Do X, 2.
+                                            Do Y)
+
+╭────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                            │
+│  firstmate-sessionstart-nudge                                                             │
+│                                                                                            │
+│ LIVE_OPERATIONAL_ROW                                                                       │
+│                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                            │
+│  live-unsupported-custom                                                                  │
+│                                                                                            │
+│ LIVE_UNSUPPORTED_CUSTOM_ROW                                                                │
+│                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ 󰵗   GPT-5.6 Luna   …77cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ   detached ?1  󰙺 ─9%─󰁨272K─
+╰─

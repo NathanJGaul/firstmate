@@ -1,0 +1,66 @@
+scenario=OMP Calm hides and restores a supported Firstmate synthetic presentation entry
+herdr_session=fm-lab-fm-calm-live-286512-19453
+
+-- Calm on after synthetic entry --
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                        Tip: Press ← ← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+
+❯
+ 󰵗 · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?2 ·  14.5%/200K 󰁨 · 󰙺
+calm_on_entry_visible=0
+
+-- Calm off after toggle/remount --
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                        Tip: Press ← ← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+ Firstmate Calm: off
+
+❯
+ 󰵗 · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?2 ·  14.5%/200K 󰁨 · 󰙺
+calm_off_entry_visible=0
+
+-- Calm off newly rendered synthetic entry --
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                        Tip: Press ← ← to drill into a running or finished agent and inspect its
+                                               tool calls and transcript
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                      │
+│  firstmate-synthetic-input-presentation                                                                             │
+│                                                                                                                      │
+│ LIVE_SYNTHETIC_ENTRY                                                                                                 │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                      │
+│  firstmate-synthetic-input-presentation                                                                             │
+│                                                                                                                      │
+│ LIVE_SYNTHETIC_ENTRY                                                                                                 │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+❯
+ 󰵗 · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?2 ·  14.5%/200K 󰁨 · 󰙺
+final_entry_visible=2

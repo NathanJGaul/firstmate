@@ -1,0 +1,38 @@
+scenario=OMP Calm working ship restores the stock row at terminal agent_end
+herdr_session=fm-lab-fm-calm-live-277155-23704
+sample=01 state=working
+sample=02 state=working
+sample=03 state=working
+sample=04 state=working
+sample=05 state=idle
+
+-- final settled pane --
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.6.1
+
+                           Tip: Find out which model you emotionally abuse the most with `omp
+                                                         stats`
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.7.0 is available. Run: omp update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ Reply exactly CALM-DONE and nothing else.
+
+
+ The user is asking me to reply with exactly "CALM-DONE" and nothing else. This is a simple, direct instruction. I
+ should follow it precisely.
+
+ CALM-DONE
+
+❯
+ 󰵗 · 󰪟 Haiku 4.5 ·  4e677cc0ce3f/01M49C7V9ZYQ2KYWXM3SAPK9EQ ·  detached ?1 ·  15.3%/200K 󰁨 · 󰙺 0.00
+
+ship_glyph_in_final=0
+preference=on
