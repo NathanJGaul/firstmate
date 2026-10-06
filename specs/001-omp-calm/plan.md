@@ -28,14 +28,6 @@ Add a native OMP extension under `.omp/extensions` that owns the `/calm` command
 
 **Scale/Scope**: One OMP extension, shared Calm policy/sprite helpers, one focused behavior test, two maintained prose surfaces, and one maintainer-verification record
 
-## Constitution Check
-
-The generated constitution is still the Spec-Kit placeholder and contains no approved project principles.
-
-- The feature follows repository rules from `CONTRIBUTING.md` and `.agents/skills/firstmate-coding-guidelines/SKILL.md`: reuse one contract owner, use existing test conventions, avoid new dependencies, and document only current behavior and verification.
-- TDD profile setup is recorded separately because this brownfield shell repository has no project test constitution yet.
-- No constitution violation is introduced by the implementation; the missing approved constitution wording is a project baseline limitation rather than a feature exception.
-
 ## Research Summary
 
 - OMP native discovery loads `.omp/extensions/*.ts` from the current project.
@@ -70,7 +62,7 @@ specs/001-omp-calm/
 .omp/extensions/
 ├── fm-calm.ts                         # OMP registration, lifecycle, command, adapters
 └── lib/
-    └── fm-calm-omp-presentation.ts    # OMP-only one-line working projection and adapter glue
+    └── fm-calm-omp-presentation.ts    # OMP working-message projection and adapter glue
 
 .claude/mods/firstmate-calm/lib/
 ├── fm-calm-presentation.ts             # harness-neutral preference and classification policy
@@ -106,7 +98,7 @@ docs/
 ### Phase 0: Shared policy and test seam
 
 1. Add or re-export a harness-neutral transcript visibility policy without changing the existing Pi-visible behavior.
-2. Add pure OMP presentation helpers that can be exercised without a live model, including preference failure handling, one-line sprite projection, and adapter diagnostics.
+2. Add pure OMP presentation helpers that can be exercised without a live model, including preference failure handling, width-bounded sprite projection, and adapter diagnostics.
 3. Add focused tests before each behavior implementation and record red/green evidence in the TDD cycle log.
 
 ### Phase 1: OMP extension

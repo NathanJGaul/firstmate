@@ -1,6 +1,5 @@
 ---
 feature: 001-omp-calm
-standard: .specify/extensions/tdd/templates/tdd-test-quality-rubric.md
 verified_at: 6f0f1399
 verdict: PASS_WITH_GAPS
 criteria_checked: 11
@@ -24,7 +23,7 @@ mutation: unavailable
 | A3, A4, A5, A7, A8, A9, A10, U3 | Executable tests pass and are mapped in `tdd/test-list.md`; no independent red evidence exists | TEST_AFTER |
 | A11 | Claude regression passes; Pi suite has a concrete interactive export-DOM failure and missing package skips | BLOCKED |
 
-No feature commits exist in the branch after the baseline commit, so git history cannot upgrade the recorded red evidence to PROVEN test-first ordering.
+The branch contains feature and review commits, but none preserve per-cycle red-green ordering, so git history cannot upgrade the recorded red evidence to PROVEN test-first ordering.
 
 ## Verification runs
 
@@ -47,7 +46,7 @@ No feature commits exist in the branch after the baseline commit, so git history
 
 ## Mutation results
 
-No mutation tool is installed or recorded in `.specify/memory/tdd-profile.md`. Deliberate mutants were not run because the profile records no single-test command and the Pi baseline is red; mutation strength is unmeasured.
+No mutation tool is available in this checkout. Deliberate mutants were not run because no single-test command was verified and the Pi baseline is red; mutation strength is unmeasured.
 
 ## Traceability
 

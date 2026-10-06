@@ -1,7 +1,7 @@
 ---
 feature: 001-omp-calm
 loop: outside-in
-profile: .specify/memory/tdd-profile.md
+profile: unavailable
 spec_criteria: 11
 planned_at: 6f0f1399
 updated_at: 6f0f1399
@@ -60,6 +60,6 @@ Each behavior is observable through the OMP extension registration and lifecycle
 ## Verification commands
 
 - Single test: `null` - Bash tests do not expose a verified test-by-name selector.
-- Full suite: `bin/fm-test-run.sh tests/fm-calm-claude-mod.test.sh`
+- Baseline focused suite: `bin/fm-test-run.sh tests/fm-calm-claude-mod.test.sh`
 - Coverage: `null` - `bin/fm-test-run.sh --check-coverage` failed before producing coverage evidence.
 - Mutation: `null` - no mutation tool is present in the repository or lockfiles.

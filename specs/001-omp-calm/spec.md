@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-06
 
-**Status**: Approved for planning
+**Status**: Implemented with documented API-limited scope
 
 **Input**: User description: "Extend the existing Firstmate Calm presentation feature to OMP (Oh My Pi). The existing feature is supported on Pi and Claude Code and shares the home-local config/calm preference; OMP needs the same feature rather than a separate preference or presentation contract."
 
@@ -29,7 +29,7 @@ An OMP user can turn Calm on or off with `/calm`, and the choice is the same hom
 
 ### User Story 2 - Keep OMP work and conversation readable (Priority: P1)
 
-An OMP user with Calm enabled sees the same compact animated working presentation and supported transcript cleanup used by the existing Calm contract, while genuine prompts and answers remain visible.
+An OMP user with Calm enabled sees the shared compact animated working presentation and the transcript cleanup available through OMP's supported seams, while genuine prompts and answers remain visible.
 
 **Why this priority**: Presentation is the user-visible value of Calm and must preserve the information needed to follow a run.
 

@@ -12,7 +12,7 @@ Append only. Newest last. Every entry's `red` block is the evidence that the tes
 
 ## Notes and deviations
 
-- The generated Spec-Kit constitution remains a placeholder because its standard TDD principle requires explicit project approval.
+- No repository-specific TDD constitution or profile is available in this checkout; the repository's existing engineering guidance remains authoritative.
 - The OMP 18.6.1 extension API has no generic user-row/transcript filter or `setWorkingVisible`; those unsupported presentation classes remain visible and are tracked as acceptance behaviors rather than hidden through semantic mutation.
 
 ## Cycle 1: A1 /calm enable
