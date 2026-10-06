@@ -27,7 +27,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 
 ## Verification runs
 
-- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 14 checks (A1-A10, A12-A14, and U2) and records the custom-entry remount limitation.
+- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 15 checks (A1-A10, A12-A15, and U2) and records the custom-entry remount limitation.
 - `bin/fm-doc-audience-check.sh`: `ok surfaces=102 local_links=454`.
 - `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`: compatibility cases report the installed Pi package is absent; the interactive run fails at `rendered export DOM violated the Calm conversation boundary`.
 - OMP `18.6.1` inactive and active `--no-session --no-tools -p` smokes load the extension, report the deliberate generic-row diagnostic, and exit cleanly.

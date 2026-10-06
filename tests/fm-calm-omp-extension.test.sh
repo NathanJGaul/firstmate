@@ -422,6 +422,54 @@ JS
   pass "OMP resumes a pending run after retained timer cleanup succeeds"
 }
 
+test_calm_pending_agent_start_survives_presentation_toggle() {
+  local home out
+  home="$TMP_ROOT/home-a15"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a15.mjs" <<JS
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a15");
+const events = new Map();
+const commands = new Map();
+const intervals = [];
+const messages = [];
+let clearAttempts = 0;
+const context = {
+  ui: { setWorkingMessage(message) { messages.push(message); }, notify() {} },
+  setInterval(callback) { const timer = { callback }; intervals.push(timer); return timer; },
+  clearTimer() {
+    clearAttempts += 1;
+    if (clearAttempts < 3) throw new Error("clear is still failing");
+  },
+};
+const pi = {
+  on(name, handler) { events.set(name, handler); },
+  registerCommand(name, command) { commands.set(name, command); },
+  registerMessageRenderer() {},
+};
+extension.default(pi);
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+await events.get("agent_end")({}, context);
+await events.get("agent_start")({}, context);
+if (intervals.length !== 1 || clearAttempts !== 2) throw new Error("the next agent start was not held for deferred cleanup");
+await commands.get("calm").handler("", context);
+await commands.get("calm").handler("", context);
+if (readFileSync(${home@Q} + "/config/calm", "utf8") !== "on\\n") throw new Error("presentation toggles did not restore the active preference");
+if (clearAttempts !== 3 || intervals.length !== 2 || typeof messages.at(-1) !== "string") {
+  throw new Error("pending agent start was lost across Calm presentation toggles");
+}
+console.log("a15-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a15.mjs" 2>&1) || fail "A15 pending toggle recovery: $out"
+  assert_contains "$out" "a15-ok" "A15 pending toggle recovery did not complete"
+  pass "OMP preserves a pending run across Calm presentation toggles"
+}
+
 test_calm_unusable_width_leaves_stock_working_surface() {
   local home out
   home="$TMP_ROOT/home-a14"
@@ -556,6 +604,7 @@ test_calm_off_keeps_ordinary_working_surface
 test_calm_working_message_restore_is_retryable
 test_calm_frame_update_failure_is_retryable
 test_calm_pending_agent_start_retries_after_timer_clear_failure
+test_calm_pending_agent_start_survives_presentation_toggle
 test_calm_unusable_width_leaves_stock_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
 test_omp_adapter_invocation_failures_are_isolated

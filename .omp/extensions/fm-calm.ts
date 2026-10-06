@@ -220,6 +220,8 @@ export default function (pi: OmpExtensionApi): void {
       pendingAgentStart = { context: ctx, sessionId };
       if (!restoreStockWorkingMessage(ctx)) return false;
       pendingAgentStart = undefined;
+    } else if (!agentRunActive && pendingAgentStart?.sessionId === sessionId) {
+      pendingAgentStart = undefined;
     }
     agentRunActive = true;
     if (!calmActive) return true;
@@ -297,8 +299,9 @@ export default function (pi: OmpExtensionApi): void {
           presentationSucceeded = next
             ? startWorkingPresentation(latestContext)
             : refreshWorkingMessage(latestContext);
+        } else if (next && pendingAgentStart?.sessionId === sessionId) {
+          presentationSucceeded = startWorkingPresentation(pendingAgentStart.context);
         } else if (!next) {
-          pendingAgentStart = undefined;
           presentationSucceeded = restoreStockWorkingMessage(ctx);
         }
         notify(
