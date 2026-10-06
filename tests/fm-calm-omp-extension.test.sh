@@ -443,7 +443,7 @@ const context = {
   setInterval(callback) { const timer = { callback }; intervals.push(timer); return timer; },
   clearTimer() {
     clearAttempts += 1;
-    if (clearAttempts < 3) throw new Error("clear is still failing");
+    if (clearAttempts < 5) throw new Error("clear is still failing");
   },
 };
 const pi = {
@@ -456,12 +456,15 @@ await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
 await events.get("agent_end")({}, context);
 await events.get("agent_start")({}, context);
-if (intervals.length !== 1 || clearAttempts !== 2) throw new Error("the next agent start was not held for deferred cleanup");
+await events.get("agent_end")({ willContinue: true }, context);
+if (intervals.length !== 1 || clearAttempts !== 2) throw new Error("the next logical run was not held for deferred cleanup");
 await commands.get("calm").handler("", context);
 await commands.get("calm").handler("", context);
 if (readFileSync(${home@Q} + "/config/calm", "utf8") !== "on\\n") throw new Error("presentation toggles did not restore the active preference");
-if (clearAttempts !== 3 || intervals.length !== 2 || typeof messages.at(-1) !== "string") {
-  throw new Error("pending agent start was lost across Calm presentation toggles");
+if (clearAttempts !== 4 || intervals.length !== 1) throw new Error("presentation toggles discarded the deferred run");
+intervals[0].callback();
+if (clearAttempts !== 5 || intervals.length !== 2 || typeof messages.at(-1) !== "string") {
+  throw new Error("the deferred logical run did not resume after cleanup");
 }
 console.log("a15-ok");
 JS

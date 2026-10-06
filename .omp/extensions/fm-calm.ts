@@ -138,13 +138,17 @@ export default function (pi: OmpExtensionApi): void {
     }
     return width;
   };
-  let agentRunActive = false;
+  type OmpRun = {
+    sessionId: number;
+    context: OmpExtensionContext;
+  };
+  let activeRun: OmpRun | undefined;
   let workingTimer: unknown;
   let workingTimerContext: OmpExtensionContext | undefined;
+  let workingTimerRun: OmpRun | undefined;
   let workingMessageOwned = false;
   let latestContext: OmpExtensionContext | undefined;
   let sessionId = 0;
-  let pendingAgentStart: { context: OmpExtensionContext; sessionId: number } | undefined;
   const workingShip: CalmWorkingShipSprite = createCalmWorkingShipSprite();
 
   const installLegacyMessageRenderer = (): void => {
@@ -174,6 +178,7 @@ export default function (pi: OmpExtensionApi): void {
       if (cleared) {
         workingTimer = undefined;
         workingTimerContext = undefined;
+        workingTimerRun = undefined;
       }
     }
     workingShip.restoreLastRendered();
@@ -202,7 +207,7 @@ export default function (pi: OmpExtensionApi): void {
 
   const refreshWorkingMessage = (ctx: OmpExtensionContext): boolean => {
     latestContext = ctx;
-    if (!calmActive || !agentRunActive) return restoreStockWorkingMessage(ctx);
+    if (!calmActive || !activeRun) return restoreStockWorkingMessage(ctx);
     const width = getWorkingMessageWidth();
     if (width === undefined) {
       restoreWorkingMessageOnly(ctx);
@@ -216,28 +221,35 @@ export default function (pi: OmpExtensionApi): void {
 
   const startWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
     latestContext = ctx;
-    if (!agentRunActive && (workingTimer !== undefined || workingMessageOwned)) {
-      pendingAgentStart = { context: ctx, sessionId };
+    const run = activeRun ?? { sessionId, context: ctx };
+    run.context = ctx;
+    activeRun = run;
+
+    if (workingTimer !== undefined && workingTimerRun !== run) {
       if (!restoreStockWorkingMessage(ctx)) return false;
-      pendingAgentStart = undefined;
-    } else if (!agentRunActive && pendingAgentStart?.sessionId === sessionId) {
-      pendingAgentStart = undefined;
+      if (workingTimer !== undefined) return false;
     }
-    agentRunActive = true;
     if (!calmActive) return true;
+
     const workingMessageAvailable = ensureWorkingMessageAdapter(ctx);
     const workingTimerAvailable = ensureWorkingTimerAdapter(ctx);
     if (!workingMessageAvailable) return false;
     const presentationApplied = refreshWorkingMessage(ctx);
     if (workingTimer !== undefined || !workingTimerAvailable) return presentationApplied;
+    const timerRun = run;
     const callback = (): void => {
-      const activeContext = latestContext ?? ctx;
-      if (!agentRunActive) {
-        const pending = pendingAgentStart;
-        if (restoreStockWorkingMessage(activeContext) && pending?.sessionId === sessionId) {
-          pendingAgentStart = undefined;
-          startWorkingPresentation(pending.context);
+      if (workingTimerRun !== timerRun) return;
+      const currentRun = activeRun;
+      const activeContext = currentRun?.context ?? latestContext ?? ctx;
+      if (!currentRun || currentRun !== timerRun) {
+        if (!restoreStockWorkingMessage(activeContext)) return;
+        if (activeRun && activeRun.sessionId === sessionId && workingTimer === undefined) {
+          startWorkingPresentation(activeRun.context);
         }
+        return;
+      }
+      if (!calmActive) {
+        restoreStockWorkingMessage(activeContext);
         return;
       }
       workingShip.tick();
@@ -247,6 +259,7 @@ export default function (pi: OmpExtensionApi): void {
       if (!ctx.setInterval) throw new Error("OMP extension API does not expose setInterval");
       workingTimer = ctx.setInterval(callback, CALM_WORKING_SHIP_TICK_MS);
       workingTimerContext = ctx;
+      workingTimerRun = timerRun;
     });
     if (!timerStarted) {
       workingTimerAdapterAvailable = false;
@@ -256,8 +269,7 @@ export default function (pi: OmpExtensionApi): void {
   };
 
   const stopWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
-    agentRunActive = false;
-    pendingAgentStart = undefined;
+    activeRun = undefined;
     latestContext = ctx;
     return restoreStockWorkingMessage(ctx);
   };
@@ -266,9 +278,8 @@ export default function (pi: OmpExtensionApi): void {
     if (!pi.on) throw new Error("OMP extension API does not expose on");
     pi.on("session_start", (_event, ctx) => {
       sessionId += 1;
-      pendingAgentStart = undefined;
+      activeRun = undefined;
       calmActive = loadCalmPreference();
-      agentRunActive = false;
       workingShip.reset();
       latestContext = ctx;
       restoreStockWorkingMessage(ctx);
@@ -295,12 +306,10 @@ export default function (pi: OmpExtensionApi): void {
         }
         calmActive = next;
         let presentationSucceeded = true;
-        if (latestContext && agentRunActive) {
+        if (activeRun) {
           presentationSucceeded = next
-            ? startWorkingPresentation(latestContext)
-            : refreshWorkingMessage(latestContext);
-        } else if (next && pendingAgentStart?.sessionId === sessionId) {
-          presentationSucceeded = startWorkingPresentation(pendingAgentStart.context);
+            ? startWorkingPresentation(activeRun.context)
+            : refreshWorkingMessage(activeRun.context);
         } else if (!next) {
           presentationSucceeded = restoreStockWorkingMessage(ctx);
         }

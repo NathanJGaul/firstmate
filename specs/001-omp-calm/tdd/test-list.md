@@ -28,9 +28,9 @@ Each behavior is observable through the OMP extension registration and lifecycle
 | A10 | An OMP transcript class without a supported renderer remains visible and is not removed through semantic or storage mutation | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_adapter_failures_are_isolated_and_diagnosed`) |
 | A11 | Existing Pi and Claude Code Calm policy, preference, sprite, and operational-input behavior remains green after OMP support is loaded | FR-010 | example | BLOCKED | `tests/fm-calm-claude-mod.test.sh`; Pi suite has an existing interactive export-DOM failure and missing installed Pi package evidence |
 | A12 | A failed working-message frame update remains retryable and emits at most one diagnostic for the failing seam | FR-005, FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_frame_update_failure_is_retryable`) |
-| A13 | A new agent start is preserved and resumes after a retained timer cleanup succeeds | FR-005 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_retries_after_timer_clear_failure`) |
+| A13 | A new logical run is active immediately and resumes presentation after retained timer cleanup succeeds | FR-005 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_retries_after_timer_clear_failure`) |
 | A14 | A non-positive usable working width leaves OMP's stock working surface untouched and reports the width seam | FR-005, FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_unusable_width_leaves_stock_working_surface`) |
-| A15 | A pending next run survives presentation-only Calm toggles and resumes in the same session after cleanup | FR-005, FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_survives_presentation_toggle`) |
+| A15 | A deferred logical run survives continuing events and presentation-only Calm toggles and resumes in the same session after cleanup | FR-005, FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_survives_presentation_toggle`) |
 
 ## Inner loop: unit behaviors
 
@@ -55,7 +55,7 @@ Each behavior is observable through the OMP extension registration and lifecycle
 - Calm must not call stock working-message restoration unless it owns the working surface.
 - Native tools must remain host-owned and ordinary in OMP because no supported native tool-row renderer is available.
 - A mounted synthetic custom entry must not be claimed to redraw on toggle because OMP exposes no supported invalidation or remount action.
-- A pending next run must survive presentation-only toggles within its session and resume after cleanup or re-enabling Calm.
+- A new logical run must survive deferred presentation cleanup, continuing events, and presentation-only toggles within its session, then resume after cleanup or re-enabling Calm.
 - `on`, legacy `max`, `off`, absent, and unrecognized preference values must retain the shared interpretation.
 - Unsupported operational-user and assistant-working-note rows must remain ordinary in OMP 18.6.1.
 

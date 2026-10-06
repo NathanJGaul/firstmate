@@ -17,7 +17,7 @@
 
 - `session_start`: reread the shared preference, reset animation state, and restore the default working message only when Calm owns it.
 - `agent_start`: if active, start the one managed working-message timer.
-- terminal `agent_end` (an event without `willContinue: true`) and `session_shutdown`: restore OMP's default working message only when Calm owns it, then clear the timer while retaining its handle until clearing succeeds; failed stock writes remain retryable through the managed callback or a later lifecycle or toggle path, and a pending next agent start survives presentation-only toggles within the same session.
+- terminal `agent_end` (an event without `willContinue: true`) and `session_shutdown`: restore OMP's default working message only when Calm owns it, then clear the timer while retaining its handle and owning run until clearing succeeds; failed stock writes remain retryable through the managed callback or a later lifecycle or toggle path, and a new agent start remains the active logical run through deferred cleanup, continuing events, and presentation-only toggles within the same session.
 
 ## Diagnostics
 
