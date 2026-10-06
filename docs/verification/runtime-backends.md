@@ -2261,3 +2261,16 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
 
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
+
+### Calm extension
+
+Verified on 2026-10-06 against `omp/18.6.1` on Linux with the tracked `.omp/extensions/fm-calm.ts` discovered from this project. The focused behavior contract and both inactive and active preference startup smokes passed:
+
+```sh
+bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh
+FM_HOME="$(mktemp -d)" omp --cwd "$PWD" --no-session --no-tools -p "exit without tools"
+home=$(mktemp -d); mkdir -p "$home/config"; printf 'on\n' >"$home/config/calm"
+FM_HOME="$home" omp --cwd "$PWD" --no-session --no-tools -p "exit without tools"
+```
+
+Both real OMP runs loaded the extension, reported the deliberate unsupported generic-row boundary, rendered OMP's ordinary `Working...` surface, and exited cleanly with `Captain, exiting.`. The active run produced no native-wrapper registration diagnostic, confirming that native tool registration is deferred until OMP's startup context is initialized. The focused suite covers shared preference persistence and restoration, deterministic shared-sprite bounds, managed timer cleanup, supported legacy and native-tool rendering, unchanged native delegation, foreign-tool ownership protection, write failures, and independent seam diagnostics.

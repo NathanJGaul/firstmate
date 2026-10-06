@@ -235,8 +235,14 @@ test_presentation_policy() {
 import { pathToFileURL } from "node:url";
 const policy = await import(pathToFileURL(${MOD@Q} + "/lib/fm-calm-presentation.ts").href);
 const piPreservation = await import(pathToFileURL(${ROOT@Q} + "/.pi/extensions/lib/fm-calm-preservation.ts").href);
+const visibility = await import(pathToFileURL(${MOD@Q} + "/lib/fm-calm-visibility.ts").href);
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const plugin = "/repo/.claude/mods/firstmate-calm";
+check(visibility.calmTranscriptClassIsVisible("genuine-user-prompt") === true, "shared visibility hid a genuine user prompt");
+check(visibility.calmTranscriptClassIsVisible("genuine-agent-response") === true, "shared visibility hid a genuine agent response");
+check(visibility.calmTranscriptClassIsVisible("assistant-tool-call") === false, "shared visibility exposed a tool call");
+check(visibility.calmPresentationHides(true, "assistant-tool-call") === true, "active Calm did not hide a tool call");
+check(visibility.calmPresentationHides(false, "assistant-tool-call") === false, "inactive Calm hid a tool call");
 check(policy.calmPreferencePath({}, plugin) === "/repo/config/calm", "plugin-root fallback");
 check(policy.calmPreferencePath({}, "/repo/.claude/skills/firstmate-calm/") === "/repo/config/calm", "trailing slash on the plugin root");
 check(policy.calmPreferencePath({}, "/repo/.agents/skills/firstmate-calm") === "/repo/config/calm", ".agents/skills spelling of the plugin root");

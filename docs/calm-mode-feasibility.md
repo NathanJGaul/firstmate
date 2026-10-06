@@ -1,6 +1,6 @@
 # Calm-mode harness feasibility
 
-This document owns the version-scoped feasibility evidence, Pi transcript taxonomy, and supported-API boundaries for Firstmate calm mode.
+This document owns the version-scoped feasibility evidence, Pi transcript taxonomy, OMP extension-surface evidence, and supported-API boundaries for Firstmate calm mode.
 [`calm.md`](calm.md) owns the current user-facing `/calm` usage and limitation contract.
 
 ## Required extension surface
@@ -12,12 +12,26 @@ Changing persisted context to remove hidden content, filtering provider context,
 
 ## Compatibility evidence
 
-[`calm.md`](calm.md#pi-compatibility) owns the current Pi compatibility contract.
+[`calm.md`](calm.md#pi-compatibility) owns the current Pi compatibility contract; [`calm.md`](calm.md#omp-oh-my-pi) owns the current OMP user-facing contract.
 Pi 0.81.1 was installed when Calm was first built, and Pi 0.82.0 was the later reverification target.
 The inspected Pi CHANGELOG shows no relevant presentation API introduced at either version, so those versions remain verification evidence rather than compatibility bounds.
 The exported classes used by the adapters (`AssistantMessageComponent` and `InteractiveMode`) are undocumented internals with no stated version guarantee.
 `tests/fm-calm-pi-extension.test.sh` records the installed Pi version as evidence without gating on it and covers both newer synthetic versions and an unavailable adapter seam.
 This host tracks Pi latest, so the version the evidence is pinned to moves; the [2026-09-07 record](#2026-09-07-pi-0851-renderer-and-export-dom-verification) owns the currently pinned version and the renderer comparison behind it.
+
+### OMP 18.6.1 extension surface
+
+The OMP feasibility pass was verified against `omp/18.6.1` on 2026-10-06. OMP auto-loads a project `.omp/extensions/<module>.ts` default factory and exposes the registration and lifecycle seams used here: `registerCommand`, `on("session_start")`, `on("agent_start")`, `on("agent_end")`, `on("session_shutdown")`, `registerMessageRenderer`, `registerTool`, `getAllTools`, `ctx.ui.setWorkingMessage`, `ctx.setInterval`, `ctx.clearTimer`, and native same-name delegation through `ctx.invokeTool`. The exact extension API is documented in OMP's `docs/extensions.md`; no separately installed type package is required by the tracked extension.
+
+The OMP adapter uses `setWorkingMessage` rather than claiming a nonexistent `setWorkingVisible` or generic transcript filter. Its managed timer advances the shared sprite and restores the default message on every terminal lifecycle. OMP's native tool metadata supplies each wrapper's schema, and `ctx.invokeTool` preserves native execution, arguments, results, cancellation, and progress callbacks. The focused portable contract suite exercises preference parsing and atomic persistence, `/calm` command delivery, session restoration, deterministic projection bounds, one-timer cleanup, Calm-off restoration, legacy custom-message suppression, native delegation, write failures, and independent adapter diagnostics:
+
+```sh
+omp --version                         # omp/18.6.1
+FM_HOME="$(mktemp -d)" omp --no-session --no-tools -p "exit without tools"
+bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh
+```
+
+The live smoke loaded the tracked extension and exited cleanly; it printed the expected generic-row diagnostic because OMP 18.6.1 exposes no supported generic transcript-row renderer. The extension keeps unsupported operational and assistant rows visible and never rewrites model context, execution, session storage, or exports. The helper's adapter installer catches missing or throwing seams individually, so a future OMP API change reports the affected adapter without disabling preference handling or unrelated presentation.
 
 ### Built-in tool override constraints
 

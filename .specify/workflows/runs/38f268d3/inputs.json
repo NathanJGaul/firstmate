@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "spec": "Extend Firstmate Calm presentation support to OMP (Oh My Pi), reusing the shared config/calm preference, harness-neutral sprite, visibility policy, and operational-input classification where OMP supports them. Preserve model context, execution, session storage, and exports; keep unsupported API seams independently degradable with diagnostics; add focused behavior tests and update Calm documentation and maintainer verification for OMP only. Do not regress Pi or Claude Code or broaden to unrelated harnesses.",
+    "integration": "claude"
+  }
+}
