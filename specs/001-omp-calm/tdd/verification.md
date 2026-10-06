@@ -27,7 +27,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 
 ## Verification runs
 
-- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 17 checks (A1-A10, A12-A17, and U2) and records preference-read recovery, temporary timer-seam recovery, and the custom-entry remount limitation.
+- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures; the OMP script covers A1-A10, A12-A17, and U2, including preference-read recovery, temporary timer-seam recovery, and mounted synthetic-component invalidation.
 - `bin/fm-doc-audience-check.sh`: `ok surfaces=102 local_links=454`.
 - `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`: compatibility cases report the installed Pi package is absent; the interactive run fails at `rendered export DOM violated the Calm conversation boundary`.
 - OMP `18.6.1` inactive and active `--no-session --no-tools -p` smokes load the extension, report the deliberate generic-row diagnostic, and exit cleanly.
@@ -42,7 +42,7 @@ The branch contains feature and review commits, but none preserve per-cycle red-
 ### MEDIUM
 
 3. **OMP export preservation has no dedicated acceptance runner.** The extension is drawing-only and the focused test verifies that unsupported native presentation is not claimed, but the recorded stack profile has no OMP export runner; live verification is limited to the documented startup smoke.
-4. **Unsupported generic rows and mounted-entry redraw are verified through the adapter boundary rather than a real OMP transcript fixture.** OMP 18.6.1 exposes no generic transcript renderer or custom-entry invalidation/remount action, so the implementation leaves those rows and already-mounted custom components to OMP unchanged; the focused test verifies the diagnostic, retained `/calm` registration, and newly rendered synthetic-row behavior.
+4. **Unsupported generic rows and mounted-entry redraw are verified through the adapter boundary rather than a real OMP transcript fixture.** OMP 18.6.1 exposes no generic transcript renderer, while its supported custom renderer returns an invalidatable component; the implementation leaves unsupported rows ordinary and the focused test verifies the diagnostic, retained `/calm` registration, mounted-row invalidation, and newly rendered synthetic-row behavior.
 
 ## Mutation results
 

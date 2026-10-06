@@ -23,6 +23,7 @@ import {
   calmOmpPresentationHides,
   createCalmWorkingShipSprite,
   createEmptyCalmComponent,
+  type CalmOmpComponent,
   installCalmAdapter,
   renderCalmWorkingShipMessage,
   type CalmWorkingShipSprite,
@@ -145,6 +146,19 @@ export default function (pi: OmpExtensionApi): void {
   let latestContext: OmpExtensionContext | undefined;
   let sessionId = 0;
   const workingShip: CalmWorkingShipSprite = createCalmWorkingShipSprite();
+  const mountedSyntheticRows = new Set<CalmOmpComponent>();
+  const invalidateMountedSyntheticRows = (): boolean => {
+    let succeeded = true;
+    for (const component of mountedSyntheticRows) {
+      const invalidated = installAdapter(
+        "legacy custom-message renderer invalidation",
+        () => component.invalidate(),
+        "legacy custom-message renderer invalidation",
+      );
+      succeeded = invalidated && succeeded;
+    }
+    return succeeded;
+  };
   const rememberRunContext = (ctx: OmpExtensionContext): void => {
     latestContext = ctx;
     if (activeRun) activeRun.context = ctx;
@@ -154,7 +168,14 @@ export default function (pi: OmpExtensionApi): void {
     if (!pi.registerMessageRenderer) throw new Error("OMP extension API does not expose registerMessageRenderer");
     pi.registerMessageRenderer(FIRSTMATE_SYNTHETIC_PRESENTATION_TYPE, () => {
       if (!calmOmpPresentationHides(calmActive, "synthetic-user")) return undefined;
-      return createEmptyCalmComponent();
+      const component = createEmptyCalmComponent();
+      mountedSyntheticRows.add(component);
+      const dispose = component.dispose;
+      component.dispose = () => {
+        mountedSyntheticRows.delete(component);
+        dispose?.();
+      };
+      return component;
     });
   };
 
@@ -282,6 +303,7 @@ export default function (pi: OmpExtensionApi): void {
       sessionId += 1;
       activeRun = undefined;
       calmActive = readCalmPreference(calmActive);
+      invalidateMountedSyntheticRows();
       workingShip.reset();
       latestContext = ctx;
       restoreStockWorkingMessage(ctx);
@@ -311,14 +333,15 @@ export default function (pi: OmpExtensionApi): void {
           return;
         }
         calmActive = next;
-        let presentationSucceeded = true;
+        let presentationSucceeded = invalidateMountedSyntheticRows();
         if (activeRun) {
           rememberRunContext(ctx);
-          presentationSucceeded = next
+          const workingPresentationSucceeded = next
             ? startWorkingPresentation(ctx)
             : refreshWorkingMessage(ctx);
+          presentationSucceeded = workingPresentationSucceeded && presentationSucceeded;
         } else if (!next) {
-          presentationSucceeded = restoreStockWorkingMessage(ctx);
+          presentationSucceeded = restoreStockWorkingMessage(ctx) && presentationSucceeded;
         }
         notify(
           ctx,

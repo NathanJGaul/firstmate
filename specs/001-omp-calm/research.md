@@ -6,7 +6,7 @@
 - The extension factory receives `ExtensionAPI` with `registerCommand`, lifecycle `on`, `registerMessageRenderer`, and runtime UI actions.
 - `ExtensionUIContext.setWorkingMessage()` replaces the native working-row label and requests the host's ordinary working-row rendering.
 - `ExtensionContext.setInterval()` provides a managed timer handle that the extension clears with `clearTimer()` during session shutdown.
-- `ExtensionContext.ui.setToolsExpanded()` requests the host's ordinary tool-row redraw, but it does not provide a supported custom-entry invalidation or remount seam and is not used as a substitute for one.
+- `ExtensionContext.ui.setToolsExpanded()` requests the host's ordinary tool-row redraw and is not used as a substitute for the supported custom-component invalidation seam.
 
 ## Decision: Keep the shared preference and policy pure
 
@@ -19,7 +19,7 @@
 
 - `registerMessageRenderer(customType, renderer)` can control custom-message presentation, so the legacy Firstmate synthetic presentation entry can be zero-height while Calm is active when this seam is available.
 - OMP exposes no supported native tool-row renderer through the extension surface used here, so native tool rows remain ordinary and Calm does not claim same-name tools.
-- OMP does not expose `setWorkingVisible()` or a custom-entry invalidation/remount action in its current `ExtensionUIContext`; `setWorkingMessage()` is the verified working-row seam. Calm therefore animates a width-bounded projection of the shared ship in OMP's native working row and does not claim a second editor widget, a hidden stock row, or retroactive remounts.
+- OMP does not expose `setWorkingVisible()` or a generic transcript-row filter in its current `ExtensionUIContext`; `setWorkingMessage()` is the verified working-row seam, and registered custom components expose invalidation for the supported synthetic row. Calm therefore animates a width-bounded projection of the shared ship in OMP's native working row and does not claim a second editor widget or hidden unsupported rows.
 - OMP's `registerAssistantThinkingRenderer()` adds supplemental UI below already-visible thinking and cannot remove the host's thinking row. OMP has no generic user-row or transcript-container filter. Operational user rows and ordinary assistant working-note rows remain visible as an explicit unsupported boundary, with a diagnostic naming the missing seam rather than mutating messages or provider context.
 - Each adapter is installed independently and catches its own missing API or registration failure. The `/calm` command, shared preference, working row, and any other successful adapter remain available.
 

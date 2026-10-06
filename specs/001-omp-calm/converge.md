@@ -12,7 +12,7 @@
 
 ## Evidence
 
-- OMP focused behavior suite: pass, 17 checks, 0 failures; existing mounted synthetic rows remain unchanged until host remount as documented.
+- OMP focused behavior suite: pass, 18 checks, 0 failures; mounted supported synthetic rows receive component invalidation on toggle as documented.
 - Claude shared Calm regression suite: pass, 5 checks, 0 failures.
 - OMP 18.6.1 inactive and active startup smokes: pass; deliberate generic-row diagnostic observed.
 - Documentation audience check: pass (`102` surfaces, `454` local links).

@@ -21,7 +21,7 @@ Each behavior is observable through the OMP extension registration and lifecycle
 | A3 | A second `/calm` disables OMP Calm, persists `off`, restores ordinary working presentation, and affects newly rendered synthetic rows | FR-001, FR-002, FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_toggle_off_restores_stock_and_clears_timer`, `test_omp_supported_rows_leave_native_tools_untouched`) |
 | A4 | A preference write failure leaves the current OMP state unchanged and reports the failure without changing execution | FR-004, FR-007 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_write_failure_preserves_active_state`) |
 | A5 | An active OMP run advances the shared working ship at its deterministic cadence and restores the default working row on settle, abort, failure, or shutdown | FR-005 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_working_timer_is_managed_across_settle_and_shutdown`) |
-| A6 | Calm hides newly rendered supported legacy custom-message rows while native tools, genuine prompts, substantive responses, and already-mounted unsupported transitions remain host-owned | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_leave_native_tools_untouched`) |
+| A6 | Calm hides supported legacy custom-message rows, invalidates mounted rows on toggle, while native tools, genuine prompts, substantive responses, and unsupported transitions remain host-owned | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_leave_native_tools_untouched`) |
 | A7 | Calm off leaves OMP working and supported transcript rendering ordinary | FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_off_keeps_ordinary_working_surface`) |
 | A8 | Calm presentation does not alter native tool execution, model context, session records, or exports | FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_leave_native_tools_untouched`) |
 | A9 | A missing OMP presentation method produces a diagnostic naming only that adapter while `/calm` and other adapters remain available | FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_adapter_failures_are_isolated_and_diagnosed`) |
@@ -56,7 +56,7 @@ Each behavior is observable through the OMP extension registration and lifecycle
 - A `willContinue: true` `agent_end` must not stop the logical run.
 - Calm must not call stock working-message restoration unless it owns the working surface.
 - Native tools must remain host-owned and ordinary in OMP because no supported native tool-row renderer is available.
-- A mounted synthetic custom entry must not be claimed to redraw on toggle because OMP exposes no supported invalidation or remount action.
+- A mounted synthetic custom entry is invalidated on toggle through the component seam; unsupported transcript rows remain host-owned.
 - A new logical run must survive deferred presentation cleanup, continuing events, and presentation-only toggles within its session, then resume after cleanup or re-enabling Calm.
 - `on`, legacy `max`, `off`, absent, and unrecognized preference values must retain the shared interpretation.
 - Unsupported operational-user and assistant-working-note rows must remain ordinary in OMP 18.6.1.

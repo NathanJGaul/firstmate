@@ -11,7 +11,7 @@
 - active: write `on\n`;
 - inactive: write `off\n`;
 - write failure: leave the current state unchanged and notify the operator, or emit the notification adapter diagnostic when that seam is unavailable;
-- successful toggle: update the factory-local presentation choice without starting a model turn; newly rendered or host-remounted synthetic entries use the new choice, while already-mounted entries remain unchanged because OMP exposes no supported custom-entry invalidation or remount action.
+- successful toggle: update the factory-local presentation choice without starting a model turn; invalidate mounted supported synthetic components and let newly rendered or host-remounted entries use the new choice.
 
 ## Lifecycle
 

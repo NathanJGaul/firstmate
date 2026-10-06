@@ -44,7 +44,7 @@
 ### Implementation for User Story 1
 
 - [X] T010 [A1][A2][A3][A4] Implement shared preference loading and atomic persistence in `.omp/extensions/fm-calm.ts` through the existing `calmPreferencePath`, `parseCalmPreference`, and `serializeCalmPreference` policy.
-- [X] T011 [A1][A2][A3][A4] Register `/calm` and OMP session lifecycle handlers in `.omp/extensions/fm-calm.ts` without sending a model message; supported synthetic rows follow the state when rendered or host-remounted.
+- [X] T011 [A1][A2][A3][A4] Register `/calm` and OMP session lifecycle handlers in `.omp/extensions/fm-calm.ts` without sending a model message; supported synthetic rows follow the state when rendered or after component invalidation.
 
 **Checkpoint**: OMP can toggle and restore the shared preference independently of the working and transcript adapters.
 
@@ -62,7 +62,7 @@
 - [X] T013 [P] [A6][A7][A8] Add failing preservation and supported-row tests in `tests/fm-calm-omp-extension.test.sh` for legacy custom-message hiding, untouched native tools, and the unsupported generic-row boundary.
 - [X] T014 [A5][A6][A7][A8] Wire `.omp/extensions/fm-calm.ts` to the managed OMP working-message timer and shared sprite projection, with one timer per logical run and default-message restoration.
 - [X] T015 [A6][A7][A8] Implement `.omp/extensions/fm-calm.ts` legacy message renderer and leave unsupported native tool rows ordinary, preserving execution, arguments, results, and exports.
-- [X] T016 [A6][A7][A8] Document and test the OMP custom-entry remount boundary on toggle without changing session messages or model context; do not use tool expansion as an undocumented redraw substitute.
+- [X] T016 [A6][A7][A8] Document and test OMP custom-component invalidation on toggle without changing session messages or model context; do not use tool expansion as an undocumented redraw substitute.
 
 **Checkpoint**: OMP Calm presentation is a drawing-only enhancement with explicit supported and unsupported row boundaries.
 
