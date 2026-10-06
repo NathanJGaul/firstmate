@@ -293,6 +293,57 @@ JS
   pass "OMP reports each unsupported Calm seam independently while retaining /calm"
 }
 
+test_calm_redraw_restoration_is_retryable() {
+  local home out
+  home="$TMP_ROOT/home-a11"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a11.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a11");
+const diagnostics = [];
+const previousError = console.error;
+console.error = (message) => diagnostics.push(String(message));
+const commands = new Map();
+const calls = [];
+let expanded = true;
+let failOnce = true;
+const context = {
+  ui: {
+    setWorkingMessage() {},
+    notify() {},
+    getToolsExpanded() { return expanded; },
+    setToolsExpanded(next) {
+      calls.push(next);
+      expanded = next;
+      if (next && failOnce) {
+        failOnce = false;
+        throw new Error("restore failed after mutation");
+      }
+    },
+  },
+};
+const pi = {
+  on() {},
+  registerCommand(name, command) { commands.set(name, command); },
+  registerMessageRenderer() {},
+};
+extension.default(pi);
+await commands.get("calm").handler("", context);
+await commands.get("calm").handler("", context);
+console.error = previousError;
+const expected = [false, true, true, false, true];
+if (JSON.stringify(calls) !== JSON.stringify(expected)) throw new Error("failed redraw restoration was not retried before the next toggle");
+if (!expanded) throw new Error("redraw retry did not preserve the original expansion state");
+if (!diagnostics.some((line) => line.includes("supported-surface redraw restoration") && line.includes("restore failed after mutation"))) throw new Error("redraw restoration failure was not diagnosed");
+console.log("a11-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a11.mjs" 2>&1) || fail "A11 redraw restoration retry: $out"
+  assert_contains "$out" "a11-ok" "A11 redraw restoration retry did not complete"
+  pass "OMP redraw retries expansion restoration after a partial failure"
+}
+
 test_omp_adapter_invocation_failures_are_isolated() {
   local home out
   home="$TMP_ROOT/home-a10"
@@ -337,6 +388,7 @@ test_calm_write_failure_preserves_active_state
 test_calm_working_timer_is_managed_across_settle_and_shutdown
 test_calm_off_keeps_ordinary_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
+test_calm_redraw_restoration_is_retryable
 test_omp_adapter_invocation_failures_are_isolated
 
 test_calm_command_enables_shared_preference_without_transcript_row

@@ -118,20 +118,31 @@ export default function (pi: OmpExtensionApi): void {
     });
     return workingTimerAdapterAvailable;
   };
+  let pendingExpansionRestoration: boolean | undefined;
+  const restoreExpansionState = (ui: OmpUi, expanded: boolean): boolean => {
+    pendingExpansionRestoration = expanded;
+    const restored = installCalmAdapter("supported-surface redraw restoration", () => {
+      ui.setToolsExpanded!(expanded);
+    });
+    if (restored) pendingExpansionRestoration = undefined;
+    return restored;
+  };
   const redrawSupportedSurfaces = (ctx: OmpExtensionContext): void => {
     const redraw = (): void => {
       const ui = ctx.ui;
       if (!ui?.getToolsExpanded || !ui.setToolsExpanded) {
         throw new Error("OMP extension API does not expose getToolsExpanded/setToolsExpanded");
       }
+      if (pendingExpansionRestoration !== undefined && !restoreExpansionState(ui, pendingExpansionRestoration)) {
+        throw new Error("OMP tool expansion state restoration failed");
+      }
       const expanded = ui.getToolsExpanded();
       try {
         ui.setToolsExpanded(!expanded);
       } finally {
-        const restored = installCalmAdapter("supported-surface redraw restoration", () => {
-          ui.setToolsExpanded(expanded);
-        });
-        if (!restored) throw new Error("OMP tool expansion state restoration failed");
+        if (!restoreExpansionState(ui, expanded)) {
+          throw new Error("OMP tool expansion state restoration failed");
+        }
       }
     };
     installCalmAdapter("supported-surface redraw", redraw);
