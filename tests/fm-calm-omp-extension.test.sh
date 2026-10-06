@@ -447,10 +447,25 @@ const pi = { on(name, handler) { events.set(name, handler); }, registerCommand()
 extension.default(pi);
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
-console.error = previousError;
-if (messages.length !== 0 || intervals.length !== 0) throw new Error("too-narrow Calm replaced the stock working surface");
+if (messages.length !== 0 || intervals.length !== 1) throw new Error("too-narrow Calm replaced the stock working surface or lost its retry timer");
 if (!diagnostics.some((line) => line.includes("working-message width") && line.includes("too narrow"))) {
   throw new Error("too-narrow Calm width was not diagnosed");
+}
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+intervals[0]();
+if (typeof messages.at(-1) !== "string" || !messages.at(-1).includes("╲")) {
+  throw new Error("Calm did not recover when a usable width returned");
+}
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 2 });
+intervals[0]();
+if (messages.at(-1) !== undefined || intervals.length !== 1) {
+  throw new Error("an active Calm run did not preserve its retry timer at an unusable width");
+}
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+intervals[0]();
+console.error = previousError;
+if (typeof messages.at(-1) !== "string" || !messages.at(-1).includes("╲")) {
+  throw new Error("an active Calm run did not recover after a temporary narrow width");
 }
 console.log("a14-ok");
 JS
