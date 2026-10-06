@@ -34,7 +34,7 @@ Each behavior is observable through the OMP extension registration and lifecycle
 
 | id | behavior | traces | kind | state | test |
 | --- | --- | --- | --- | --- | --- |
-| U1 | Shared preference paths, legacy values, serialization, preservation threshold, and operational-input classification return the existing cross-harness results | FR-002, FR-008 | characterization | BASELINE | `tests/fm-calm-claude-mod.test.sh` |
+| U1 | Shared preference paths, legacy values, and serialization retain the existing cross-harness results; Pi and Claude retain their own preservation and operational-input policy baseline | FR-002, FR-008, FR-010 | characterization | BASELINE | `tests/fm-calm-claude-mod.test.sh` |
 
 ### `.omp/extensions/lib/fm-calm-omp-presentation.ts`
 

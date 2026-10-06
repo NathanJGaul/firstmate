@@ -42,7 +42,7 @@ No feature commits exist in the branch after the baseline commit, so git history
 
 ### MEDIUM
 
-3. **OMP export preservation has no dedicated acceptance runner.** The extension performs drawing-only delegation and the focused test checks unchanged native results, but the recorded stack profile has no OMP export runner; live verification is limited to the documented startup smoke.
+3. **OMP export preservation has no dedicated acceptance runner.** The extension is drawing-only and the focused test verifies that unsupported native presentation is not claimed, but the recorded stack profile has no OMP export runner; live verification is limited to the documented startup smoke.
 4. **Unsupported generic rows are verified by the adapter diagnostic rather than a real OMP transcript fixture.** OMP 18.6.1 exposes no generic transcript renderer, so the implementation leaves those rows to OMP unchanged; the focused test verifies the diagnostic and retained `/calm` registration.
 
 ## Mutation results
@@ -58,7 +58,7 @@ No mutation tool is installed or recorded in `.specify/memory/tdd-profile.md`. D
 | FR-005 | A5, U2 | covered |
 | FR-006 | A3, A7 | covered |
 | FR-007 | A4, A9, U3 | covered |
-| FR-008 | Claude shared policy contract | covered |
+| FR-008 | OMP supported visibility boundary; Claude shared policy regression | covered |
 | FR-009 | OMP focused suite, Calm docs, runtime verification | covered |
 | FR-010 | Claude passes; Pi is blocked by the observed baseline failure | blocked |
 | SC-001–SC-005 | OMP focused suite | covered |

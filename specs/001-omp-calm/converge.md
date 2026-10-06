@@ -7,7 +7,7 @@
 
 - All functional requirements FR-001 through FR-010 have an implementation or regression task.
 - All tasks T001 through T025 are marked complete.
-- The implementation uses the shared Calm preference, preservation policy, operational-input semantics, and working-sprite core; it does not add an OMP-specific preference or mutate context, execution, sessions, exports, or the installed OMP binary.
+- The implementation uses the shared Calm preference, supported visibility policy, and working-sprite core; unsupported operational and assistant rows remain host-owned, and it does not add an OMP-specific preference or mutate context, execution, sessions, exports, or the installed OMP binary.
 - Unsupported OMP generic transcript rows remain ordinary and are diagnosed rather than filtered through an undocumented seam.
 
 ## Evidence

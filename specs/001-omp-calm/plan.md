@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add a native OMP extension under `.omp/extensions` that owns the `/calm` command, reads and writes the existing home-local preference, animates the shared Calm working ship through OMP's working-message API, and installs only supported transcript adapters. Reuse the harness-neutral Calm sprite, preservation rules, operational-input classifier, and visibility allowlist instead of creating an OMP-specific contract. Unsupported OMP renderer seams remain visible and produce targeted diagnostics. Add focused portable behavior tests and current OMP maintainer evidence without changing Pi or Claude Code semantics.
+Add a native OMP extension under `.omp/extensions` that owns the `/calm` command, reads and writes the existing home-local preference, animates the shared Calm working ship through OMP's working-message API, and installs only supported transcript adapters. Reuse the harness-neutral Calm preference, sprite, and visibility policy instead of creating an OMP-specific preference or filtering contract. Unsupported OMP renderer seams remain visible and produce targeted diagnostics. Add focused portable behavior tests and current OMP maintainer evidence without changing Pi or Claude Code semantics.
 
 ## Technical Context
 

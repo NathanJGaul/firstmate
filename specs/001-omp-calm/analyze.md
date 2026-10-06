@@ -20,7 +20,7 @@ No requirement conflict, missing implementation-scope mapping, unsupported prefe
 | FR-003–FR-004 | Yes | T013, T015–T016; A6, A8, A10 |
 | FR-005–FR-006 | Yes | T004, T007, T012, T014; A3, A5, A7, U2 |
 | FR-007 | Yes | T005, T008, T017, T019; A4, A9, U3 |
-| FR-008–FR-009 | Yes | T003, T021–T024; shared Claude contract and OMP suite |
+| FR-008–FR-009 | Yes | T003, T013, T021–T024; OMP supported-boundary and shared-policy suites |
 | FR-010 | Yes, validation blocked | T018, T020, A11; Pi suite limitation recorded |
 
 **Metrics**: 10 functional requirements checked; 25 implementation/verification tasks present and marked complete; 3 findings (0 critical, 1 high, 2 medium); task coverage 100%.

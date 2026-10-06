@@ -10,8 +10,8 @@
 
 ## Decision: Keep the shared preference and policy pure
 
-- Reuse `.claude/mods/firstmate-calm/lib/fm-calm-presentation.ts` for `config/calm` path resolution, `on`/`max` parsing, `on`/`off` serialization, substantive working-note thresholds, and operational-input classification.
-- Move or re-export the allowlist policy from the Pi-specific visibility adapter through a harness-neutral module so OMP does not copy a second transcript policy.
+- Reuse `.claude/mods/firstmate-calm/lib/fm-calm-presentation.ts` for `config/calm` path resolution, `on`/`max` parsing, and `on`/`off` serialization.
+- Reuse the harness-neutral visibility policy at OMP's supported synthetic-message boundary; do not apply the working-note or operational-input classifiers where OMP exposes no row-rendering boundary.
 - Reuse `.claude/mods/firstmate-calm/lib/fm-calm-working-ship-sprite.ts` for geometry and deterministic animation state.
 - OMP projects continue to use the effective home selected by `FM_HOME`, then `FM_ROOT_OVERRIDE`, with `FM_CONFIG_OVERRIDE` naming the config directory outright.
 

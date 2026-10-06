@@ -33,14 +33,14 @@ An OMP user with Calm enabled sees the same compact animated working presentatio
 
 **Why this priority**: Presentation is the user-visible value of Calm and must preserve the information needed to follow a run.
 
-**Independent Test**: Exercise an OMP run with working activity, tool activity, operational input, working notes, genuine user text, and a final answer, then compare Calm-on and Calm-off rendering while inspecting the unchanged execution and stored transcript.
+**Independent Test**: Exercise an OMP run with working activity, tool activity, operational input, working notes, genuine user text, and a final answer, then compare Calm-on and Calm-off rendering to confirm supported synthetic-row suppression, visible unsupported rows, and unchanged execution and stored transcript.
 
 **Acceptance Scenarios**:
 
 1. **Given** an OMP run is active and Calm is enabled, **When** working activity is displayed, **Then** OMP shows the animated Calm working ship at the available width and removes it when the run settles, aborts, or fails.
 2. **Given** Calm is enabled, **When** the supported synthetic custom-message row or another OMP transcript class is rendered, **Then** the supported row occupies no transcript height while unsupported rows, genuine user prompts, substantive assistant text, and the final answer remain visible.
 3. **Given** Calm is disabled, **When** the same run is rendered, **Then** OMP leaves its ordinary working and transcript presentation unchanged.
-4. **Given** a hidden row is rendered while Calm is enabled, **When** execution completes or the session is exported, **Then** the original message, model context, tool execution, session data, and export remain complete and unchanged.
+4. **Given** a supported hidden row is rendered while Calm is enabled, **When** execution completes or the session is exported, **Then** the original message, model context, tool execution, session data, and export remain complete and unchanged.
 
 ---
 
@@ -62,8 +62,7 @@ An OMP user can use Calm when supported presentation seams are available, and an
 
 - OMP starts with an existing `config/calm` value of `on`, `off`, `max`, or an unrecognized value.
 - OMP's working presentation is resized, hidden temporarily, or re-mounted during one logical run.
-- A working-note text is exactly at the shared preservation threshold, contains a newline, or is empty.
-- An operational-input envelope is a near miss or carries unsupported content, such as an image-bearing row.
+- An unsupported assistant working-note or operational-input row is rendered while Calm is active; OMP leaves it visible without filtering or mutation.
 - A supported OMP presentation method is missing, throws during installation, or is replaced by a later OMP release.
 - Calm is toggled while rows from the current run are already on screen.
 
@@ -78,7 +77,7 @@ An OMP user can use Calm when supported presentation seams are available, and an
 - **FR-005**: OMP MUST render the harness-neutral Calm working ship while a logical run is active and remove it when that run settles, aborts, or fails.
 - **FR-006**: OMP MUST preserve ordinary OMP rendering and execution when Calm is off.
 - **FR-007**: OMP MUST diagnose and independently skip an unavailable presentation seam without disabling unrelated Calm behavior.
-- **FR-008**: OMP MUST reuse the canonical operational-input classification and shared working-note preservation semantics rather than introducing a second contract.
+- **FR-008**: OMP MUST reuse the canonical shared visibility policy at its supported presentation boundary and MUST leave operational-input and assistant working-note rows ordinary when OMP exposes no supported boundary for them.
 - **FR-009**: OMP Calm behavior MUST be covered by focused executable behavior tests, and the Calm documentation and maintainer verification MUST identify the OMP support boundary and evidence.
 - **FR-010**: Existing Pi and Claude Code Calm behavior MUST remain unchanged.
 
@@ -87,7 +86,7 @@ An OMP user can use Calm when supported presentation seams are available, and an
 - **Calm preference**: The home-local persisted choice, represented by the existing `config/calm` file and shared by supported harnesses.
 - **Calm presentation state**: The in-process active/off state and supported adapter availability used to decide whether OMP draws ordinary or Calm presentation.
 - **Working presentation**: The transient animated ship shown for active work without creating a transcript or session entry.
-- **Transcript row class**: A supported OMP-rendered presentation category classified as genuine conversation, working activity, operational input, tool activity, or working note.
+- **Transcript row class**: An OMP-rendered presentation category with a supported boundary; operational-input, tool, and assistant working-note rows without such a boundary remain host-owned and ordinary.
 
 ## Success Criteria
 

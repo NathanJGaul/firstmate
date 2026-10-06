@@ -19,7 +19,7 @@
 
 **Purpose**: Make shared preference, sprite, and adapter diagnostics executable before story-specific implementation.
 
-- [X] T003 [P] [U1] Add failing preference and policy contract cases to `tests/fm-calm-omp-extension.test.sh` for the shared `config/calm` path, `on`/`max` parsing, `on`/`off` serialization, and operational-input classification.
+- [X] T003 [P] [U1] Add failing preference and visibility-policy contract cases to `tests/fm-calm-omp-extension.test.sh` for the shared `config/calm` path, `on`/`max` parsing, `on`/`off` serialization, and supported synthetic-message suppression.
 - [X] T004 [P] [U2] Add failing shared sprite projection and managed-timer lifecycle cases to `tests/fm-calm-omp-extension.test.sh` for deterministic frames, resize bounds, and cleanup on every terminal lifecycle.
 - [X] T005 [P] [U3] Add failing adapter-diagnostic cases to `tests/fm-calm-omp-extension.test.sh` for missing or throwing OMP seams that must not disable unrelated adapters.
 - [X] T006 [U1] Implement the harness-neutral Calm policy exports in `.claude/mods/firstmate-calm/lib/fm-calm-presentation.ts` and update Pi's visibility adapter to consume them without changing its behavior.
@@ -59,7 +59,7 @@
 ### Tests for User Story 2
 
 - [X] T012 [P] [A5][A6][A7][A8] Add failing working-presentation tests in `tests/fm-calm-omp-extension.test.sh` for agent-start animation, frame updates, resize projection, Calm-off stock restoration, and cleanup on settle/abort/shutdown.
-- [X] T013 [P] [A6][A7][A8] Add failing preservation and supported-row tests in `tests/fm-calm-omp-extension.test.sh` for legacy custom-message hiding, untouched native tools, and visible unsupported operational/assistant rows.
+- [X] T013 [P] [A6][A7][A8] Add failing preservation and supported-row tests in `tests/fm-calm-omp-extension.test.sh` for legacy custom-message hiding, untouched native tools, and the unsupported generic-row boundary.
 - [X] T014 [A5][A6][A7][A8] Wire `.omp/extensions/fm-calm.ts` to the managed OMP working-message timer and shared sprite projection, with one timer per logical run and default-message restoration.
 - [X] T015 [A6][A7][A8] Implement `.omp/extensions/fm-calm.ts` legacy message renderer and leave unsupported native tool rows ordinary, preserving execution, arguments, results, and exports.
 - [X] T016 [A6][A7][A8] Add supported-surface redraw on toggle in `.omp/extensions/fm-calm.ts` without changing session messages or model context.
