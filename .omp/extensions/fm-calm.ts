@@ -102,7 +102,6 @@ export default function (pi: OmpExtensionApi): void {
   let calmActive = loadCalmPreference();
   let workingMessageAdapterAvailable: boolean | undefined;
   let workingTimerAdapterAvailable: boolean | undefined;
-  let redrawAdapterAvailable: boolean | undefined;
   const ensureWorkingMessageAdapter = (ctx: OmpExtensionContext): boolean => {
     if (workingMessageAdapterAvailable !== undefined) return workingMessageAdapterAvailable;
     workingMessageAdapterAvailable = installCalmAdapter("working-message", () => {
@@ -120,7 +119,6 @@ export default function (pi: OmpExtensionApi): void {
     return workingTimerAdapterAvailable;
   };
   const redrawSupportedSurfaces = (ctx: OmpExtensionContext): void => {
-    if (redrawAdapterAvailable === false) return;
     const redraw = (): void => {
       const ui = ctx.ui;
       if (!ui?.getToolsExpanded || !ui.setToolsExpanded) {
@@ -130,11 +128,13 @@ export default function (pi: OmpExtensionApi): void {
       try {
         ui.setToolsExpanded(!expanded);
       } finally {
-        ui.setToolsExpanded(expanded);
+        const restored = installCalmAdapter("supported-surface redraw restoration", () => {
+          ui.setToolsExpanded(expanded);
+        });
+        if (!restored) throw new Error("OMP tool expansion state restoration failed");
       }
     };
-    const succeeded = installCalmAdapter("supported-surface redraw", redraw);
-    if (redrawAdapterAvailable === undefined || !succeeded) redrawAdapterAvailable = succeeded;
+    installCalmAdapter("supported-surface redraw", redraw);
   };
   let agentRunActive = false;
   let workingTimer: unknown;
