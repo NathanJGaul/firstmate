@@ -117,12 +117,15 @@ const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a6");
 const renderers = new Map();
 const tools = [];
 const events = new Map();
+const commands = new Map();
+const nativeCall = { render: () => ["native-call"] };
+const nativeResult = { render: () => ["native-result"] };
 const pi = {
   on(name, handler) { events.set(name, handler); },
-  registerCommand() {},
+  registerCommand(name, command) { commands.set(name, command); },
   registerMessageRenderer(name, renderer) { renderers.set(name, renderer); },
   getAllTools() { return [
-    { name: "read", description: "native read", parameters: { type: "object" }, sourceInfo: { source: "builtin" } },
+    { name: "read", description: "native read", parameters: { type: "object" }, sourceInfo: { source: "builtin" }, renderCall() { return nativeCall; }, renderResult() { return nativeResult; } },
     { name: "bash", description: "foreign bash", parameters: { type: "object" }, sourceInfo: { source: "extension" } },
     { name: "edit", description: "unowned edit", parameters: { type: "object" } },
   ]; },
@@ -138,6 +141,8 @@ if (!read) throw new Error("native read wrapper was not registered");
 if (tools.some((tool) => tool.name === "bash")) throw new Error("foreign bash tool was claimed by Calm");
 if (tools.some((tool) => tool.name === "edit")) throw new Error("tool without builtin ownership metadata was claimed by Calm");
 if (read.renderCall?.().render(80).length !== 0 || read.renderResult?.().render(80).length !== 0) throw new Error("Calm-on native tool rows were not hidden");
+await commands.get("calm").handler("", { ui: { setWorkingMessage() {} } });
+if (read.renderCall?.().render(80)[0] !== "native-call" || read.renderResult?.().render(80)[0] !== "native-result") throw new Error("Calm-off native tool rows did not restore their native renderers");
 let delegated = false;
 const result = await read.execute("call-1", { path: "file" }, "signal", "updates", { invokeTool: async (params, options) => { delegated = params.path === "file" && options.signal === "signal" && options.onUpdate === "updates"; return { content: [{ type: "text", text: "ok" }] }; } });
 if (!delegated || result?.content?.[0]?.text !== "ok") throw new Error("native tool wrapper did not preserve execution inputs and result");
@@ -164,20 +169,23 @@ const events = new Map();
 const commands = new Map();
 const messages = [];
 const cleared = [];
+const timers = [];
 const redraws = [];
 let expanded = true;
-const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {}, getToolsExpanded() { return expanded; }, setToolsExpanded(next) { redraws.push(next); expanded = next; } }, setInterval(callback) { return { callback }; }, clearTimer(timer) { cleared.push(timer); } };
+const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {}, getToolsExpanded() { return expanded; }, setToolsExpanded(next) { redraws.push(next); expanded = next; } }, setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; }, clearTimer(timer) { cleared.push(timer); } };
 const pi = { on(name, handler) { events.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, registerMessageRenderer() {}, getAllTools() { return []; }, registerTool() {} };
 extension.default(pi);
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
+if (timers.length !== 1) throw new Error("active run did not create a managed timer");
+await commands.get("calm").handler("", context);
+if (readFileSync(${home@Q} + "/config/calm", "utf8") !== "off\\n") throw new Error("active toggle off did not persist");
+if (messages.at(-1) !== undefined) throw new Error("active toggle off did not restore the stock working row");
+if (cleared.length !== 1) throw new Error("active toggle off did not clear the managed timer");
 await events.get("agent_end")({}, context);
 await commands.get("calm").handler("", context);
-if (readFileSync(${home@Q} + "/config/calm", "utf8") !== "off\\n") throw new Error("toggle off did not persist");
-if (messages.at(-1) !== undefined) throw new Error("toggle off did not restore the stock working row");
-if (cleared.length !== 1) throw new Error("toggle off did not clear the managed timer");
 await commands.get("calm").handler("", context);
-if (redraws.length !== 4 || redraws[0] !== false || redraws[1] !== true || redraws[2] !== false || redraws[3] !== true) throw new Error("Calm toggle did not redraw supported surfaces in both directions");
+if (redraws.length !== 6 || redraws[0] !== false || redraws[1] !== true || redraws[2] !== false || redraws[3] !== true || redraws[4] !== false || redraws[5] !== true) throw new Error("Calm toggle did not redraw supported surfaces in both directions");
 console.log("a3-ok");
 JS
   out=$(run_node "$TMP_ROOT/a3.mjs" 2>&1) || fail "A3 toggle off: $out"
@@ -300,11 +308,51 @@ JS
   pass "OMP reports each unsupported Calm seam independently while retaining /calm"
 }
 
+test_omp_adapter_invocation_failures_are_isolated() {
+  local home out
+  home="$TMP_ROOT/home-a10"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a10.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+const extensionUrl = pathToFileURL(${EXTENSION@Q}).href;
+const diagnostics = [];
+const previousError = console.error;
+console.error = (message) => diagnostics.push(String(message));
+const load = async (name, context, start = true, toggle = false, end = false) => {
+  const events = new Map();
+  const commands = new Map();
+  const extension = await import(extensionUrl + "?a10-" + name);
+  extension.default({ on(event, handler) { events.set(event, handler); }, registerCommand(command, definition) { commands.set(command, definition); } });
+  await events.get("session_start")({}, context);
+  if (start) await events.get("agent_start")({}, context);
+  if (end) await events.get("agent_end")({}, context);
+  if (toggle) await commands.get("calm").handler("", context);
+};
+await load("working", { ui: { setWorkingMessage() { throw new Error("working failed"); } }, setInterval() { throw new Error("interval failed"); }, clearTimer() {} });
+await load("timer", { ui: { setWorkingMessage() {} }, setInterval() { throw new Error("interval failed"); }, clearTimer() {} });
+const messages = [];
+await load("clear", { ui: { setWorkingMessage(message) { messages.push(message); } }, setInterval(callback) { return { callback }; }, clearTimer() { throw new Error("clear failed"); } }, true, false, true);
+if (messages.at(-1) !== undefined) throw new Error("stock working message was not attempted after clear failure");
+await load("redraw", { ui: { setWorkingMessage() {}, getToolsExpanded() { throw new Error("redraw failed"); }, setToolsExpanded() {} }, setInterval() { return {}; }, clearTimer() {} }, false, true);
+console.error = previousError;
+for (const [name, detail] of [["working-message", "working failed"], ["working-message timer", "interval failed"], ["working-message timer", "clear failed"], ["supported-surface redraw", "redraw failed"]]) {
+  if (!diagnostics.some((line) => line.includes(name) && line.includes(detail))) throw new Error("missing invocation diagnostic for " + name + ": " + detail);
+}
+console.log("a10-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a10.mjs" 2>&1) || fail "A10 invocation failures: $out"
+  assert_contains "$out" "a10-ok" "A10 invocation failures did not complete"
+  pass "OMP isolates throwing presentation invocations and cleans up state"
+}
+
 test_calm_toggle_off_restores_stock_and_clears_timer
 test_calm_write_failure_preserves_active_state
 test_calm_working_timer_is_managed_across_settle_and_shutdown
 test_calm_off_keeps_ordinary_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
+test_omp_adapter_invocation_failures_are_isolated
 
 test_calm_command_enables_shared_preference_without_transcript_row
 test_calm_session_restores_shared_preference

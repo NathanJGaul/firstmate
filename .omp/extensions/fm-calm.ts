@@ -45,11 +45,15 @@ type OmpExtensionContext = {
 
 type OmpCommandContext = OmpExtensionContext;
 
+type OmpToolRenderer = (...args: unknown[]) => unknown;
+
 type OmpToolInfo = {
   name: string;
   description: string;
   parameters: unknown;
   sourceInfo?: { source?: string };
+  renderCall?: OmpToolRenderer;
+  renderResult?: OmpToolRenderer;
 };
 
 type OmpToolContext = OmpExtensionContext & {
@@ -62,8 +66,8 @@ type OmpToolDefinition = {
   description: string;
   parameters: unknown;
   execute: (toolCallId: string, params: Record<string, unknown>, signal: unknown, onUpdate: unknown, ctx: OmpToolContext) => Promise<unknown>;
-  renderCall?: () => unknown;
-  renderResult?: () => unknown;
+  renderCall?: OmpToolRenderer;
+  renderResult?: OmpToolRenderer;
 };
 
 type OmpMessageRenderer = (message: { customType?: string; content?: unknown }, options: unknown, theme: unknown) => unknown;
@@ -113,11 +117,13 @@ function persistCalmPreference(active: boolean): void {
 }
 
 function notify(ctx: OmpCommandContext, message: string, level: string): void {
-  ctx.ui?.notify?.(message, level);
+  if (!ctx.ui?.notify) return;
+  installCalmAdapter("notification", () => ctx.ui!.notify!(message, level));
 }
 
 function clearManagedTimer(ctx: OmpExtensionContext, timer: unknown): void {
-  ctx.clearTimer?.(timer);
+  if (!ctx.clearTimer) throw new Error("OMP extension API does not expose clearTimer");
+  ctx.clearTimer(timer);
 }
 
 export default function (pi: OmpExtensionApi): void {
@@ -149,14 +155,14 @@ export default function (pi: OmpExtensionApi): void {
         throw new Error("OMP extension API does not expose getToolsExpanded/setToolsExpanded");
       }
       const expanded = ui.getToolsExpanded();
-      ui.setToolsExpanded(!expanded);
-      ui.setToolsExpanded(expanded);
+      try {
+        ui.setToolsExpanded(!expanded);
+      } finally {
+        ui.setToolsExpanded(expanded);
+      }
     };
-    if (redrawAdapterAvailable === undefined) {
-      redrawAdapterAvailable = installCalmAdapter("supported-surface redraw", redraw);
-      return;
-    }
-    installCalmAdapter("supported-surface redraw", redraw);
+    const succeeded = installCalmAdapter("supported-surface redraw", redraw);
+    if (redrawAdapterAvailable === undefined || !succeeded) redrawAdapterAvailable = succeeded;
   };
   let agentRunActive = false;
   let workingTimer: unknown;
@@ -182,19 +188,26 @@ export default function (pi: OmpExtensionApi): void {
       const native = tools.find((tool) => tool.name === name);
       if (!native) continue;
       if (native.sourceInfo?.source !== "builtin") continue;
-      const wrapper: OmpToolDefinition = {
-        name: native.name,
-        label: native.name,
-        description: native.description,
-        parameters: native.parameters,
-        async execute(toolCallId, params, signal, onUpdate, ctx) {
-          if (!ctx.invokeTool) throw new Error(`OMP native tool ${name} cannot be delegated: invokeTool is unavailable`);
-          return ctx.invokeTool(params, { signal, onUpdate });
-        },
-        renderCall: () => calmActive ? createEmptyCalmComponent() : undefined,
-        renderResult: () => calmActive ? createEmptyCalmComponent() : undefined,
-      };
-      pi.registerTool(wrapper);
+      installCalmAdapter(`native ${name} tool wrapper`, () => {
+        if (!native.renderCall || !native.renderResult) {
+          throw new Error("the native tool renderers are unavailable for delegation");
+        }
+        const nativeRenderCall = native.renderCall;
+        const nativeRenderResult = native.renderResult;
+        const wrapper: OmpToolDefinition = {
+          name: native.name,
+          label: native.name,
+          description: native.description,
+          parameters: native.parameters,
+          async execute(toolCallId, params, signal, onUpdate, ctx) {
+            if (!ctx.invokeTool) throw new Error(`OMP native tool ${name} cannot be delegated: invokeTool is unavailable`);
+            return ctx.invokeTool(params, { signal, onUpdate });
+          },
+          renderCall: (...args) => calmActive ? createEmptyCalmComponent() : nativeRenderCall(...args),
+          renderResult: (...args) => calmActive ? createEmptyCalmComponent() : nativeRenderResult(...args),
+        };
+        pi.registerTool(wrapper);
+      });
     }
     nativeToolAdaptersInstalled = true;
   };
@@ -208,26 +221,35 @@ export default function (pi: OmpExtensionApi): void {
 
 
   const clearWorkingTimer = (): void => {
-    if (workingTimer === undefined || latestContext === undefined) return;
-    clearManagedTimer(latestContext, workingTimer);
+    const timer = workingTimer;
+    const ctx = latestContext;
     workingTimer = undefined;
-    workingShip.restoreLastRendered();
-  };
-
-  const restoreStockWorkingMessage = (ctx: OmpExtensionContext): void => {
-    clearWorkingTimer();
-    if (!ensureWorkingMessageAdapter(ctx)) return;
-    ctx.ui!.setWorkingMessage!();
-  };
-
-  const refreshWorkingMessage = (ctx: OmpExtensionContext): void => {
-    latestContext = ctx;
-    if (!ensureWorkingMessageAdapter(ctx)) return;
-    if (!calmActive || !agentRunActive) {
-      restoreStockWorkingMessage(ctx);
-      return;
+    try {
+      if (timer !== undefined && ctx !== undefined) {
+        installCalmAdapter("working-message timer", () => clearManagedTimer(ctx, timer));
+      }
+    } finally {
+      workingShip.restoreLastRendered();
     }
-    ctx.ui!.setWorkingMessage!(renderCalmWorkingShipMessage(workingShip, workingMessageWidth()));
+  };
+
+  const setWorkingMessage = (ctx: OmpExtensionContext, message?: string): boolean => {
+    if (!ensureWorkingMessageAdapter(ctx)) return false;
+    return installCalmAdapter("working-message", () => {
+      if (message === undefined) ctx.ui!.setWorkingMessage!();
+      else ctx.ui!.setWorkingMessage!(message);
+    });
+  };
+
+  const restoreStockWorkingMessage = (ctx: OmpExtensionContext): boolean => {
+    clearWorkingTimer();
+    return setWorkingMessage(ctx);
+  };
+
+  const refreshWorkingMessage = (ctx: OmpExtensionContext): boolean => {
+    latestContext = ctx;
+    if (!calmActive || !agentRunActive) return restoreStockWorkingMessage(ctx);
+    return setWorkingMessage(ctx, renderCalmWorkingShipMessage(workingShip, workingMessageWidth()));
   };
 
   const startWorkingPresentation = (ctx: OmpExtensionContext): void => {
@@ -235,13 +257,17 @@ export default function (pi: OmpExtensionApi): void {
     agentRunActive = true;
     const workingMessageAvailable = ensureWorkingMessageAdapter(ctx);
     const workingTimerAvailable = calmActive && ensureWorkingTimerAdapter(ctx);
-    if (!workingMessageAvailable) return;
-    refreshWorkingMessage(ctx);
+    if (!workingMessageAvailable || !refreshWorkingMessage(ctx)) return;
     if (!calmActive || workingTimer !== undefined || !workingTimerAvailable) return;
-    workingTimer = ctx.setInterval!(() => {
+    const callback = (): void => {
       workingShip.tick();
-      refreshWorkingMessage(ctx);
-    }, CALM_WORKING_SHIP_TICK_MS);
+      if (!refreshWorkingMessage(ctx)) clearWorkingTimer();
+    };
+    const timerStarted = installCalmAdapter("working-message timer", () => {
+      if (!ctx.setInterval) throw new Error("OMP extension API does not expose setInterval");
+      workingTimer = ctx.setInterval(callback, CALM_WORKING_SHIP_TICK_MS);
+    });
+    if (!timerStarted) workingTimerAdapterAvailable = false;
   };
 
   const stopWorkingPresentation = (ctx: OmpExtensionContext): void => {
