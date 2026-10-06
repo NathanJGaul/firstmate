@@ -557,6 +557,41 @@ JS
   pass "OMP reports each unsupported Calm seam independently while retaining /calm"
 }
 
+test_calm_timer_setup_failure_does_not_publish_unmanaged_message() {
+  local home out
+  home="$TMP_ROOT/home-a11"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a11.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a11");
+const events = new Map();
+const messages = [];
+const context = {
+  ui: {
+    setWorkingMessage(message) {
+      if (message === undefined) throw new Error("unexpected stock restore");
+      messages.push(message);
+    },
+  },
+  setInterval() { throw new Error("interval setup failed"); },
+  clearTimer() {},
+};
+const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {}, registerMessageRenderer() {} };
+extension.default(pi);
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+await events.get("agent_end")({}, context);
+if (messages.length !== 0) throw new Error("timer setup failure published an unmanaged Calm message");
+console.log("a11-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a11.mjs" 2>&1) || fail "A11 timer setup failure: $out"
+  assert_contains "$out" "a11-ok" "A11 timer setup failure did not complete"
+  pass "OMP does not publish Calm activity without a managed timer"
+}
+
 test_omp_adapter_invocation_failures_are_isolated() {
   local home out
   home="$TMP_ROOT/home-a10"
@@ -580,7 +615,7 @@ const load = async (name, context, start = true, toggle = false, end = false) =>
   if (end) await events.get("agent_end")({}, context);
   if (toggle) await commands.get("calm").handler("", context);
 };
-await load("working", { ui: { setWorkingMessage() { throw new Error("working failed"); } }, setInterval() { throw new Error("interval failed"); }, clearTimer() {} });
+await load("working", { ui: { setWorkingMessage() { throw new Error("working failed"); } }, setInterval(callback) { return { callback }; }, clearTimer() {} });
 await load("timer", { ui: { setWorkingMessage() {} }, setInterval() { throw new Error("interval failed"); }, clearTimer() {} });
 const messages = [];
 let clearAttempts = 0;
@@ -610,6 +645,7 @@ test_calm_pending_agent_start_retries_after_timer_clear_failure
 test_calm_pending_agent_start_survives_presentation_toggle
 test_calm_unusable_width_leaves_stock_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
+test_calm_timer_setup_failure_does_not_publish_unmanaged_message
 test_omp_adapter_invocation_failures_are_isolated
 
 test_calm_command_enables_shared_preference_without_transcript_row

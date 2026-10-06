@@ -232,10 +232,11 @@ export default function (pi: OmpExtensionApi): void {
     if (!calmActive) return true;
 
     const workingMessageAvailable = ensureWorkingMessageAdapter(ctx);
-    const workingTimerAvailable = ensureWorkingTimerAdapter(ctx);
     if (!workingMessageAvailable) return false;
-    const presentationApplied = refreshWorkingMessage(ctx);
-    if (workingTimer !== undefined || !workingTimerAvailable) return presentationApplied;
+    getWorkingMessageWidth();
+    const workingTimerAvailable = ensureWorkingTimerAdapter(ctx);
+    if (workingTimer !== undefined) return refreshWorkingMessage(ctx);
+    if (!workingTimerAvailable) return false;
     const timerRun = run;
     const callback = (): void => {
       if (workingTimerRun !== timerRun) return;
@@ -257,15 +258,17 @@ export default function (pi: OmpExtensionApi): void {
     };
     const timerStarted = installAdapter("working-message timer", () => {
       if (!ctx.setInterval) throw new Error("OMP extension API does not expose setInterval");
-      workingTimer = ctx.setInterval(callback, CALM_WORKING_SHIP_TICK_MS);
+      const timer = ctx.setInterval(callback, CALM_WORKING_SHIP_TICK_MS);
+      if (timer === undefined) throw new Error("OMP extension API did not return a managed timer handle");
+      workingTimer = timer;
       workingTimerContext = ctx;
       workingTimerRun = timerRun;
     });
     if (!timerStarted) {
-      workingTimerAdapterAvailable = false;
+      restoreWorkingMessageOnly(ctx);
       return false;
     }
-    return presentationApplied;
+    return refreshWorkingMessage(ctx);
   };
 
   const stopWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
