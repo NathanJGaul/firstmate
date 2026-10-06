@@ -557,13 +557,23 @@ set -eu
 printf '%s\n' "$*" >> "$FORGE/calls"
 fault=$(cat "$FORGE/fault" 2>/dev/null || true)
 case "$fault" in latency) sleep "${FORGE_LATENCY:-2}" ;; esac
+advance_clock() {
+  local delta=$1 lock current staged
+  lock="$FORGE/clock.lock"
+  while ! mkdir "$lock" 2>/dev/null; do sleep 0.01; done
+  current=$(cat "$FORGE/clock")
+  staged="$FORGE/clock.$$"
+  printf '%s\n' "$((current + delta))" > "$staged"
+  mv -f "$staged" "$FORGE/clock"
+  rmdir "$lock"
+}
 case "$fault:$*" in
   reserve:'api repos/o/r/'*)
-    printf '%s\n' "$(( $(cat "$FORGE/clock") + 6 ))" > "$FORGE/clock" ;;
+    advance_clock 6 ;;
   exhaust:'api repos/o/r/issues/8/comments?'*)
-    printf '%s\n' "$(( $(cat "$FORGE/clock") + 100 ))" > "$FORGE/clock" ;;
+    advance_clock 100 ;;
   fail-late:'api repos/o/r/pulls/8/reviews?'*)
-    printf '%s\n' "$(( $(cat "$FORGE/clock") + 100 ))" > "$FORGE/clock"
+    advance_clock 100
     printf 'HTTP 502\n' >&2; exit 1 ;;
   fail:'api repos/o/r/pulls/8/reviews?'*) printf 'HTTP 502\n' >&2; exit 1 ;;
   down:*) printf 'HTTP 502\n' >&2; exit 1 ;;
