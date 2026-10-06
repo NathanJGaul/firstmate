@@ -54,14 +54,14 @@
 
 **Goal**: Calm-on OMP shows the animated shared working presentation and hides only supported rows while preserving genuine conversation and execution data.
 
-**Independent Test**: Drive fake `session_start`, `agent_start`, `agent_end`, and `/calm` events through the extension API and verify working messages, timers, native tool delegation, render suppression, and ordinary Calm-off behavior.
+**Independent Test**: Drive fake `session_start`, `agent_start`, `agent_end`, and `/calm` events through the extension API and verify working messages, timers, supported legacy-row suppression, and ordinary unsupported and Calm-off behavior.
 
 ### Tests for User Story 2
 
 - [X] T012 [P] [A5][A6][A7][A8] Add failing working-presentation tests in `tests/fm-calm-omp-extension.test.sh` for agent-start animation, frame updates, resize projection, Calm-off stock restoration, and cleanup on settle/abort/shutdown.
-- [X] T013 [P] [A6][A7][A8] Add failing preservation and supported-row tests in `tests/fm-calm-omp-extension.test.sh` for legacy custom-message hiding, built-in tool render suppression, native tool delegation, and visible unsupported operational/assistant rows.
+- [X] T013 [P] [A6][A7][A8] Add failing preservation and supported-row tests in `tests/fm-calm-omp-extension.test.sh` for legacy custom-message hiding, untouched native tools, and visible unsupported operational/assistant rows.
 - [X] T014 [A5][A6][A7][A8] Wire `.omp/extensions/fm-calm.ts` to the managed OMP working-message timer and shared sprite projection, with one timer per logical run and default-message restoration.
-- [X] T015 [A6][A7][A8] Implement `.omp/extensions/fm-calm.ts` legacy message renderer and native built-in tool wrappers using exact OMP schemas and `ctx.invokeTool`, preserving execution, arguments, results, and exports.
+- [X] T015 [A6][A7][A8] Implement `.omp/extensions/fm-calm.ts` legacy message renderer and leave unsupported native tool rows ordinary, preserving execution, arguments, results, and exports.
 - [X] T016 [A6][A7][A8] Add supported-surface redraw on toggle in `.omp/extensions/fm-calm.ts` without changing session messages or model context.
 
 **Checkpoint**: OMP Calm presentation is a drawing-only enhancement with explicit supported and unsupported row boundaries.
@@ -76,7 +76,7 @@
 
 ### Tests for User Story 3
 
-- [X] T017 [P] [A9][A10][A11] Add failing compatibility tests in `tests/fm-calm-omp-extension.test.sh` for unavailable working-message, legacy-renderer, tool-wrapper, and unsupported generic-row seams.
+- [X] T017 [P] [A9][A10][A11] Add failing compatibility tests in `tests/fm-calm-omp-extension.test.sh` for unavailable working-message, legacy-renderer, and unsupported generic-row seams.
 - [X] T018 [P] [A11] Add failing regression checks in `tests/fm-calm-claude-mod.test.sh` and `tests/fm-calm-pi-extension.test.sh` for unchanged shared preference, sprite, visibility, and operational-input behavior.
 - [X] T019 [A9][A10][A11] Install each OMP adapter independently in `.omp/extensions/fm-calm.ts` and report method/registration failures with adapter names while retaining unrelated adapters.
 - [X] T020 [A11] Update `.claude/mods/firstmate-calm` shared imports and `.pi/extensions/lib` links only as needed to preserve Pi and Claude Code behavior, with no harness-specific preference fork.

@@ -46,10 +46,10 @@ Append only. Newest last. Every entry's `red` block is the evidence that the tes
 
 ## Cycle 4: A6 supported row adapters
 
-- behavior: A6 - Calm hides supported legacy custom-message and native built-in tool rows while genuine prompts and substantive responses remain visible.
-- test: `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_hide_without_semantic_mutation`)
+- behavior: A6 - Calm hides supported legacy custom-message rows while native tools, genuine prompts, and substantive responses remain visible.
+- test: `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_leave_native_tools_untouched`)
 - red: focused suite failed before adapter registration with `Error: legacy custom-message renderer was not registered`.
-- green: focused suite passed after the legacy renderer and native `ctx.invokeTool` wrappers were installed independently.
+- green: focused suite passed after the legacy renderer was installed while native tools remained host-owned.
 
 ## Final focused verification
 

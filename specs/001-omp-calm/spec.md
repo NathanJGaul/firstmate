@@ -38,7 +38,7 @@ An OMP user with Calm enabled sees the same compact animated working presentatio
 **Acceptance Scenarios**:
 
 1. **Given** an OMP run is active and Calm is enabled, **When** working activity is displayed, **Then** OMP shows the animated Calm working ship at the available width and removes it when the run settles, aborts, or fails.
-2. **Given** Calm is enabled, **When** supported tool rows, classified operational rows, or non-substantive mid-turn working notes are rendered, **Then** those rows occupy no transcript height while genuine user prompts, substantive assistant text, and the final answer remain visible.
+2. **Given** Calm is enabled, **When** the supported synthetic custom-message row or another OMP transcript class is rendered, **Then** the supported row occupies no transcript height while unsupported rows, genuine user prompts, substantive assistant text, and the final answer remain visible.
 3. **Given** Calm is disabled, **When** the same run is rendered, **Then** OMP leaves its ordinary working and transcript presentation unchanged.
 4. **Given** a hidden row is rendered while Calm is enabled, **When** execution completes or the session is exported, **Then** the original message, model context, tool execution, session data, and export remain complete and unchanged.
 

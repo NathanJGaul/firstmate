@@ -18,8 +18,8 @@
 ## Scenario coverage
 
 - [x] Primary toggle and working-run scenarios are covered.
-- [x] Recovery and failure scenarios include write failures, missing APIs, foreign tool ownership, settle, abort, shutdown, and unsupported rows.
-- [x] Preservation scenarios cover execution parameters/results and document the unavailable OMP export runner.
+- [x] Recovery and failure scenarios include write failures, missing APIs, settle, abort, shutdown, and unsupported rows.
+- [x] Preservation scenarios cover ordinary OMP execution and document the unavailable OMP export runner.
 
 ## Review note
 

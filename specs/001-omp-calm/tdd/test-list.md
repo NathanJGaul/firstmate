@@ -21,9 +21,9 @@ Each behavior is observable through the OMP extension registration and lifecycle
 | A3 | A second `/calm` disables OMP Calm, persists `off`, and restores ordinary presentation | FR-001, FR-002, FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_toggle_off_restores_stock_and_clears_timer`) |
 | A4 | A preference write failure leaves the current OMP state unchanged and reports the failure without changing execution | FR-004, FR-007 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_write_failure_preserves_active_state`) |
 | A5 | An active OMP run advances the shared working ship at its deterministic cadence and restores the default working row on settle, abort, failure, or shutdown | FR-005 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_working_timer_is_managed_across_settle_and_shutdown`) |
-| A6 | Calm hides supported legacy custom-message and native built-in tool rows while genuine prompts and substantive responses remain visible | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_hide_without_semantic_mutation`) |
+| A6 | Calm hides supported legacy custom-message rows while native tools, genuine prompts, and substantive responses remain visible | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_leave_native_tools_untouched`) |
 | A7 | Calm off leaves OMP working and supported transcript rendering ordinary | FR-006 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_off_keeps_ordinary_working_surface`) |
-| A8 | Calm presentation does not alter tool arguments/results, model context, session records, or exports | FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_hide_without_semantic_mutation`) |
+| A8 | Calm presentation does not alter native tool execution, model context, session records, or exports | FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_supported_rows_leave_native_tools_untouched`) |
 | A9 | A missing OMP presentation method produces a diagnostic naming only that adapter while `/calm` and other adapters remain available | FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_adapter_failures_are_isolated_and_diagnosed`) |
 | A10 | An OMP transcript class without a supported renderer remains visible and is not removed through semantic or storage mutation | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_adapter_failures_are_isolated_and_diagnosed`) |
 | A11 | Existing Pi and Claude Code Calm policy, preference, sprite, and operational-input behavior remains green after OMP support is loaded | FR-010 | example | BLOCKED | `tests/fm-calm-claude-mod.test.sh`; Pi suite has an existing interactive export-DOM failure and missing installed Pi package evidence |
@@ -47,7 +47,7 @@ Each behavior is observable through the OMP extension registration and lifecycle
 
 - A write failure must not publish the new active state.
 - A timer must not survive `agent_end` or `session_shutdown`.
-- A native tool wrapper must pass unchanged params, abort signal, and update callback to `ctx.invokeTool`.
+- Native tools must remain host-owned and ordinary in OMP because no supported native tool-row renderer is available.
 - `on`, legacy `max`, `off`, absent, and unrecognized preference values must retain the shared interpretation.
 - Unsupported operational-user and assistant-working-note rows must remain ordinary in OMP 18.6.1.
 

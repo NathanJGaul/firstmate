@@ -3,7 +3,7 @@
 ## Decision: Use the native OMP extension module root and API seams that are present in OMP 18.6.1
 
 - OMP 18.6.1 discovers TypeScript modules from `<cwd>/.omp/extensions` without a separate install or trust prompt.
-- The extension factory receives `ExtensionAPI` with `registerCommand`, lifecycle `on`, `registerMessageRenderer`, `registerTool`, and runtime UI actions.
+- The extension factory receives `ExtensionAPI` with `registerCommand`, lifecycle `on`, `registerMessageRenderer`, and runtime UI actions.
 - `ExtensionUIContext.setWorkingMessage()` replaces the native working-row label and requests the host's ordinary working-row rendering.
 - `ExtensionContext.setInterval()` provides a managed timer cleared with `clearTimer()` and automatically cleaned on session shutdown.
 - `ExtensionContext.ui.setToolsExpanded()` can request the host's ordinary tool-row redraw, matching the existing Calm toggle strategy where OMP exposes it.
@@ -18,7 +18,7 @@
 ## Decision: Use OMP's supported presentation boundaries and diagnose the rest
 
 - `registerMessageRenderer(customType, renderer)` can control custom-message presentation, so the legacy Firstmate synthetic presentation entry can be zero-height while Calm is active when this seam is available.
-- `registerTool()` supports renderCall/renderResult and `ctx.invokeTool()` for delegating a same-name built-in. This permits a tool-row wrapper that preserves native execution while hiding only the supported call/result shell during Calm. Registration must occur only after current tool metadata is available and must skip a tool whose source is not the native built-in to avoid taking another extension's ownership.
+- OMP exposes no supported native tool-row renderer through the extension surface used here, so native tool rows remain ordinary and Calm does not claim same-name tools.
 - OMP does not expose `setWorkingVisible()` in its current `ExtensionUIContext`; `setWorkingMessage()` is the verified working-row seam. Calm therefore animates a one-line projection of the shared ship in OMP's native working row and does not claim a second editor widget or a hidden stock row.
 - OMP's `registerAssistantThinkingRenderer()` adds supplemental UI below already-visible thinking and cannot remove the host's thinking row. OMP has no generic user-row or transcript-container filter. Operational user rows and ordinary assistant working-note rows remain visible as an explicit unsupported boundary, with a diagnostic naming the missing seam rather than mutating messages or provider context.
 - Each adapter is installed independently and catches its own missing API or registration failure. The `/calm` command, shared preference, working row, and any other successful adapter remain available.
@@ -26,7 +26,7 @@
 ## Decision: Preserve model and session semantics by drawing only
 
 - `/calm` writes the existing preference atomically and changes only in-process presentation state.
-- Tool wrappers delegate to OMP's native same-name implementation through `ctx.invokeTool()` and do not alter arguments or results.
+- Native tool rows remain host-owned; Calm does not register same-name wrappers or alter tool arguments and results.
 - Message renderers return a presentation component only; they do not rewrite or remove stored messages.
 - The working animation is transient UI state driven by lifecycle events and managed timers; it creates no session entry or model content.
 
@@ -43,4 +43,3 @@
 - Official extension loading documentation: https://github.com/can1357/oh-my-pi/blob/main/docs/extension-loading.md.
 - Official extension API documentation: https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md.
 - OMP `ExtensionUIContext` types document `setWorkingMessage`, `setWidget`, and `setToolsExpanded`, but no `setWorkingVisible`.
-- OMP `ToolInfo` includes `name`, `description`, `parameters`, and `sourceInfo`, enabling native-owner checks before a wrapper is registered.

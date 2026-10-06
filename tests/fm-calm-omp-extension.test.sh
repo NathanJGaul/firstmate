@@ -105,7 +105,7 @@ JS
 
 test_omp_working_ship_projection_bounds
 
-test_omp_supported_rows_hide_without_semantic_mutation() {
+test_omp_supported_rows_leave_native_tools_untouched() {
   local home out
   home="$TMP_ROOT/home-a6"
   mkdir -p "$home/config"
@@ -115,45 +115,29 @@ import { pathToFileURL } from "node:url";
 process.env.FM_HOME = ${home@Q};
 const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a6");
 const renderers = new Map();
-const tools = [];
+let inspectedNativeTools = false;
+let registeredTools = 0;
 const events = new Map();
-const commands = new Map();
-const nativeCall = { render: () => ["native-call"] };
-const nativeResult = { render: () => ["native-result"] };
 const pi = {
   on(name, handler) { events.set(name, handler); },
-  registerCommand(name, command) { commands.set(name, command); },
   registerMessageRenderer(name, renderer) { renderers.set(name, renderer); },
-  getAllTools() { return [
-    { name: "read", description: "native read", parameters: { type: "object" }, sourceInfo: { source: "builtin" }, renderCall() { return nativeCall; }, renderResult() { return nativeResult; } },
-    { name: "bash", description: "foreign bash", parameters: { type: "object" }, sourceInfo: { source: "extension" } },
-    { name: "edit", description: "unowned edit", parameters: { type: "object" } },
-  ]; },
-  registerTool(tool) { tools.push(tool); },
+  getAllTools() { inspectedNativeTools = true; return [{ name: "read", description: "native read", parameters: { type: "object" }, sourceInfo: { source: "builtin" } }]; },
+  registerTool() { registeredTools += 1; },
 };
 extension.default(pi);
 await events.get("session_start")({}, { ui: { setWorkingMessage() {} } });
 if (!renderers.has("firstmate-synthetic-input-presentation")) throw new Error("legacy custom-message renderer was not registered");
 const hidden = renderers.get("firstmate-synthetic-input-presentation")({ content: "internal", customType: "firstmate-synthetic-input-presentation" }, {}, {});
 if (!hidden || hidden.render(80).length !== 0) throw new Error("Calm-on legacy custom row was not hidden");
-const read = tools.find((tool) => tool.name === "read");
-if (!read) throw new Error("native read wrapper was not registered");
-if (tools.some((tool) => tool.name === "bash")) throw new Error("foreign bash tool was claimed by Calm");
-if (tools.some((tool) => tool.name === "edit")) throw new Error("tool without builtin ownership metadata was claimed by Calm");
-if (read.renderCall?.().render(80).length !== 0 || read.renderResult?.().render(80).length !== 0) throw new Error("Calm-on native tool rows were not hidden");
-await commands.get("calm").handler("", { ui: { setWorkingMessage() {} } });
-if (read.renderCall?.().render(80)[0] !== "native-call" || read.renderResult?.().render(80)[0] !== "native-result") throw new Error("Calm-off native tool rows did not restore their native renderers");
-let delegated = false;
-const result = await read.execute("call-1", { path: "file" }, "signal", "updates", { invokeTool: async (params, options) => { delegated = params.path === "file" && options.signal === "signal" && options.onUpdate === "updates"; return { content: [{ type: "text", text: "ok" }] }; } });
-if (!delegated || result?.content?.[0]?.text !== "ok") throw new Error("native tool wrapper did not preserve execution inputs and result");
+if (inspectedNativeTools || registeredTools !== 0) throw new Error("Calm claimed native tool presentation without a supported renderer seam");
 console.log("a6-ok");
 JS
   out=$(run_node "$TMP_ROOT/a6.mjs" 2>&1) || fail "A6 supported rows: $out"
   assert_contains "$out" "a6-ok" "A6 supported rows did not complete"
-  pass "OMP hides only supported Calm rows and delegates native tool execution"
+  pass "OMP hides supported legacy rows and leaves native tools untouched"
 }
 
-test_omp_supported_rows_hide_without_semantic_mutation
+test_omp_supported_rows_leave_native_tools_untouched
 
 test_calm_toggle_off_restores_stock_and_clears_timer() {
   local home out
@@ -173,7 +157,7 @@ const timers = [];
 const redraws = [];
 let expanded = true;
 const context = { ui: { setWorkingMessage(message) { messages.push(message); }, notify() {}, getToolsExpanded() { return expanded; }, setToolsExpanded(next) { redraws.push(next); expanded = next; } }, setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; }, clearTimer(timer) { cleared.push(timer); } };
-const pi = { on(name, handler) { events.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, registerMessageRenderer() {}, getAllTools() { return []; }, registerTool() {} };
+const pi = { on(name, handler) { events.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, registerMessageRenderer() {} };
 extension.default(pi);
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
@@ -226,13 +210,14 @@ test_calm_working_timer_is_managed_across_settle_and_shutdown() {
   cat >"$TMP_ROOT/a5.mjs" <<JS
 import { pathToFileURL } from "node:url";
 process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
 const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a5");
 const events = new Map();
 const intervals = [];
 const cleared = [];
 const messages = [];
 const context = { ui: { setWorkingMessage(message) { messages.push(message); } }, setInterval(callback) { const timer = { callback }; intervals.push(timer); return timer; }, clearTimer(timer) { cleared.push(timer); } };
-const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {}, registerMessageRenderer() {}, getAllTools() { return []; }, registerTool() {} };
+const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {}, registerMessageRenderer() {} };
 extension.default(pi);
 await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
@@ -298,7 +283,7 @@ await events.get("session_start")({}, context);
 await events.get("agent_start")({}, context);
 console.error = previousError;
 if (!commands.has("calm")) throw new Error("preference command was lost with unsupported OMP seams");
-for (const name of ["legacy custom-message renderer", "native built-in tool wrappers", "generic transcript-row renderer", "working-message timer"]) {
+for (const name of ["legacy custom-message renderer", "generic transcript-row renderer", "working-message timer"]) {
   if (!diagnostics.some((line) => line.includes(name))) throw new Error("missing diagnostic for " + name);
 }
 console.log("a9-ok " + diagnostics.length);

@@ -45,51 +45,23 @@ type OmpExtensionContext = {
 
 type OmpCommandContext = OmpExtensionContext;
 
-type OmpToolRenderer = (...args: unknown[]) => unknown;
-
-type OmpToolInfo = {
-  name: string;
-  description: string;
-  parameters: unknown;
-  sourceInfo?: { source?: string };
-  renderCall?: OmpToolRenderer;
-  renderResult?: OmpToolRenderer;
-};
-
-type OmpToolContext = OmpExtensionContext & {
-  invokeTool?: (params: Record<string, unknown>, options?: { signal?: unknown; onUpdate?: unknown }) => Promise<unknown>;
-};
-
-type OmpToolDefinition = {
-  name: string;
-  label: string;
-  description: string;
-  parameters: unknown;
-  execute: (toolCallId: string, params: Record<string, unknown>, signal: unknown, onUpdate: unknown, ctx: OmpToolContext) => Promise<unknown>;
-  renderCall?: OmpToolRenderer;
-  renderResult?: OmpToolRenderer;
-};
-
 type OmpMessageRenderer = (message: { customType?: string; content?: unknown }, options: unknown, theme: unknown) => unknown;
 
 type OmpExtensionApi = {
   on?: (event: string, handler: (event: unknown, ctx: OmpExtensionContext) => unknown) => void;
   registerCommand?: (name: string, command: { description: string; handler: (args: string, ctx: OmpCommandContext) => Promise<void> | void }) => void;
   registerMessageRenderer?: (customType: string, renderer: OmpMessageRenderer) => void;
-  getAllTools?: () => OmpToolInfo[];
-  registerTool?: (tool: OmpToolDefinition) => void;
 };
 
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionRoot = resolve(dirname(extensionFile), "../..");
 const sharedPolicyRoot = resolve(extensionRoot, ".claude/mods/firstmate-calm");
 const preferencePath = calmPreferencePath(process.env, sharedPolicyRoot);
-const DEFAULT_WORKING_MESSAGE_WIDTH = 40;
 const WORKING_MESSAGE_MARGIN = 2;
 
 function workingMessageWidth(): number {
   const columns = process.stdout.columns;
-  if (typeof columns !== "number" || !Number.isFinite(columns)) return DEFAULT_WORKING_MESSAGE_WIDTH;
+  if (typeof columns !== "number" || !Number.isFinite(columns)) return 0;
   return Math.max(0, Math.floor(columns) - WORKING_MESSAGE_MARGIN);
 }
 
@@ -168,8 +140,6 @@ export default function (pi: OmpExtensionApi): void {
   let workingTimer: unknown;
   let latestContext: OmpExtensionContext | undefined;
   const workingShip: CalmWorkingShipSprite = createCalmWorkingShipSprite();
-  let nativeToolAdaptersInstalled = false;
-  const nativeToolNames = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
   const installLegacyMessageRenderer = (): void => {
     if (!pi.registerMessageRenderer) throw new Error("OMP extension API does not expose registerMessageRenderer");
@@ -177,39 +147,6 @@ export default function (pi: OmpExtensionApi): void {
       if (!calmOmpPresentationHides(calmActive, "synthetic-user")) return undefined;
       return createEmptyCalmComponent();
     });
-  };
-
-  const installNativeToolAdapters = (): void => {
-    if (nativeToolAdaptersInstalled) return;
-    if (!pi.getAllTools) throw new Error("OMP extension API does not expose getAllTools");
-    if (!pi.registerTool) throw new Error("OMP extension API does not expose registerTool");
-    const tools = pi.getAllTools();
-    for (const name of nativeToolNames) {
-      const native = tools.find((tool) => tool.name === name);
-      if (!native) continue;
-      if (native.sourceInfo?.source !== "builtin") continue;
-      installCalmAdapter(`native ${name} tool wrapper`, () => {
-        if (!native.renderCall || !native.renderResult) {
-          throw new Error("the native tool renderers are unavailable for delegation");
-        }
-        const nativeRenderCall = native.renderCall;
-        const nativeRenderResult = native.renderResult;
-        const wrapper: OmpToolDefinition = {
-          name: native.name,
-          label: native.name,
-          description: native.description,
-          parameters: native.parameters,
-          async execute(toolCallId, params, signal, onUpdate, ctx) {
-            if (!ctx.invokeTool) throw new Error(`OMP native tool ${name} cannot be delegated: invokeTool is unavailable`);
-            return ctx.invokeTool(params, { signal, onUpdate });
-          },
-          renderCall: (...args) => calmActive ? createEmptyCalmComponent() : nativeRenderCall(...args),
-          renderResult: (...args) => calmActive ? createEmptyCalmComponent() : nativeRenderResult(...args),
-        };
-        pi.registerTool(wrapper);
-      });
-    }
-    nativeToolAdaptersInstalled = true;
   };
 
   installCalmAdapter("legacy custom-message renderer", installLegacyMessageRenderer);
@@ -280,7 +217,6 @@ export default function (pi: OmpExtensionApi): void {
     if (!pi.on) throw new Error("OMP extension API does not expose on");
     pi.on("session_start", (_event, ctx) => {
       calmActive = loadCalmPreference();
-      if (calmActive) installCalmAdapter("native built-in tool wrappers", installNativeToolAdapters);
       agentRunActive = false;
       workingShip.reset();
       latestContext = ctx;
@@ -305,9 +241,6 @@ export default function (pi: OmpExtensionApi): void {
           return;
         }
         calmActive = next;
-        if (next) {
-          installCalmAdapter("native built-in tool wrappers", installNativeToolAdapters);
-        }
         if (latestContext && agentRunActive) {
           if (next) startWorkingPresentation(latestContext);
           else refreshWorkingMessage(latestContext);

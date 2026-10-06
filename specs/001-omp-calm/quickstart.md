@@ -15,7 +15,7 @@ bin/fm-test-run.sh tests/fm-calm-claude-mod.test.sh
 bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh
 ```
 
-Expected result: the OMP and Claude selected scripts report zero failures. The Pi script is the cross-harness regression and must also be green when its installed Pi package and current export renderer are available; any baseline limitation is recorded in `docs/verification/runtime-backends.md`. The OMP test exercises `/calm` preference toggling, lifecycle timer cleanup, the shared sprite projection, native-tool delegation, adapter diagnostics, and the preservation boundary through the extension's public registration contract.
+Expected result: the OMP and Claude selected scripts report zero failures. The Pi script is the cross-harness regression and must also be green when its installed Pi package and current export renderer are available; any baseline limitation is recorded in `docs/verification/runtime-backends.md`. The OMP test exercises `/calm` preference toggling, lifecycle timer cleanup, the shared sprite projection, ordinary native-tool preservation, adapter diagnostics, and the presentation boundary through the extension's public registration contract.
 
 ## Maintainer smoke check
 

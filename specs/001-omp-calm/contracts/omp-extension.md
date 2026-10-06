@@ -19,10 +19,6 @@
 - `agent_start`: if active, start the one managed working-message timer.
 - `agent_end` and `session_shutdown`: clear the timer and restore OMP's default working message.
 
-## Tool delegation
-
-A built-in tool wrapper copies OMP's `ToolInfo` schema and description, keeps the original name, and calls `ctx.invokeTool` with unchanged params, abort signal, and update callback. Its render methods return the native component while inactive and a zero-height component while active.
-
 ## Diagnostics
 
 Each unavailable adapter reports its own name and missing OMP method. An unavailable adapter never prevents command registration, preference handling, working presentation, or other adapters from loading.

@@ -24,7 +24,7 @@ Add a native OMP extension under `.omp/extensions` that owns the `/calm` command
 
 **Performance Goals**: Calm timer updates must remain bounded to the shared 220 ms sprite cadence and stop when the logical run ends; no per-row subprocess or filesystem access
 
-**Constraints**: OMP exposes `setWorkingMessage` but not `setWorkingVisible` or a generic transcript filter; unsupported rows must remain ordinary; tool wrappers must delegate native execution and avoid foreign tool ownership; no model, context, session, export, or installed-binary mutation
+**Constraints**: OMP exposes `setWorkingMessage` but not `setWorkingVisible`, a generic transcript filter, or a native tool-row renderer; unsupported rows must remain ordinary; no model, context, session, export, or installed-binary mutation
 
 **Scale/Scope**: One OMP extension, shared Calm policy/sprite helpers, one focused behavior test, two maintained prose surfaces, and one maintainer-verification record
 
@@ -39,7 +39,7 @@ The generated constitution is still the Spec-Kit placeholder and contains no app
 ## Research Summary
 
 - OMP native discovery loads `.omp/extensions/*.ts` from the current project.
-- `setWorkingMessage`, managed timers, `registerMessageRenderer`, and `registerTool`/`ctx.invokeTool` are the supported seams used by this plan.
+- `setWorkingMessage`, managed timers, and `registerMessageRenderer` are the supported seams used by this plan.
 - OMP has no current generic user-row/transcript filter and no `setWorkingVisible`; those boundaries remain visible and are diagnosed.
 - The shared sprite and pure presentation policy remain the single source of truth.
 
@@ -93,14 +93,12 @@ docs/
 - `CalmPreference`: existing file value `on`, `off`, or legacy `max`; OMP reads and writes it exactly as the other supported harnesses do.
 - `OmpCalmState`: factory-local active flag, current logical run flag, animation instance, managed timer handle, and installed-adapter flags; it is transient and never serialized.
 - `OmpCalmAdapter`: independently installed seam with a stable name, install function, and diagnostic on unsupported or failed installation.
-- `OmpToolInfo`: OMP-provided native tool metadata used to copy the exact schema and verify `sourceInfo.source === "builtin"` before registering a delegating presentation wrapper.
 
 ## Interface Contracts
 
 - The default export from `.omp/extensions/fm-calm.ts` receives OMP `ExtensionAPI` and registers only through verified extension methods.
 - `/calm` toggles the shared preference, refreshes supported rows through OMP's redraw action, and reports persistence failures without changing the current active state.
 - OMP lifecycle handlers use `session_start`, `agent_start`, `agent_end`, and `session_shutdown`; no handler injects model messages or changes session entries.
-- A built-in tool wrapper delegates through `ctx.invokeTool(params, { signal, onUpdate })`; its render methods return the ordinary renderer when Calm is off and an empty OMP component when the controlled class is hidden.
 - The working adapter updates `ctx.ui.setWorkingMessage()` from the shared animation on the managed timer and restores the host default by passing `undefined` when Calm is off or the run ends.
 
 ## Implementation Phases
@@ -116,7 +114,7 @@ docs/
 1. Implement shared preference resolution and atomic persistence in the OMP extension.
 2. Register `/calm` and session lifecycle handlers.
 3. Install the managed animated working-message adapter.
-4. Install the legacy custom-message renderer and native built-in tool wrappers only when their APIs and ownership checks are available.
+4. Install the legacy custom-message renderer; leave OMP transcript classes without a supported renderer ordinary and diagnose that boundary.
 5. Emit one diagnostic per unsupported or failed seam and preserve all ordinary behavior.
 
 ### Phase 2: Documentation and verification
@@ -130,6 +128,6 @@ docs/
 
 - OMP-specific state is factory-local so child sessions and reloads do not share active presentation state.
 - Timers use OMP's managed timer API and are stopped on every terminal lifecycle path.
-- Tool wrappers copy the host-provided schema and delegate native execution, and they refuse to claim tools from another extension.
+- OMP does not claim native tools or unsupported transcript classes, so their execution and ordinary rendering remain host-owned.
 - Missing UI or renderer methods are caught per adapter and surfaced with the adapter name.
 - No unsupported transcript filtering, input interception, context mutation, persistence rewrite, or installed OMP patching is allowed.

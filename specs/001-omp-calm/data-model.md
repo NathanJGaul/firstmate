@@ -36,17 +36,6 @@ Current adapters:
 
 - `working-message`: managed timer plus `setWorkingMessage`.
 - `legacy-message`: `registerMessageRenderer` for the existing synthetic presentation custom type.
-- `built-in-tool-rows`: `registerTool` wrappers for native built-ins with `ctx.invokeTool` delegation and empty render components while active.
 - `operational-user-row`: intentionally unsupported in OMP 18.6.1 because no generic user-row renderer exists; diagnostic only.
 - `assistant-working-note`: intentionally unsupported in OMP 18.6.1 because the assistant-thinking renderer is supplemental only; diagnostic only.
 
-## OmpToolInfo
-
-The OMP runtime supplies:
-
-- `name`;
-- `description`;
-- `parameters` schema;
-- `sourceInfo.source` and `sourceInfo.path`.
-
-A tool wrapper may be registered only when the source is the native built-in. A foreign extension's same-name tool remains untouched.
