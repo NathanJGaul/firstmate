@@ -337,6 +337,9 @@ const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a12");
 const events = new Map();
 const timers = [];
 const cleared = [];
+const diagnostics = [];
+const previousError = console.error;
+console.error = (message) => diagnostics.push(String(message));
 let frameWrites = 0;
 let failFrame = false;
 const context = {
@@ -358,15 +361,102 @@ await events.get("agent_start")({}, context);
 if (frameWrites !== 1 || timers.length !== 1) throw new Error("active run did not render its first frame");
 failFrame = true;
 timers[0].callback();
+timers[0].callback();
 if (cleared.length !== 0) throw new Error("frame failure discarded the managed timer");
 failFrame = false;
 timers[0].callback();
-if (frameWrites !== 3 || cleared.length !== 0) throw new Error("frame update did not retry through the retained timer");
+console.error = previousError;
+if (frameWrites !== 4 || cleared.length !== 0) throw new Error("frame update did not retry through the retained timer");
+if (diagnostics.filter((line) => line.includes("working-message") && line.includes("frame failed")).length !== 1) {
+  throw new Error("repeated frame failures were not diagnosed once");
+}
 console.log("a12-ok");
 JS
   out=$(run_node "$TMP_ROOT/a12.mjs" 2>&1) || fail "A12 frame update retry: $out"
   assert_contains "$out" "a12-ok" "A12 frame update retry did not complete"
   pass "OMP retries failed working-message frames without dropping the timer"
+}
+
+test_calm_pending_agent_start_retries_after_timer_clear_failure() {
+  local home out
+  home="$TMP_ROOT/home-a13"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a13.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a13");
+const events = new Map();
+const intervals = [];
+const cleared = [];
+const messages = [];
+let clearAttempts = 0;
+const context = {
+  ui: { setWorkingMessage(message) { messages.push(message); } },
+  setInterval(callback) { const timer = { callback }; intervals.push(timer); return timer; },
+  clearTimer(timer) {
+    cleared.push(timer);
+    clearAttempts += 1;
+    if (clearAttempts < 3) throw new Error("clear is still failing");
+  },
+};
+const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {}, registerMessageRenderer() {} };
+extension.default(pi);
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+await events.get("agent_end")({}, context);
+if (intervals.length !== 1 || cleared.length !== 1 || messages.at(-1) !== undefined) {
+  throw new Error("terminal cleanup did not retain the failed timer cleanup state");
+}
+await events.get("agent_start")({}, context);
+if (intervals.length !== 1) throw new Error("next agent_start was not held for cleanup retry");
+intervals[0].callback();
+if (cleared.length !== 3 || intervals.length !== 2 || typeof messages.at(-1) !== "string") {
+  throw new Error("pending agent_start did not resume after timer cleanup");
+}
+console.log("a13-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a13.mjs" 2>&1) || fail "A13 pending agent start: $out"
+  assert_contains "$out" "a13-ok" "A13 pending agent start did not complete"
+  pass "OMP resumes a pending run after retained timer cleanup succeeds"
+}
+
+test_calm_unusable_width_leaves_stock_working_surface() {
+  local home out
+  home="$TMP_ROOT/home-a14"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a14.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 2 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a14");
+const diagnostics = [];
+const previousError = console.error;
+console.error = (message) => diagnostics.push(String(message));
+const events = new Map();
+const messages = [];
+const intervals = [];
+const context = {
+  ui: { setWorkingMessage(message) { messages.push(message); } },
+  setInterval(callback) { intervals.push(callback); return callback; },
+  clearTimer() {},
+};
+const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {}, registerMessageRenderer() {} };
+extension.default(pi);
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+console.error = previousError;
+if (messages.length !== 0 || intervals.length !== 0) throw new Error("too-narrow Calm replaced the stock working surface");
+if (!diagnostics.some((line) => line.includes("working-message width") && line.includes("too narrow"))) {
+  throw new Error("too-narrow Calm width was not diagnosed");
+}
+console.log("a14-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a14.mjs" 2>&1) || fail "A14 unusable width: $out"
+  assert_contains "$out" "a14-ok" "A14 unusable width did not complete"
+  pass "OMP leaves the stock working surface when no usable width exists"
 }
 
 test_omp_adapter_failures_are_isolated_and_diagnosed() {
@@ -450,6 +540,8 @@ test_calm_working_timer_is_managed_across_settle_and_shutdown
 test_calm_off_keeps_ordinary_working_surface
 test_calm_working_message_restore_is_retryable
 test_calm_frame_update_failure_is_retryable
+test_calm_pending_agent_start_retries_after_timer_clear_failure
+test_calm_unusable_width_leaves_stock_working_surface
 test_omp_adapter_failures_are_isolated_and_diagnosed
 test_omp_adapter_invocation_failures_are_isolated
 

@@ -2,7 +2,7 @@
 feature: 001-omp-calm
 loop: outside-in
 profile: unavailable
-spec_criteria: 11
+spec_criteria: 14
 planned_at: 6f0f1399
 updated_at: 6f0f1399
 suite_baseline: green
@@ -27,6 +27,9 @@ Each behavior is observable through the OMP extension registration and lifecycle
 | A9 | A missing OMP presentation method produces a diagnostic naming only that adapter while `/calm` and other adapters remain available | FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_adapter_failures_are_isolated_and_diagnosed`) |
 | A10 | An OMP transcript class without a supported renderer remains visible and is not removed through semantic or storage mutation | FR-003, FR-004 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_omp_adapter_failures_are_isolated_and_diagnosed`) |
 | A11 | Existing Pi and Claude Code Calm policy, preference, sprite, and operational-input behavior remains green after OMP support is loaded | FR-010 | example | BLOCKED | `tests/fm-calm-claude-mod.test.sh`; Pi suite has an existing interactive export-DOM failure and missing installed Pi package evidence |
+| A12 | A failed working-message frame update remains retryable and emits at most one diagnostic for the failing seam | FR-005, FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_frame_update_failure_is_retryable`) |
+| A13 | A new agent start is preserved and resumes after a retained timer cleanup succeeds | FR-005 | contract | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_pending_agent_start_retries_after_timer_clear_failure`) |
+| A14 | A non-positive usable working width leaves OMP's stock working surface untouched and reports the width seam | FR-005, FR-007 | example | DONE | `tests/fm-calm-omp-extension.test.sh` (`test_calm_unusable_width_leaves_stock_working_surface`) |
 
 ## Inner loop: unit behaviors
 

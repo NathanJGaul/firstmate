@@ -2,9 +2,9 @@
 feature: 001-omp-calm
 verified_at: 6f0f1399
 verdict: PASS_WITH_GAPS
-criteria_checked: 11
-criteria_covered: 11
-behaviors_done: 10
+criteria_checked: 14
+criteria_covered: 13
+behaviors_done: 13
 behaviors_blocked: 1
 mutation: unavailable
 ---
@@ -20,14 +20,14 @@ mutation: unavailable
 | Behavior group | Evidence | Classification |
 | --- | --- | --- |
 | A1, A2, U2, A6 | `tdd/cycle-log.md` records a decisive red command before implementation and a later green result | PROVEN from the recorded log; commit ordering unavailable |
-| A3, A4, A5, A7, A8, A9, A10, U3 | Executable tests pass and are mapped in `tdd/test-list.md`; no independent red evidence exists | TEST_AFTER |
+| A3, A4, A5, A7, A8, A9, A10, A12, A13, A14, U3 | Executable tests pass and are mapped in `tdd/test-list.md`; no independent red evidence exists | TEST_AFTER |
 | A11 | Claude regression passes; Pi suite has a concrete interactive export-DOM failure and missing package skips | BLOCKED |
 
 The branch contains feature and review commits, but none preserve per-cycle red-green ordering, so git history cannot upgrade the recorded red evidence to PROVEN test-first ordering.
 
 ## Verification runs
 
-- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 10 checks and records the custom-entry remount limitation.
+- `bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh tests/fm-calm-claude-mod.test.sh`: 2 selected scripts, 0 failures, 3.533 seconds; the OMP script executes 14 checks (A1-A10, A12-A14, and U2) and records the custom-entry remount limitation.
 - `bin/fm-doc-audience-check.sh`: `ok surfaces=102 local_links=454`.
 - `bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh`: compatibility cases report the installed Pi package is absent; the interactive run fails at `rendered export DOM violated the Calm conversation boundary`.
 - OMP `18.6.1` inactive and active `--no-session --no-tools -p` smokes load the extension, report the deliberate generic-row diagnostic, and exit cleanly.
@@ -54,9 +54,9 @@ No mutation tool is available in this checkout. Deliberate mutants were not run 
 | --- | --- | --- |
 | FR-001/FR-002 | A1-A4 | covered |
 | FR-003/FR-004 | A6, A8, A10 | covered with OMP seam limitation |
-| FR-005 | A5, U2 | covered |
+| FR-005 | A5, A12, A13, A14, U2 | covered |
 | FR-006 | A3, A7 | covered |
-| FR-007 | A4, A9, U3 | covered |
+| FR-007 | A4, A9, A12, A14, U3 | covered |
 | FR-008 | OMP supported visibility boundary; Claude shared policy regression | covered |
 | FR-009 | OMP focused suite, Calm docs, runtime verification | covered |
 | FR-010 | Claude passes; Pi is blocked by the observed baseline failure | blocked |

@@ -64,7 +64,8 @@ function agentEndWillContinue(event: unknown): boolean {
 function workingMessageWidth(): number | undefined {
   const columns = process.stdout.columns;
   if (typeof columns !== "number" || !Number.isFinite(columns)) return undefined;
-  return Math.max(0, Math.floor(columns) - WORKING_MESSAGE_MARGIN);
+  const width = Math.floor(columns) - WORKING_MESSAGE_MARGIN;
+  return width > 0 ? width : undefined;
 }
 
 function loadCalmPreference(): boolean {
@@ -90,33 +91,37 @@ function persistCalmPreference(active: boolean): void {
   }
 }
 
-function notify(ctx: OmpCommandContext, message: string, level: string): void {
-  installCalmAdapter("notification", () => {
-    if (!ctx.ui?.notify) throw new Error("OMP extension API does not expose ui.notify");
-    ctx.ui.notify(message, level);
-  });
-}
-
 function clearManagedTimer(ctx: OmpExtensionContext, timer: unknown): void {
   if (!ctx.clearTimer) throw new Error("OMP extension API does not expose clearTimer");
   ctx.clearTimer(timer);
 }
 
 export default function (pi: OmpExtensionApi): void {
+  const reportedAdapterFailures = new Set<string>();
+  const installAdapter = (name: string, install: () => void, key = name): boolean => installCalmAdapter(name, install, (diagnostic) => {
+    if (reportedAdapterFailures.has(key)) return;
+    reportedAdapterFailures.add(key);
+    console.error(diagnostic);
+  });
+  const notify = (ctx: OmpCommandContext, message: string, level: string): void => {
+    installAdapter("notification", () => {
+      if (!ctx.ui?.notify) throw new Error("OMP extension API does not expose ui.notify");
+      ctx.ui.notify(message, level);
+    });
+  };
   let calmActive = loadCalmPreference();
   let workingMessageAdapterAvailable: boolean | undefined;
-  let workingMessageWidthAvailable: boolean | undefined;
   let workingTimerAdapterAvailable: boolean | undefined;
   const ensureWorkingMessageAdapter = (ctx: OmpExtensionContext): boolean => {
     if (workingMessageAdapterAvailable !== undefined) return workingMessageAdapterAvailable;
-    workingMessageAdapterAvailable = installCalmAdapter("working-message", () => {
+    workingMessageAdapterAvailable = installAdapter("working-message", () => {
       if (!ctx.ui?.setWorkingMessage) throw new Error("OMP extension API does not expose ui.setWorkingMessage");
     });
     return workingMessageAdapterAvailable;
   };
   const ensureWorkingTimerAdapter = (ctx: OmpExtensionContext): boolean => {
     if (workingTimerAdapterAvailable !== undefined) return workingTimerAdapterAvailable;
-    workingTimerAdapterAvailable = installCalmAdapter("working-message timer", () => {
+    workingTimerAdapterAvailable = installAdapter("working-message timer", () => {
       if (!ctx.setInterval || !ctx.clearTimer) {
         throw new Error("OMP extension API does not expose the managed setInterval/clearTimer pair");
       }
@@ -126,14 +131,11 @@ export default function (pi: OmpExtensionApi): void {
   const getWorkingMessageWidth = (): number | undefined => {
     const width = workingMessageWidth();
     if (width === undefined) {
-      if (workingMessageWidthAvailable !== false) {
-        workingMessageWidthAvailable = installCalmAdapter("working-message width", () => {
-          throw new Error("process.stdout.columns is unavailable or non-finite");
-        });
-      }
+      installAdapter("working-message width", () => {
+        throw new Error("process.stdout.columns is unavailable, non-finite, or too narrow");
+      });
       return undefined;
     }
-    workingMessageWidthAvailable = true;
     return width;
   };
   let agentRunActive = false;
@@ -141,6 +143,8 @@ export default function (pi: OmpExtensionApi): void {
   let workingTimerContext: OmpExtensionContext | undefined;
   let workingMessageOwned = false;
   let latestContext: OmpExtensionContext | undefined;
+  let sessionId = 0;
+  let pendingAgentStart: { context: OmpExtensionContext; sessionId: number } | undefined;
   const workingShip: CalmWorkingShipSprite = createCalmWorkingShipSprite();
 
   const installLegacyMessageRenderer = (): void => {
@@ -151,10 +155,10 @@ export default function (pi: OmpExtensionApi): void {
     });
   };
 
-  installCalmAdapter("legacy custom-message renderer", installLegacyMessageRenderer);
+  installAdapter("legacy custom-message renderer", installLegacyMessageRenderer);
   // OMP deliberately has no generic transcript-row renderer. Keep this boundary
   // explicit and visible rather than pretending unsupported rows can be hidden.
-  installCalmAdapter("generic transcript-row renderer", () => {
+  installAdapter("generic transcript-row renderer", () => {
     throw new Error("OMP exposes no generic transcript-row renderer; unsupported rows remain visible");
   });
 
@@ -164,9 +168,9 @@ export default function (pi: OmpExtensionApi): void {
     const timerContext = workingTimerContext;
     let cleared = true;
     if (timer !== undefined) {
-      cleared = timerContext !== undefined && installCalmAdapter("working-message timer", () => {
+      cleared = timerContext !== undefined && installAdapter("working-message timer", () => {
         clearManagedTimer(timerContext, timer);
-      });
+      }, "working-message clearTimer");
       if (cleared) {
         workingTimer = undefined;
         workingTimerContext = undefined;
@@ -178,7 +182,7 @@ export default function (pi: OmpExtensionApi): void {
 
   const setWorkingMessage = (ctx: OmpExtensionContext, message?: string): boolean => {
     if (!ensureWorkingMessageAdapter(ctx)) return false;
-    const applied = installCalmAdapter("working-message", () => {
+    const applied = installAdapter("working-message", () => {
       if (message === undefined) ctx.ui!.setWorkingMessage!();
       else ctx.ui!.setWorkingMessage!(message);
     });
@@ -205,7 +209,9 @@ export default function (pi: OmpExtensionApi): void {
   const startWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
     latestContext = ctx;
     if (!agentRunActive && (workingTimer !== undefined || workingMessageOwned)) {
+      pendingAgentStart = { context: ctx, sessionId };
       if (!restoreStockWorkingMessage(ctx)) return false;
+      pendingAgentStart = undefined;
     }
     agentRunActive = true;
     const workingMessageAvailable = ensureWorkingMessageAdapter(ctx);
@@ -213,11 +219,19 @@ export default function (pi: OmpExtensionApi): void {
     if (!workingMessageAvailable || !refreshWorkingMessage(ctx)) return false;
     if (!calmActive || workingTimer !== undefined || !workingTimerAvailable) return true;
     const callback = (): void => {
-      workingShip.tick();
       const activeContext = latestContext ?? ctx;
+      if (!agentRunActive) {
+        const pending = pendingAgentStart;
+        if (restoreStockWorkingMessage(activeContext) && pending?.sessionId === sessionId) {
+          pendingAgentStart = undefined;
+          startWorkingPresentation(pending.context);
+        }
+        return;
+      }
+      workingShip.tick();
       if (!refreshWorkingMessage(activeContext) && !workingMessageOwned) clearWorkingTimer();
     };
-    const timerStarted = installCalmAdapter("working-message timer", () => {
+    const timerStarted = installAdapter("working-message timer", () => {
       if (!ctx.setInterval) throw new Error("OMP extension API does not expose setInterval");
       workingTimer = ctx.setInterval(callback, CALM_WORKING_SHIP_TICK_MS);
       workingTimerContext = ctx;
@@ -231,13 +245,16 @@ export default function (pi: OmpExtensionApi): void {
 
   const stopWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
     agentRunActive = false;
+    pendingAgentStart = undefined;
     latestContext = ctx;
     return restoreStockWorkingMessage(ctx);
   };
 
-  installCalmAdapter("session lifecycle", () => {
+  installAdapter("session lifecycle", () => {
     if (!pi.on) throw new Error("OMP extension API does not expose on");
     pi.on("session_start", (_event, ctx) => {
+      sessionId += 1;
+      pendingAgentStart = undefined;
       calmActive = loadCalmPreference();
       agentRunActive = false;
       workingShip.reset();
@@ -251,7 +268,7 @@ export default function (pi: OmpExtensionApi): void {
     pi.on("session_shutdown", (_event, ctx) => stopWorkingPresentation(ctx));
   });
 
-  installCalmAdapter("command", () => {
+  installAdapter("command", () => {
     if (!pi.registerCommand) throw new Error("OMP extension API does not expose registerCommand");
     pi.registerCommand("calm", {
       description: "Toggle Firstmate Calm presentation.",
@@ -271,6 +288,7 @@ export default function (pi: OmpExtensionApi): void {
             ? startWorkingPresentation(latestContext)
             : refreshWorkingMessage(latestContext);
         } else if (!next) {
+          pendingAgentStart = undefined;
           presentationSucceeded = restoreStockWorkingMessage(ctx);
         }
         notify(

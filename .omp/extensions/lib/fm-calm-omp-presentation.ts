@@ -61,7 +61,7 @@ export function renderCalmWorkingShipMessage(sprite: CalmWorkingShipSprite, widt
   return renderCalmWorkingShip(sprite, width).join("\n");
 }
 
-/** One diagnostic per unsupported or failed OMP presentation seam. */
+/** Report an unsupported or failed OMP presentation seam. */
 export function reportCalmAdapterFailure(name: string, error: unknown, report = console.error): void {
   const detail = error instanceof Error ? error.message : String(error);
   report(`Firstmate Calm: ${name} presentation adapter unavailable, skipping. ${detail}`);
