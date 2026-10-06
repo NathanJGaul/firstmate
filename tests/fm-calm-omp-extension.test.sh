@@ -270,6 +270,105 @@ JS
   pass "OMP Calm off leaves the ordinary working surface untouched"
 }
 
+test_calm_working_message_restore_is_retryable() {
+  local home out
+  home="$TMP_ROOT/home-a8"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a8.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a8");
+const events = new Map();
+const commands = new Map();
+const messages = [];
+const notifications = [];
+const timers = [];
+const cleared = [];
+let failStockRestore = true;
+const context = {
+  ui: {
+    setWorkingMessage(message) {
+      if (message === undefined && failStockRestore) throw new Error("restore failed");
+      messages.push(message);
+    },
+    notify(message, level) { notifications.push({ message, level }); },
+  },
+  setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; },
+  clearTimer(timer) { cleared.push(timer); },
+};
+const pi = {
+  on(name, handler) { events.set(name, handler); },
+  registerCommand(name, command) { commands.set(name, command); },
+  registerMessageRenderer() {},
+};
+extension.default(pi);
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+if (timers.length !== 1) throw new Error("active run did not create a managed timer");
+await events.get("agent_end")({}, context);
+if (cleared.length !== 0) throw new Error("timer was cleared before failed stock restoration could succeed");
+await commands.get("calm").handler("", context);
+if (notifications.at(-1)?.level !== "warning" || !notifications.at(-1)?.message.includes("presentation update pending")) {
+  throw new Error("toggle off reported success after stock restoration failed");
+}
+if (cleared.length !== 0) throw new Error("failed stock restoration discarded the timer handle");
+failStockRestore = false;
+timers[0].callback();
+if (cleared.length !== 1 || messages.at(-1) !== undefined) throw new Error("failed stock restoration was not retried by the retained timer");
+console.log("a8-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a8.mjs" 2>&1) || fail "A8 working-message restoration: $out"
+  assert_contains "$out" "a8-ok" "A8 working-message restoration did not complete"
+  pass "OMP retries failed stock restoration and reports incomplete toggle cleanup"
+}
+
+test_calm_frame_update_failure_is_retryable() {
+  local home out
+  home="$TMP_ROOT/home-a12"
+  mkdir -p "$home/config"
+  printf 'on\n' >"$home/config/calm"
+  cat >"$TMP_ROOT/a12.mjs" <<JS
+import { pathToFileURL } from "node:url";
+process.env.FM_HOME = ${home@Q};
+Object.defineProperty(process.stdout, "columns", { configurable: true, value: 40 });
+const extension = await import(pathToFileURL(${EXTENSION@Q}).href + "?a12");
+const events = new Map();
+const timers = [];
+const cleared = [];
+let frameWrites = 0;
+let failFrame = false;
+const context = {
+  ui: {
+    setWorkingMessage(message) {
+      if (typeof message === "string") {
+        frameWrites += 1;
+        if (failFrame) throw new Error("frame failed");
+      }
+    },
+  },
+  setInterval(callback) { const timer = { callback }; timers.push(timer); return timer; },
+  clearTimer(timer) { cleared.push(timer); },
+};
+const pi = { on(name, handler) { events.set(name, handler); }, registerCommand() {}, registerMessageRenderer() {} };
+extension.default(pi);
+await events.get("session_start")({}, context);
+await events.get("agent_start")({}, context);
+if (frameWrites !== 1 || timers.length !== 1) throw new Error("active run did not render its first frame");
+failFrame = true;
+timers[0].callback();
+if (cleared.length !== 0) throw new Error("frame failure discarded the managed timer");
+failFrame = false;
+timers[0].callback();
+if (frameWrites !== 3 || cleared.length !== 0) throw new Error("frame update did not retry through the retained timer");
+console.log("a12-ok");
+JS
+  out=$(run_node "$TMP_ROOT/a12.mjs" 2>&1) || fail "A12 frame update retry: $out"
+  assert_contains "$out" "a12-ok" "A12 frame update retry did not complete"
+  pass "OMP retries failed working-message frames without dropping the timer"
+}
+
 test_omp_adapter_failures_are_isolated_and_diagnosed() {
   local home out
   home="$TMP_ROOT/home-a9"
@@ -349,6 +448,8 @@ test_calm_toggle_off_restores_stock_and_clears_timer
 test_calm_write_failure_preserves_active_state
 test_calm_working_timer_is_managed_across_settle_and_shutdown
 test_calm_off_keeps_ordinary_working_surface
+test_calm_working_message_restore_is_retryable
+test_calm_frame_update_failure_is_retryable
 test_omp_adapter_failures_are_isolated_and_diagnosed
 test_omp_adapter_invocation_failures_are_isolated
 

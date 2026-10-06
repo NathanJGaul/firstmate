@@ -187,10 +187,8 @@ export default function (pi: OmpExtensionApi): void {
   };
 
   const restoreStockWorkingMessage = (ctx: OmpExtensionContext): boolean => {
-    const timerCleared = clearWorkingTimer();
-    if (!workingMessageOwned) return timerCleared;
-    const restored = setWorkingMessage(ctx);
-    return timerCleared && restored;
+    if (workingMessageOwned && !setWorkingMessage(ctx)) return false;
+    return clearWorkingTimer();
   };
 
   const refreshWorkingMessage = (ctx: OmpExtensionContext): boolean => {
@@ -198,40 +196,43 @@ export default function (pi: OmpExtensionApi): void {
     if (!calmActive || !agentRunActive) return restoreStockWorkingMessage(ctx);
     const width = getWorkingMessageWidth();
     if (width === undefined) {
-      const wasOwned = workingMessageOwned;
-      const restored = restoreStockWorkingMessage(ctx);
-      return wasOwned && restored;
+      restoreStockWorkingMessage(ctx);
+      return false;
     }
     return setWorkingMessage(ctx, renderCalmWorkingShipMessage(workingShip, width));
   };
 
-  const startWorkingPresentation = (ctx: OmpExtensionContext): void => {
-    if (!agentRunActive && workingTimer !== undefined) {
-      clearWorkingTimer();
-      if (workingTimer !== undefined) return;
-    }
+  const startWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
     latestContext = ctx;
+    if (!agentRunActive && (workingTimer !== undefined || workingMessageOwned)) {
+      if (!restoreStockWorkingMessage(ctx)) return false;
+    }
     agentRunActive = true;
     const workingMessageAvailable = ensureWorkingMessageAdapter(ctx);
     const workingTimerAvailable = calmActive && ensureWorkingTimerAdapter(ctx);
-    if (!workingMessageAvailable || !refreshWorkingMessage(ctx)) return;
-    if (!calmActive || workingTimer !== undefined || !workingTimerAvailable) return;
+    if (!workingMessageAvailable || !refreshWorkingMessage(ctx)) return false;
+    if (!calmActive || workingTimer !== undefined || !workingTimerAvailable) return true;
     const callback = (): void => {
       workingShip.tick();
-      if (!refreshWorkingMessage(ctx)) clearWorkingTimer();
+      const activeContext = latestContext ?? ctx;
+      if (!refreshWorkingMessage(activeContext) && !workingMessageOwned) clearWorkingTimer();
     };
     const timerStarted = installCalmAdapter("working-message timer", () => {
       if (!ctx.setInterval) throw new Error("OMP extension API does not expose setInterval");
       workingTimer = ctx.setInterval(callback, CALM_WORKING_SHIP_TICK_MS);
       workingTimerContext = ctx;
     });
-    if (!timerStarted) workingTimerAdapterAvailable = false;
+    if (!timerStarted) {
+      workingTimerAdapterAvailable = false;
+      return false;
+    }
+    return true;
   };
 
-  const stopWorkingPresentation = (ctx: OmpExtensionContext): void => {
+  const stopWorkingPresentation = (ctx: OmpExtensionContext): boolean => {
     agentRunActive = false;
     latestContext = ctx;
-    restoreStockWorkingMessage(ctx);
+    return restoreStockWorkingMessage(ctx);
   };
 
   installCalmAdapter("session lifecycle", () => {
@@ -264,11 +265,19 @@ export default function (pi: OmpExtensionApi): void {
           return;
         }
         calmActive = next;
+        let presentationSucceeded = true;
         if (latestContext && agentRunActive) {
-          if (next) startWorkingPresentation(latestContext);
-          else refreshWorkingMessage(latestContext);
-        } else if (!next) restoreStockWorkingMessage(ctx);
-        notify(ctx, `Firstmate Calm: ${next ? "on" : "off"}`, "info");
+          presentationSucceeded = next
+            ? startWorkingPresentation(latestContext)
+            : refreshWorkingMessage(latestContext);
+        } else if (!next) {
+          presentationSucceeded = restoreStockWorkingMessage(ctx);
+        }
+        notify(
+          ctx,
+          `Firstmate Calm: ${next ? "on" : "off"}${presentationSucceeded ? "" : " (presentation update pending)"}`,
+          presentationSucceeded ? "info" : "warning",
+        );
       },
     });
   });

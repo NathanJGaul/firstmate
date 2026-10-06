@@ -17,8 +17,8 @@ The preference is the existing cross-harness file. OMP must not create a second 
 | active | boolean | factory/session | Controls presentation only. |
 | agentRunActive | boolean | factory/session | True from `agent_start` until terminal `agent_end` (without `willContinue: true`) or `session_shutdown`. |
 | animation | shared sprite state | factory | One instance survives hide/show within a session and resets at `session_start`. |
-| timer | managed timer handle or absent | active run | One timer while the working presentation is active; retain its handle until clearing succeeds before starting a replacement. |
-| workingMessageOwned | boolean | factory/session | Only a successful Calm working-message write grants ownership; stock restoration is skipped while this is false. |
+| timer | managed timer handle or absent | active run or pending cleanup | One timer while the working presentation is active; retain its handle until clearing succeeds before starting a replacement or completing cleanup. |
+| workingMessageOwned | boolean | factory/session | Only a successful Calm working-message write grants ownership; stock restoration is skipped while this is false, and a failed reset leaves ownership set for retry. |
 | adapter availability | independent booleans | factory | One failed seam does not disable other seams. |
 
 No field is persisted or appended to the transcript.
