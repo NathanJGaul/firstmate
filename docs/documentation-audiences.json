@@ -541,6 +541,62 @@
       "audience": "operator-current"
     },
     {
+      "path": "specs/001-omp-calm/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-omp-calm/checklist.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/checklists/requirements.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/contracts/omp-extension.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-omp-calm/data-model.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/plan.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/quickstart.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/research.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/001-omp-calm/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-omp-calm/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/001-omp-calm/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     },

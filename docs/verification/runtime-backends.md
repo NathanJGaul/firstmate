@@ -2494,3 +2494,15 @@ Without Firstmate's hooks, Herdr reported the question panel as `blocked`, which
 This live proof covers the watcher and queue boundary; it does not establish live daemon-consumer delivery.
 `bin/fm-test-run.sh tests/fm-daemon.test.sh` exercises that consumer routing separately with portable regressions for busy escalation and busy-bookkeeping failures in away and quiet mode.
 Repeat the hooked-worker check above before publication if watcher or task-inbox busy code changes; `bin/fm-test-run.sh tests/fm-task-inbox.test.sh` refreshes the portable ladder regressions.
+### Calm extension
+
+Verified on 2026-10-06 against `omp/18.6.1` on Linux with the tracked `.omp/extensions/fm-calm.ts` discovered from this project. The focused behavior contract and both inactive and active preference startup smokes passed:
+
+```sh
+bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh
+FM_HOME="$(mktemp -d)" omp --cwd "$PWD" --no-session --no-tools -p "exit without tools"
+home=$(mktemp -d); mkdir -p "$home/config"; printf 'on\n' >"$home/config/calm"
+FM_HOME="$home" omp --cwd "$PWD" --no-session --no-tools -p "exit without tools"
+```
+
+Both real OMP runs loaded the extension, reported the deliberate unsupported generic-row boundary, rendered OMP's ordinary `Working...` surface, and exited cleanly with `Captain, exiting.`. The active run produced no native-wrapper registration diagnostic because the extension does not register native wrappers; OMP native tools remain host-owned and ordinary. The focused suite covers shared preference persistence and restoration, preference-read recovery, deterministic shared-sprite bounds, managed timer cleanup, continuation handling, supported legacy rendering and mounted-component invalidation, native-tool preservation, write failures, retryable stock and frame cleanup, pending-run recovery, temporary timer-seam recovery, too-narrow width preservation, and independent bounded seam diagnostics. OMP exposes no generic transcript-row invalidation boundary, so unsupported rows remain ordinary; the toggle does not use tool expansion as an undocumented redraw mechanism.
