@@ -1,23 +1,37 @@
 # Calm-mode harness feasibility
 
-This document owns the version-scoped feasibility evidence, Pi transcript taxonomy, and supported-API boundaries for Firstmate calm mode.
+This document owns the version-scoped feasibility evidence, Pi transcript taxonomy, OMP extension-surface evidence, and supported-API boundaries for Firstmate calm mode.
 [`calm.md`](calm.md) owns the current user-facing `/calm` usage and limitation contract.
 
 ## Required extension surface
 
-A qualifying implementation must auto-load from the trusted project, persist the toggle choice for the effective Firstmate home across session starts and resumes, keep working activity visible, emit no Calm status row, redraw already-rendered controllable rows, remove supported hidden rows without gaps, restore ordinary rendering, and leave delivery, tool execution, model context, session storage, export and share operation, diagnostics, and expansion state unchanged.
+A qualifying implementation must auto-load from the trusted project, persist the toggle choice for the effective Firstmate home across session starts and resumes, keep working activity visible, emit no Calm status row, redraw already-rendered controllable rows where the harness exposes invalidation, remove supported hidden rows without gaps, restore ordinary rendering, and leave delivery, tool execution, model context, session storage, export and share operation, diagnostics, and expansion state unchanged. The OMP adapter calls the supported custom-message component's invalidation hook and requests a host redraw on preference changes, while its generic transcript boundary remains unavailable.
 The governing presentation policy allows genuine original user prompts, genuine user-facing assistant text, and working activity.
 Working activity may be presented through the harness's stock row or through a supported Calm-owned drawing, but Calm must leave the stock row untouched whenever Calm is off.
 Changing persisted context to remove hidden content, filtering provider context, patching installed harness code, or claiming coverage outside a supported renderer does not satisfy that boundary.
 
 ## Compatibility evidence
 
-[`calm.md`](calm.md#pi-compatibility) owns the current Pi compatibility contract.
+[`calm.md`](calm.md#pi-compatibility) owns the current Pi compatibility contract; [`calm.md`](calm.md#omp-oh-my-pi) owns the current OMP user-facing contract.
 Pi 0.81.1 was installed when Calm was first built, and Pi 0.82.0 was the later reverification target.
 The inspected Pi CHANGELOG shows no relevant presentation API introduced at either version, so those versions remain verification evidence rather than compatibility bounds.
 The exported classes used by the adapters (`AssistantMessageComponent` and `InteractiveMode`) are undocumented internals with no stated version guarantee.
 `tests/fm-calm-pi-extension.test.sh` records the installed Pi version as evidence without gating on it and covers both newer synthetic versions and an unavailable adapter seam.
 This host tracks Pi latest, so the version the evidence is pinned to moves; the [2026-09-07 record](#2026-09-07-pi-0851-renderer-and-export-dom-verification) owns the currently pinned version and the renderer comparison behind it.
+
+### OMP 18.6.1 extension surface
+
+The OMP feasibility pass was verified against `omp/18.6.1` on 2026-10-06. OMP auto-loads a project `.omp/extensions/<module>.ts` default factory and exposes the registration and lifecycle seams used here: `registerCommand`, `on("session_start")`, `on("agent_start")`, `on("agent_end")`, `on("session_shutdown")`, `registerMessageRenderer`, `ctx.ui.setWorkingMessage`, `ctx.ui.requestRender`, `ctx.setInterval`, and `ctx.clearTimer`. The exact extension API is documented in OMP's `docs/extensions.md`; no separately installed type package is required by the tracked extension.
+
+The OMP adapter uses `setWorkingMessage` rather than claiming a nonexistent `setWorkingVisible`, generic transcript filter, or native tool-row renderer. Its managed timer advances the shared sprite and restores the default message only on terminal lifecycle events and only when Calm owns the working surface; failed stock writes remain retryable, failed clears retain the handle and owning run, a new agent start becomes the active logical run before deferred cleanup completes, continuing events and presentation-only toggles preserve that run, and incomplete toggle cleanup is reported as a warning. A non-missing preference read failure retains the last known choice and emits one bounded diagnostic, while a temporarily unavailable working seam is retried on a later presentation attempt. Each frame measures the current terminal columns, leaves the stock row untouched with a diagnostic when width is unavailable or too narrow, and bounds repeated seam failures to one diagnostic per seam. Toggling Calm calls the mounted supported synthetic components' invalidation hooks and requests an OMP redraw without using OMP's unrelated tool-expansion action. Native tool rows and other unsupported transcript classes remain ordinary. The focused portable contract suite exercises preference parsing and atomic persistence, `/calm` command delivery, active session restoration, preference-read recovery, deterministic projection bounds and resize handling, one-timer cleanup, continuation handling, Calm-off ownership preservation, legacy custom-message suppression and toggle invalidation, native-tool preservation, failed stock restoration and frame retries, deferred logical-run recovery across continuing events and toggles, truthful toggle warnings, write failures, unavailable and too-narrow width and notification seams, temporary timer-seam recovery, and independent adapter diagnostics:
+
+```sh
+omp --version                         # omp/18.6.1
+FM_HOME="$(mktemp -d)" omp --no-session --no-tools -p "exit without tools"
+bin/fm-test-run.sh tests/fm-calm-omp-extension.test.sh
+```
+
+The live smoke loaded the tracked extension and exited cleanly; it printed the expected generic-row diagnostic because OMP 18.6.1 exposes no supported generic transcript-row renderer. The extension keeps unsupported operational and assistant rows visible and never rewrites model context, execution, session storage, or exports. The helper's adapter installer catches missing or throwing seams individually, so a future OMP API change reports the affected adapter without disabling preference handling or unrelated presentation.
 
 ### Built-in tool override constraints
 
@@ -51,7 +65,7 @@ The final screenshot-scale regression reproduced the same transcript after the c
 The original proven comparison path was a built-in text tool.
 Calm owned both of that tool's supported renderer slots and switched its shell to `renderShell: "self"`, so returning empty components removed the complete row and `setToolsExpanded` redrew existing tool components.
 Adding supported empty renderer slots to a scratch copy of `fm_watch_arm_pi` likewise removed its row while the real watcher still started and the model still returned `PROBE_COMPLETE`.
-Legacy synthetic presentation entries use `CustomEntryComponent`, whose host adds spacing only when its renderer returns content, so an undefined Calm renderer result removes the complete row and can later restore it through the ordinary expansion redraw.
+Legacy synthetic presentation entries use `CustomEntryComponent`, whose host adds spacing only when its renderer returns content, so an undefined Calm renderer result removes the complete row when that entry is rendered. The adapter calls the supported component invalidation hook on Calm toggles so mounted synthetic entries redraw their stored content against the current preference; Calm does not reach into undocumented host internals or use tool expansion to force that transition.
 The later duplicate-turn evidence below supersedes custom-message rerouting as an acceptable implementation for current operational input.
 
 ### Hidden-block height regression

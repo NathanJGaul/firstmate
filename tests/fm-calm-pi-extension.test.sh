@@ -11,6 +11,7 @@ ASSISTANT_LAYOUT="$ROOT/.pi/extensions/lib/fm-calm-assistant-layout.ts"
 PRESERVATION="$ROOT/.pi/extensions/lib/fm-calm-preservation.ts"
 OPERATIONAL_USER_LAYOUT="$ROOT/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
 VISIBILITY="$ROOT/.pi/extensions/lib/fm-calm-visibility.ts"
+SHARED_VISIBILITY="$ROOT/.claude/mods/firstmate-calm/lib/fm-calm-visibility.ts"
 WORKING_SHIP="$ROOT/.pi/extensions/lib/fm-calm-working-ship.ts"
 WORKING_SHIP_SPRITE="$ROOT/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
 WATCH_EXT="$ROOT/.pi/extensions/fm-primary-pi-watch.ts"
@@ -173,6 +174,7 @@ test_home_resolution() {
   cp "$PRESERVATION" "$fixture/project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
@@ -297,6 +299,7 @@ test_pi_compat_degraded_adapter() {
   cp "$PRESERVATION" "$fixture/project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
@@ -398,6 +401,7 @@ test_pi_compat_missing_adapter_exports() {
   cp "$PRESERVATION" "$fixture/project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
@@ -413,7 +417,10 @@ test_pi_compat_missing_adapter_exports() {
   out=$(cd "$fixture/project" && node --input-type=module 2>&1 <<'JS'
 const assistant = await import("./.pi/extensions/lib/fm-calm-assistant-layout.ts");
 const operational = await import("./.pi/extensions/lib/fm-calm-operational-user-layout.ts");
-
+const visibility = await import("./.pi/extensions/lib/fm-calm-visibility.ts");
+const sharedVisibility = await import("./.pi/extensions/lib/fm-calm-visibility-policy.ts");
+if (JSON.stringify(visibility.CALM_TRANSCRIPT_CLASSES) !== JSON.stringify(sharedVisibility.CALM_TRANSCRIPT_CLASSES)) throw new Error("Pi visibility adapter diverged from shared Calm policy");
+if (!visibility.calmTranscriptClassIsVisible("genuine-agent-response") || visibility.calmTranscriptClassIsVisible("assistant-tool-call")) throw new Error("Pi visibility adapter changed Calm's visible class boundary");
 for (const [name, install, expected] of [
   ["collapsed-thinking", assistant.installCalmAssistantLayout, "AssistantMessageComponent"],
   ["operational-user-row", operational.installCalmOperationalUserLayout, "InteractiveMode"],
@@ -460,6 +467,7 @@ test_builtin_gate_load_time() {
   cp "$PRESERVATION" "$fixture/project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
@@ -548,6 +556,7 @@ test_calm_activation_collision_and_regression_bound() {
   cp "$PRESERVATION" "$fixture/project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/project/.pi/extensions/lib/fm-operational-input.ts"
@@ -764,6 +773,7 @@ test_rendering_and_session_lifecycle() {
   cp "$PRESERVATION" "$fixture/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/lib/fm-calm-working-ship-sprite.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/lib/fm-operational-input.ts"
@@ -1483,6 +1493,7 @@ test_calm_mid_turn_working_notes() {
   cp "$PRESERVATION" "$fixture/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/lib/fm-operational-input.ts"
@@ -1789,6 +1800,7 @@ test_operational_followup_turn_e2e() {
   cp "$PRESERVATION" "$project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
@@ -2165,6 +2177,7 @@ test_hidden_block_geometry_e2e() {
   cp "$PRESERVATION" "$project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$project/.pi/extensions/lib/fm-operational-input.ts"
@@ -2401,6 +2414,7 @@ test_working_ship_geometry_and_lifecycle() {
   cp "$PRESERVATION" "$fixture/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$fixture/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$fixture/lib/fm-calm-working-ship-sprite.ts"
   cp "$PI_OPERATIONAL_INPUT" "$fixture/lib/fm-operational-input.ts"
@@ -3432,6 +3446,7 @@ test_interactive_terminal_e2e() {
   cp "$PRESERVATION" "$project/.pi/extensions/lib/fm-calm-preservation.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$project/.pi/extensions/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$SHARED_VISIBILITY" "$project/.pi/extensions/lib/fm-calm-visibility-policy.ts"
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$WORKING_SHIP_SPRITE" "$project/.pi/extensions/lib/fm-calm-working-ship-sprite.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$project/.pi/extensions/lib/fm-operational-input.ts"
