@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "socraticode": {
+      "command": "npx",
+      "args": ["-y", "--prefer-online", "socraticode@latest"]
+    }
+  }
+}
