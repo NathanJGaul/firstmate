@@ -83,7 +83,7 @@ start_api "$api" "$API_PORT"
 
 home=$(make_home setup)
 setup=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
-  "$TELEGRAM" setup --json --token '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
+  "$TELEGRAM" setup --json <<<'123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
 assert_equals '/bot123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi/getMe' "$(head -1 "$api/paths")" 'Bot API path concatenates bot token without an extra slash'
 assert_contains "$setup" 'firstmate_test_bot' 'setup prints bot username'
 assert_contains "$setup" 'https://t.me/firstmate_test_bot?start=' 'setup prints Telegram deep link'
@@ -229,6 +229,54 @@ if grep -F '123456:' "$home/state/telegram/pairing.json" "$home/state/telegram"/
 fi
 pass 'setup stores token privately and prints a decodable QR deep link'
 
+tty_home=$(make_home setup-tty)
+tty_setup=$(python3 - "$TELEGRAM" "$tty_home" "http://127.0.0.1:$API_PORT/bot" <<'PY'
+import os
+import pty
+import select
+import signal
+import sys
+import time
+
+telegram, home, api_base = sys.argv[1:4]
+token = b"123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+pid, fd = pty.fork()
+if pid == 0:
+    os.execve(telegram, [telegram, "setup", "--json"], {**os.environ, "FM_HOME": home, "FM_TELEGRAM_API_BASE": api_base})
+output = b""
+sent = False
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    if not select.select([fd], [], [], 0.5)[0]:
+        continue
+    try:
+        chunk = os.read(fd, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    output += chunk
+    if not sent and b"Telegram bot token: " in output:
+        os.write(fd, token + b"\n")
+        sent = True
+else:
+    os.kill(pid, signal.SIGKILL)
+status = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+assert sent and status == 0, (status, output)
+assert token not in output, output
+sys.stdout.write(output.decode())
+PY
+)
+assert_contains "$tty_setup" 'https://t.me/firstmate_test_bot?start=' 'interactive setup accepts the prompted token'
+assert_equals '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' "$(cat "$tty_home/config/telegram-bot-token")" 'interactive setup stores the prompted token'
+set +e
+FM_HOME="$tty_home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
+  "$TELEGRAM" setup --token '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' </dev/null >/dev/null 2>&1
+argv_token_code=$?
+set -e
+expect_code 2 "$argv_token_code" 'setup refuses a command-line bot token'
+pass 'setup reads the bot token from a non-echoing prompt and never from argv'
+
 nonce=$(python3 -c 'import json,sys,urllib.parse; print(urllib.parse.parse_qs(urllib.parse.urlparse(json.load(sys.stdin)["deep_link"]).query)["start"][0])' <<<"$setup")
 if grep -F '"nonce"' "$home/state/telegram/pairing.json" >/dev/null 2>&1; then
   fail 'pairing state stored the raw nonce'
@@ -275,7 +323,7 @@ pass 'expired and malformed pairing nonces are rejected'
 
 wire_home=$(make_home wire-pair)
 wire_setup=$(FM_HOME="$wire_home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
-  "$TELEGRAM" setup --json --token '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
+  "$TELEGRAM" setup --json <<<'123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
 wire_nonce=$(python3 -c 'import json,sys,urllib.parse; print(urllib.parse.parse_qs(urllib.parse.urlparse(json.load(sys.stdin)["deep_link"]).query)["start"][0])' <<<"$wire_setup")
 cat > "$api/updates" <<JSON
 {"ok":true,"result":[{"update_id":7,"message":{"message_id":1,"from":{"id":17},"chat":{"id":18,"type":"private"},"text":"/start $wire_nonce"}}]}
@@ -391,10 +439,11 @@ module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.
 loader.exec_module(module)
 
 
+observed = []
+
+
 def remote_send(argv, timeout, **kwargs):
-    needed = 2 * int(os.environ.get("FM_SEND_REMOTE_BUDGET", "30")) + 1
-    if timeout < needed:
-        raise subprocess.TimeoutExpired(argv, timeout)
+    observed.append(timeout)
     return subprocess.CompletedProcess(argv, 3, b"", b"unconfirmed")
 
 
@@ -408,6 +457,7 @@ for budget in (None, "45"):
         assert str(exc) == "steer unconfirmed - may have landed; check before resending", str(exc)
     else:
         raise AssertionError("unconfirmed remote steer was reported as accepted")
+assert observed == [80, 110], observed
 
 
 def slow_send(argv, timeout, **kwargs):
@@ -653,6 +703,16 @@ assert_absent "$blocked_home/state/telegram/errors" 'permanent response rejectio
 assert_contains "$blocked_replay" '"duplicates": 1' 'a replayed update with a rejected response is not resent'
 pass 'permanent Bot API response rejections release the update offset'
 
+unconfirmed_home=$(paired_home unconfirmed-poll)
+cat > "$api/updates" <<'JSON'
+{"ok":true,"result":[{"update_id":55,"message":{"message_id":1,"from":{"id":7},"chat":{"id":8,"type":"private"},"text":"/steer worker hello"}}]}
+JSON
+unconfirmed_poll=$(FM_ROOT_OVERRIDE="$unconfirmed_root" poll_home "$unconfirmed_home")
+assert_contains "$unconfirmed_poll" '"unconfirmed": 1' 'poll counts an unconfirmed steer as unconfirmed'
+assert_contains "$unconfirmed_poll" '"rejected": 0' 'poll does not count an unconfirmed steer as rejected'
+assert_contains "$(cat "$unconfirmed_home/state/telegram/inbox/55.json")" '"outcome":"unconfirmed"' 'inbox records the unconfirmed steer outcome'
+pass 'an unconfirmed steer is recorded and counted as unconfirmed rather than rejected'
+
 switch_home=$(paired_home bot-switch)
 cat > "$api/updates" <<'JSON'
 {"ok":true,"result":[{"update_id":60,"message":{"message_id":1,"from":{"id":41},"chat":{"id":42,"type":"private"},"text":"/status"}}]}
@@ -684,7 +744,7 @@ pass 'offsets older than Telegram update retention are not trusted'
 
 redact_home=$(make_home redact-errors)
 redact_setup=$(FM_HOME="$redact_home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
-  "$TELEGRAM" setup --json --token '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
+  "$TELEGRAM" setup --json <<<'123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
 redact_nonce=$(python3 -c 'import json,sys,urllib.parse; print(urllib.parse.parse_qs(urllib.parse.urlparse(json.load(sys.stdin)["deep_link"]).query)["start"][0])' <<<"$redact_setup")
 ln -s "$TMP_ROOT/missing-lock" "$redact_home/state/telegram/.pairing.lock"
 cat > "$api/updates" <<JSON

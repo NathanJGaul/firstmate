@@ -7,6 +7,7 @@ argv vectors and never invokes a shell.
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -585,6 +586,15 @@ def qr(link: str) -> str:
             line.append("██" if 0 <= row < len(best) and 0 <= column < len(best) and best[row][column] else "  ")
         lines.append("".join(line))
     return "\n".join(lines) + "\n"
+
+
+def setup_token() -> str:
+    try:
+        if sys.stdin.isatty():
+            return getpass.getpass("Telegram bot token: ").strip()
+        return sys.stdin.readline(MAX_COMMAND_BYTES).strip()
+    except (EOFError, OSError, UnicodeDecodeError) as exc:
+        raise TelegramError("Telegram bot token could not be read") from exc
 
 
 def setup(token: str, machine: bool) -> dict[str, Any]:
@@ -1493,33 +1503,6 @@ def portable_task_id(target: str, state: Path) -> str:
     raise TelegramError("Firstmate owner script rejected request")
 
 
-def portable_task_ack(state: Path, target: str, record_name: str) -> str:
-    if not WORKER_RE.fullmatch(target) or re.fullmatch(r"[0-9]{1,12}\.msg", record_name) is None:
-        raise TelegramError("portable inbox acknowledgement is malformed")
-    inbox = state / f"{target}.inbox"
-    handled = inbox / "handled"
-    root_record = inbox / record_name
-    handled_record = handled / record_name
-    ensure_private_dir(inbox)
-    ensure_private_dir(handled)
-    token = portable_lock_acquire(inbox / ".seq.lock")
-    try:
-        if handled_record.is_symlink() or (handled_record.exists() and not handled_record.is_file()):
-            raise TelegramError("portable handled inbox record is unsafe")
-        if handled_record.is_file():
-            return str(handled_record)
-        if root_record.is_symlink() or (root_record.exists() and not root_record.is_file()):
-            raise TelegramError("portable inbox record is unsafe")
-        if not root_record.is_file():
-            raise TelegramError("portable inbox record is missing")
-        os.replace(root_record, handled_record)
-        return str(handled_record)
-    except OSError as exc:
-        raise TelegramError("portable inbox acknowledgement could not be persisted") from exc
-    finally:
-        portable_lock_release(inbox / ".seq.lock", token)
-
-
 def portable_task_meta(target: str, state: Path) -> tuple[str, Path, dict[str, str]]:
     task_id = portable_task_id(target, state)
     meta = state / f"{task_id}.meta"
@@ -2169,7 +2152,7 @@ def apply_effect(record: dict[str, Any]) -> None:
         return
     except TelegramError as exc:
         reply = _telegram_redact_paths(str(exc))
-        outcome = "rejected"
+        outcome = "unconfirmed" if str(exc) == STEER_UNCONFIRMED else "rejected"
     record.update({"state": "response_pending", "effect": "complete", "reply": bounded(reply), "outcome": outcome, "command": command})
     record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
 
@@ -2213,7 +2196,7 @@ def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
     updates = response.get("result")
     if not isinstance(updates, list) or len(_json_encode(updates, "Telegram update response")) > MAX_UPDATE_BYTES:
         raise TelegramError("Telegram update response is malformed or too large")
-    processed = duplicates = rejected = 0
+    processed = duplicates = rejected = unconfirmed = 0
     highest = offset
     blocked = False
     for update in updates:
@@ -2236,6 +2219,8 @@ def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
             continue
         if record.get("outcome") == "accepted":
             processed += 1
+        elif record.get("outcome") == "unconfirmed":
+            unconfirmed += 1
         else:
             rejected += 1
     next_offset = highest if not blocked else offset
@@ -2243,13 +2228,13 @@ def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
         atomic_write(offset_path(), f"{next_offset}\n".encode())
     if blocked:
         raise TelegramError("Telegram outbound response remains pending")
-    output = {"schema": "fm-telegram-poll.v1", "processed": processed, "duplicates": duplicates, "rejected": rejected, "next_offset": next_offset}
+    output = {"schema": "fm-telegram-poll.v1", "processed": processed, "duplicates": duplicates, "rejected": rejected, "unconfirmed": unconfirmed, "next_offset": next_offset}
     if event:
-        print(f"schema={RESULT_SCHEMA}\nstatus=ok\nprocessed={processed}\nduplicates={duplicates}\nrejected={rejected}\n")
+        print(f"schema={RESULT_SCHEMA}\nstatus=ok\nprocessed={processed}\nduplicates={duplicates}\nrejected={rejected}\nunconfirmed={unconfirmed}\n")
     elif machine:
         print(json.dumps(output, sort_keys=True))
     else:
-        print(f"processed {processed}; duplicates {duplicates}; rejected {rejected}")
+        print(f"processed {processed}; duplicates {duplicates}; rejected {rejected}; unconfirmed {unconfirmed}")
     return output
 
 
@@ -2530,7 +2515,6 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--json", action="store_true", dest="global_json")
     sub = parser.add_subparsers(dest="command", required=True)
     setup_parser = sub.add_parser("setup")
-    setup_parser.add_argument("--token", required=True)
     setup_parser.add_argument("--json", action="store_true")
     dispatch_parser = sub.add_parser("dispatch")
     dispatch_parser.add_argument("--user-id", required=True)
@@ -2545,14 +2529,10 @@ def main(argv: list[str]) -> int:
     sub.add_parser("enable")
     sub.add_parser("disable")
     sub.add_parser("worker")
-    ack_parser = sub.add_parser("ack")
-    ack_parser.add_argument("--state", required=True)
-    ack_parser.add_argument("--task", required=True)
-    ack_parser.add_argument("--record", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "setup":
-            result = setup(args.token, args.json or args.global_json)
+            result = setup(setup_token(), args.json or args.global_json)
             if args.json or args.global_json:
                 print(json.dumps(result, sort_keys=True))
         elif args.command == "dispatch":
@@ -2566,8 +2546,6 @@ def main(argv: list[str]) -> int:
             print(disable())
         elif args.command == "worker":
             worker_loop()
-        elif args.command == "ack":
-            portable_task_ack(Path(args.state), args.task, args.record)
         return 0
     except TelegramError as exc:
         print(f"fm-telegram: {exc}", file=sys.stderr)
