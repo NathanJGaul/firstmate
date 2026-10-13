@@ -1026,6 +1026,7 @@ phase=$(grep '^phase=' "$PARENT/state/pending-replies/$CORR" | cut -d= -f2-)
 # The remote worker acknowledges with the command its seeded charter renders,
 # and the documented correlation-reusing resend then lands on that
 # acknowledged record instead of enqueueing a duplicate instruction.
+# shellcheck disable=SC2016 # Backticks are literal charter Markdown in the sed pattern.
 ack_template=$(sed -n 's/.*`\(mv [^`]*\/NNN\.msg [^`]*\)`.*/\1/p' "$REMOTE_HOME/data/charter.md" | head -1)
 [ -n "$ack_template" ] || fail "remote charter did not render an inbox acknowledgement command"
 corr_record=$(grep -l "corr=$CORR" "$PARENT_ROUTE_INBOX"/*.msg)

@@ -416,6 +416,7 @@ blank_steer=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatc
 blank_steer_code=$?
 parser_slash=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 11 --text '/steer worker /exit' 2>&1)
 parser_slash_code=$?
+# shellcheck disable=SC2016 # The literal $skill is the parser input under test.
 parser_dollar=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 12 --text '/steer worker $skill' 2>&1)
 parser_dollar_code=$?
 parser_key=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 13 --text '/steer worker --key Enter' 2>&1)
