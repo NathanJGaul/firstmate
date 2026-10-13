@@ -313,24 +313,10 @@ fm_task_inbox_derived_key() {  # <delivery-mode> <text>
 }
 
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode] [idempotency-key]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' body_want='' reservation record_name existing_key status=0 marker_body derived_key marker_prefix candidate name legacy_allowed found idempotency_supplied=0
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} idempotency_key=${5:-} dir lock rec='' body_want='' reservation record_name existing_key status=0 marker_prefix candidate name legacy_allowed found idempotency_supplied=0
   [ -n "$idempotency_key" ] && idempotency_supplied=1
   dir=$(fm_task_inbox_dir "$state" "$task")
   marker_prefix=${FM_FROMFIRST_MARK:-'[fm-from-firstmate]'$'\u2063'}
-  if [ -z "$idempotency_key" ]; then
-    marker_body=${text#"$marker_prefix"}
-    if [ "$marker_body" != "$text" ]; then
-      derived_key=${marker_body%% *}
-      case "$derived_key" in
-        delivery=*|corr=*)
-          derived_key=${derived_key#*=}
-          case "$derived_key" in
-            [a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9]) idempotency_key=$(printf '%s' "$derived_key" | tr 'A-F' 'a-f') ;;
-          esac
-          ;;
-      esac
-    fi
-  fi
   if [ -z "$idempotency_key" ]; then
     idempotency_key=$(fm_task_inbox_derived_key "$delivery_mode" "$text") || return 1
   fi
