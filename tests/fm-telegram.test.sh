@@ -99,19 +99,27 @@ expected = setup["deep_link"]
 rows = setup["qr"].rstrip("\n").split("\n")
 # Every cell, quiet zone included, must set its own 256-colour foreground and
 # background (16 = black, 231 = white) so the terminal theme cannot invert it.
+# Each upper half block carries two module rows (upper in the foreground, lower
+# in the background) so the QR fits a default 80x24 window.
 full = []
 for row in rows:
     assert row.endswith("\x1b[0m"), repr(row[-8:])
-    cells = re.findall("\x1b\\[([0-9;]+)m██", row[:-4])
-    assert "".join(f"\x1b[{params}m██" for params in cells) == row[:-4], repr(row)
-    parsed = []
+    cells = re.findall("\x1b\\[([0-9;]+)m▀", row[:-4])
+    assert "".join(f"\x1b[{params}m▀" for params in cells) == row[:-4], repr(row)
+    assert len(cells) <= 80, len(cells)
+    upper, lower = [], []
     for params in cells:
         values = [int(value) for value in params.split(";")]
         colors = {values[index]: values[index + 2] for index in range(len(values) - 2) if values[index] in (38, 48) and values[index + 1] == 5}
-        assert colors.get(38) in (16, 231) and colors.get(48) == colors[38], params
-        parsed.append(colors[38] == 16)
-    full.append(parsed)
-assert full and all(len(row) == len(full) for row in full)
+        assert colors.get(38) in (16, 231) and colors.get(48) in (16, 231), params
+        upper.append(colors[38] == 16)
+        lower.append(colors[48] == 16)
+    full.extend((upper, lower))
+# The whole QR and the next shell prompt stay on screen together.
+assert len(rows) + 1 <= 24, len(rows)
+# The symbol and its quiet zone have an odd side, so the last half row is light padding.
+assert full and len(full) == len(full[0]) + 1 and not any(full.pop())
+assert all(len(row) == len(full) for row in full)
 quiet = 4
 edge = len(full) - quiet
 assert not any(dark for y, row in enumerate(full) for x, dark in enumerate(row) if min(x, y) < quiet or max(x, y) >= edge)

@@ -579,14 +579,18 @@ def qr(link: str) -> str:
         raise TelegramError("bundled QR renderer could not select a mask")
     # Paint every cell, quiet zone included, with explicit fixed black or white
     # foreground and background so the terminal theme cannot invert the code.
-    dark_cell = "\x1b[38;5;16;48;5;16m██"
-    light_cell = "\x1b[38;5;231;48;5;231m██"
+    # Each upper half block draws two module rows (upper as foreground, lower as
+    # background) so the symbol fits a default 80x24 terminal.
     quiet = 4
+
+    def color(row: int, column: int) -> int:
+        return 16 if 0 <= row < len(best) and 0 <= column < len(best) and best[row][column] else 231
+
     lines = []
-    for row in range(-quiet, len(best) + quiet):
+    for row in range(-quiet, len(best) + quiet, 2):
         line = []
         for column in range(-quiet, len(best) + quiet):
-            line.append(dark_cell if 0 <= row < len(best) and 0 <= column < len(best) and best[row][column] else light_cell)
+            line.append(f"\x1b[38;5;{color(row, column)};48;5;{color(row + 1, column)}m▀")
         lines.append("".join(line) + "\x1b[0m")
     return "\n".join(lines) + "\n"
 
