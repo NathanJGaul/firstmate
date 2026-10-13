@@ -261,6 +261,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/spec-kit-workflow/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/speckit-analyze/SKILL.md",
       "audience": "agent-runtime"
     },
