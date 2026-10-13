@@ -14,7 +14,6 @@ import os
 import re
 import secrets
 import shutil
-import shlex
 import subprocess
 import sys
 import time
@@ -1355,8 +1354,7 @@ def portable_task_wake(target: str, record_path: Path) -> None:
         if record_dir.name == "handled":
             record_dir = record_dir.parent
         path_text = str(record_dir).replace("\\", "/").replace("'", "'\\\\''")
-        ack_command = " ".join(shlex.quote(part) for part in (sys.executable, str(Path(__file__).resolve()), "ack", "--state", str(state), "--task", target, "--record", record_path.name))
-        summary = f": Firstmate instruction waiting: list '{path_text}'/*.msg and, in numeric order, read and act on each, then run {ack_command} for each handled record."
+        summary = f": Firstmate instruction waiting: list '{path_text}'/*.msg and, in numeric order, read and act on each, then mv each handled file to '{path_text}'/handled/."
         _portable_wake_append_locked(state, f"inbox:{target}", summary)
     except OSError as exc:
         raise TelegramError("portable task wake could not be persisted") from exc
