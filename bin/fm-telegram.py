@@ -577,13 +577,17 @@ def qr(link: str) -> str:
             best = candidate
     if best is None:
         raise TelegramError("bundled QR renderer could not select a mask")
+    # Paint every cell, quiet zone included, with explicit fixed black or white
+    # foreground and background so the terminal theme cannot invert the code.
+    dark_cell = "\x1b[38;5;16;48;5;16m██"
+    light_cell = "\x1b[38;5;231;48;5;231m██"
     quiet = 4
     lines = []
     for row in range(-quiet, len(best) + quiet):
         line = []
         for column in range(-quiet, len(best) + quiet):
-            line.append("██" if 0 <= row < len(best) and 0 <= column < len(best) and best[row][column] else "  ")
-        lines.append("".join(line))
+            line.append(dark_cell if 0 <= row < len(best) and 0 <= column < len(best) and best[row][column] else light_cell)
+        lines.append("".join(line) + "\x1b[0m")
     return "\n".join(lines) + "\n"
 
 

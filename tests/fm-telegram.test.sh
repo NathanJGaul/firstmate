@@ -96,12 +96,26 @@ import sys
 
 setup = json.loads(sys.argv[1])
 expected = setup["deep_link"]
-rows = setup["qr"].rstrip("\n").splitlines()
-assert rows and len({len(row) for row in rows}) == 1
-assert len(rows[0]) % 2 == 0 and len(rows) == len(rows[0]) // 2
-full = [[row[column:column + 2] == "██" for column in range(0, len(row), 2)] for row in rows]
-assert all(cell in ("██", "  ") for row in rows for cell in re.findall("..", row))
+rows = setup["qr"].rstrip("\n").split("\n")
+# Every cell, quiet zone included, must set its own 256-colour foreground and
+# background (16 = black, 231 = white) so the terminal theme cannot invert it.
+full = []
+for row in rows:
+    assert row.endswith("\x1b[0m"), repr(row[-8:])
+    cells = re.findall("\x1b\\[([0-9;]+)m██", row[:-4])
+    assert "".join(f"\x1b[{params}m██" for params in cells) == row[:-4], repr(row)
+    parsed = []
+    for params in cells:
+        values = [int(value) for value in params.split(";")]
+        colors = {values[index]: values[index + 2] for index in range(len(values) - 2) if values[index] in (38, 48) and values[index + 1] == 5}
+        assert colors.get(38) in (16, 231) and colors.get(48) == colors[38], params
+        parsed.append(colors[38] == 16)
+    full.append(parsed)
+assert full and all(len(row) == len(full) for row in full)
 quiet = 4
+edge = len(full) - quiet
+assert not any(dark for y, row in enumerate(full) for x, dark in enumerate(row) if min(x, y) < quiet or max(x, y) >= edge)
+assert any(full[quiet][quiet:edge]) and not all(full[quiet + 7][quiet:edge])
 size = len(full) - quiet * 2
 assert size == len(full[0]) - quiet * 2 and size >= 21
 modules = [row[quiet:-quiet] for row in full[quiet:-quiet]]
