@@ -1,0 +1,19 @@
+## sendMessage returns 502 Bad Gateway; phone >> /note ... (update 700000023); offset before=700000023
+fm-telegram: Telegram outbound response remains pending
+exit=1  offset after=700000023
+notes now: 2
+inbox record: {'state': 'response_pending', 'effect': 'complete', 'delivery': 'pending', 'outcome': 'accepted'}
+latest poll error record: 1.json -> {"at":"2026-10-13T22:26:43Z","error":"Telegram outbound response remains pending","operation":"poll","schema":"fm-telegram-error.v1"}
+## second poll while still down (command must not re-run)
+fm-telegram: Telegram outbound response remains pending
+exit=1  notes now: 2
+## Telegram recovers
+processed 1; duplicates 1; rejected 0; unconfirmed 0
+exit=0  offset after=700000024
+reply delivered: {"at": "17:26:44", "chat_id": 424242, "text": "{\"schema\":\"fm-inbox-note.v1\",\"outcome\":\"created\",\"id\":\"1791930403-ivZcRD\",\"request_id\":\"telegram-700000023\",\"saved\":true,\"announced\":true,\"acknowledged\":false}"}
+notes now (expect 2 total: first note + this one, never duplicated): 2
+
+## user blocked the bot: sendMessage returns 403
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0  offset after=700000025 (advanced past 700000024)
+inbox record: {'state': 'complete', 'effect': 'complete', 'delivery': 'rejected', 'outcome': 'accepted'}

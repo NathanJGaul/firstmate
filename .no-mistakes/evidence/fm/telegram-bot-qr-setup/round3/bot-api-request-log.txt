@@ -1,0 +1,14 @@
+17:47:49 getMe token_ok=True params={}
+17:48:14 getMe token_ok=True params={}
+17:48:38 getMe token_ok=True params={}
+17:48:50 getMe token_ok=True params={}
+17:49:12 getMe token_ok=True params={}
+17:49:24 getMe token_ok=True params={}
+17:49:50 getMe token_ok=True params={}
+17:50:16 getMe token_ok=True params={}
+17:50:28 getUpdates token_ok=True params={"offset": 0, "timeout": 30, "allowed_updates": ["message"]}
+17:50:28 sendMessage token_ok=True params={"chat_id": 424242}
+17:50:28 getUpdates token_ok=True params={"offset": 700000002, "timeout": 30, "allowed_updates": ["message"]}
+17:50:28 sendMessage token_ok=True params={"chat_id": 666}
+17:50:28 getUpdates token_ok=True params={"offset": 700000003, "timeout": 30, "allowed_updates": ["message"]}
+17:50:28 sendMessage token_ok=True params={"chat_id": 424242}

@@ -1,0 +1,23 @@
+phone >> /steer w-steer please rerun the lab smoke test and report back   (update 700000025)
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+bot reply: completed
+
+## worker pane (fleet:fm-w-steer) after the steer:
+scripted worker ready; inbox=/tmp/fm-lab.wnWqz2/state/w-steer.inbox
+
+## worker inbox:
+$LAB/state/w-steer.inbox/001.msg
+$LAB/state/w-steer.inbox/.idempotency/0b7c29a02e5cb551.reservation
+## worker acted log:
+cat: /tmp/fm-lab.wnWqz2/state/w-steer.acted.log: No such file or directory
+
+## redelivery: offset rolled back to 700000025 and Telegram redelivers it
+processed 0; duplicates 2; rejected 0; unconfirmed 0
+exit=0
+replies re-sent: 0
+worker inbox records (root + handled), must still be exactly one:
+1
+acted log lines (worker acted once):
+/usr/bin/bash: line 17: /tmp/fm-lab.wnWqz2/state/w-steer.acted.log: No such file or directory

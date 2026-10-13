@@ -1,0 +1,18 @@
+# Round 2 QR decode matrix (tmux pane capture-pane -e -> render_ansi.py -> zbarimg)
+# capture                          theme  result
+s1-before-fix-dark                            NO DECODE (zbarimg exit 4)
+s1-before-fix-light                           DECODED https://t.me/fm_lab_bot?start=-V5zBiOXd_nz4r6TSOhstvd3VDuZiAr3
+s1b-setup-interactive-dark                    DECODED https://t.me/fm_lab_bot?start=zXN0Z77QCDWx1aC6zVTB_5d8L3FPZ2Yc
+s1b-setup-interactive-light                   DECODED https://t.me/fm_lab_bot?start=zXN0Z77QCDWx1aC6zVTB_5d8L3FPZ2Yc
+s1-setup-piped-tmux-dark                      DECODED https://t.me/fm_lab_bot?start=Or36ux17Pofdlv2I9DoQljJkOG2XN28k
+s1-setup-piped-tmux-light                     DECODED https://t.me/fm_lab_bot?start=Or36ux17Pofdlv2I9DoQljJkOG2XN28k
+s3-demo-halfblock-80x24-dark                  DECODED https://t.me/fm_lab_bot?start=NIGwhISvLZgJS0uWDQs0Ok5LUGd1Abbf
+s3-demo-halfblock-80x24-light                 DECODED https://t.me/fm_lab_bot?start=NIGwhISvLZgJS0uWDQs0Ok5LUGd1Abbf
+s3-setup-80x24-scrollback-dark                DECODED https://t.me/fm_lab_bot?start=8S9bn9k4pcNH6jGxY_W_tVttxOx7evpf
+s3-setup-80x24-scrollback-light               NO DECODE (zbarimg exit 4)
+s3-visible-120x30-dark                        NO DECODE (zbarimg exit 4)
+s3-visible-120x30-light                       NO DECODE (zbarimg exit 4)
+s3-visible-80x24-dark                         NO DECODE (zbarimg exit 4)
+s3-visible-80x24-light                        NO DECODE (zbarimg exit 4)
+s3-visible-88x46-dark                         DECODED https://t.me/fm_lab_bot?start=64-btCxshk_ANJMuQ2tYMpYTiJSEYQbl
+s3-visible-88x46-light                        DECODED https://t.me/fm_lab_bot?start=64-btCxshk_ANJMuQ2tYMpYTiJSEYQbl

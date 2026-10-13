@@ -1,0 +1,38 @@
+## attacker (666) uses the superseded nonce from the first setup, then /status, before pairing
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 2; unconfirmed 0
+exit=0
+pairing paired_user_id: None
+
+## owner phone (424242) scans the active QR -> Telegram sends /start <nonce>
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+pairing.json: {"bot_username":"fm_lab_bot","nonce_expires_at":1791930842,"nonce_hash":"36c50d72673f713ecaec5a8812ab1f4f39bcfbf6a70363b9523b186eee8392cc","paired_at":"2026-10-13T22:24:02Z","paired_chat_id":"424242","paired_update_id":"700000003","paired_user_id":"424242","schema":"fm-telegram-pairing.v1"}
+
+## attacker (666) replays the same deep-link nonce (e.g. photographed the QR)
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+exit=0
+## paired user from a different chat (group -1001234) and attacker /status after pairing
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 2; unconfirmed 0
+exit=0
+pairing after attacks: {"bot_username":"fm_lab_bot","nonce_expires_at":1791930842,"nonce_hash":"36c50d72673f713ecaec5a8812ab1f4f39bcfbf6a70363b9523b186eee8392cc","paired_at":"2026-10-13T22:24:02Z","paired_chat_id":"424242","paired_update_id":"700000003","paired_user_id":"424242","schema":"fm-telegram-pairing.v1"}
+
+## inbound record for the pairing update (nonce redacted):
+{"at":"2026-10-13T22:24:02Z","chat_id":"424242","schema":"fm-telegram-inbound.v1","text":"/start [pairing nonce redacted]","update_id":"700000003","user_id":"424242"}
+
+## chat transcript (what each Telegram client sees)
+[17:24:02] phone user=666 chat=666 (update 700000001) >> /start WzCOQiv5kPn2s2ab-ZqkcaIpRmJ4r7vX
+[17:24:02] phone user=666 chat=666 (update 700000002) >> /status
+[17:24:02] phone user=424242 chat=424242 (update 700000003) >> /start T7Op157btPhwHjOVwDId5ymZmIYJ23lT
+[17:24:02] phone user=666 chat=666 (update 700000004) >> /start T7Op157btPhwHjOVwDId5ymZmIYJ23lT
+[17:24:02] phone user=424242 chat=-1001234 (update 700000005) >> /status
+[17:24:02] phone user=666 chat=666 (update 700000006) >> /status
+[17:24:02] bot -> chat=666 << pairing nonce is expired or invalid
+[17:24:02] bot -> chat=666 << Telegram identity is not paired
+[17:24:02] bot -> chat=424242 << Telegram paired.
+[17:24:02] bot -> chat=666 << Telegram pairing is already complete
+[17:24:02] bot -> chat=-1001234 << Telegram identity is not paired
+[17:24:02] bot -> chat=666 << Telegram identity is not paired

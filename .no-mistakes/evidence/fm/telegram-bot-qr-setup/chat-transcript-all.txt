@@ -1,0 +1,83 @@
+[17:24:02] phone user=666 chat=666 (update 700000001) >> /start WzCOQiv5kPn2s2ab-ZqkcaIpRmJ4r7vX
+[17:24:02] phone user=666 chat=666 (update 700000002) >> /status
+[17:24:02] phone user=424242 chat=424242 (update 700000003) >> /start T7Op157btPhwHjOVwDId5ymZmIYJ23lT
+[17:24:02] phone user=666 chat=666 (update 700000004) >> /start T7Op157btPhwHjOVwDId5ymZmIYJ23lT
+[17:24:02] phone user=424242 chat=-1001234 (update 700000005) >> /status
+[17:24:02] phone user=666 chat=666 (update 700000006) >> /status
+[17:24:02] bot -> chat=666 << pairing nonce is expired or invalid
+[17:24:02] bot -> chat=666 << Telegram identity is not paired
+[17:24:02] bot -> chat=424242 << Telegram paired.
+[17:24:02] bot -> chat=666 << Telegram pairing is already complete
+[17:24:02] bot -> chat=-1001234 << Telegram identity is not paired
+[17:24:02] bot -> chat=666 << Telegram identity is not paired
+[17:25:31] phone user=424242 chat=424242 (update 700000007) >> /status
+[17:25:31] phone user=424242 chat=424242 (update 700000008) >> /status 2
+[17:25:31] phone user=424242 chat=424242 (update 700000009) >> /decisions
+[17:25:31] phone user=424242 chat=424242 (update 700000010) >> /decisions 2
+[17:25:33] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t01","kind":"ship","state":"working","name":"Lab task t01","doing":"harness busy (claude-hook)"},{"id":"t02","kind":"ship","state":"working","name":"Lab task t02","doing":"harness busy (claude-hook)"},{"id":"t03","kind":"ship","state":"working","name":"Lab task t03","doing":"harness busy (claude-hook)"},{"id":"t04","ki ...[873 more chars]
+[17:25:34] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t11","kind":"ship","state":"parked","name":"Lab task t11","doing":"review [path redacted] then pick postgres or sqlite"},{"id":"t12","kind":"ship","state":"working","name":"Lab task t12","doing":"harness busy (claude-hook)"},{"id":"w-steer","kind":"ship","state":"working","name":"Lab task w-steer","doing":"harness busy ...[173 more chars]
+[17:25:36] bot -> chat=424242 << {"schema":"fm-bearings.v1","decisions_open":[{"id":"dec-01","key":"dec-01","verb":"captain-hold","summary":"Lab decision 01: captain choice 01 pending","owner":"(main)"},{"id":"dec-02","key":"dec-02","verb":"captain-hold","summary":"Lab decision 02: captain choice 02 pending","owner":"(main)"},{"id":"dec-03","key":"dec-03","verb":"captain-hold","summary":"Lab decis ...[1094 more chars]
+[17:25:38] bot -> chat=424242 << {"schema":"fm-bearings.v1","decisions_open":[{"id":"dec-11","key":"dec-11","verb":"captain-hold","summary":"Lab decision 11: captain choice 11 pending","owner":"(main)"},{"id":"dec-12","key":"dec-12","verb":"captain-hold","summary":"Approve deleting [path redacted] captain approval for [path redacted]","owner":"(main)"}],"pagination":{"page":2,"page_size":10,"colle ...[116 more chars]
+[17:25:50] phone user=424242 chat=424242 (update 700000011) >> /status
+[17:25:52] phone user=424242 chat=424242 (update 700000012) >> /status 2
+[17:25:52] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t01","kind":"ship","state":"working","name":"Lab task t01","doing":"harness busy (claude-hook)"},{"id":"t02","kind":"ship","state":"working","name":"Lab task t02","doing":"harness busy (claude-hook)"},{"id":"t03","kind":"ship","state":"working","name":"Lab task t03","doing":"harness busy (claude-hook)"},{"id":"t04","ki ...[245 more chars]
+[17:25:54] phone user=424242 chat=424242 (update 700000013) >> /status 3
+[17:25:54] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t05","kind":"ship","state":"working","name":"Lab task t05","doing":"harness busy (claude-hook)"},{"id":"t06","kind":"ship","state":"working","name":"Lab task t06","doing":"harness busy (claude-hook)"},{"id":"t07","kind":"ship","state":"working","name":"Lab task t07","doing":"harness busy (claude-hook)"},{"id":"t08","ki ...[245 more chars]
+[17:25:56] phone user=424242 chat=424242 (update 700000014) >> /status 4
+[17:25:56] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t09","kind":"ship","state":"working","name":"Lab task t09","doing":"harness busy (claude-hook)"},{"id":"t10","kind":"ship","state":"parked","name":"Lab task t10","doing":"approve release notes wording"},{"id":"t11","kind":"ship","state":"parked","name":"Lab task t11","doing":"review [path redacted] then pick postgres o ...[272 more chars]
+[17:25:58] phone user=424242 chat=424242 (update 700000015) >> /status
+[17:25:58] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"w-steer","kind":"ship","state":"working","name":"Lab task w-steer","doing":"harness busy (claude-hook)"}],"pagination":{"page":4,"page_size":4,"collection":"in_flight","next_page":null,"next_offset":null,"next_command":null},"generated":"2026-10-13T22:25:57Z"}
+[17:25:59] phone user=424242 chat=424242 (update 700000016) >> /status
+[17:25:59] phone user=424242 chat=424242 (update 700000017) >> /status
+[17:25:59] phone user=424242 chat=424242 (update 700000018) >> /status 0
+[17:25:59] phone user=424242 chat=424242 (update 700000019) >> /status abc
+[17:25:59] bot -> chat=424242 << Telegram page size must be between 1 and 50
+[17:25:59] bot -> chat=424242 << Telegram page size must be between 1 and 50
+[17:25:59] bot -> chat=424242 << Telegram page size must be between 1 and 50
+[17:25:59] bot -> chat=424242 << status page must be between 1 and 100000
+[17:26:00] phone user=424242 chat=424242 (update 700000020) >> /status 9999
+[17:26:00] bot -> chat=424242 << status page must be between 1 and 100000
+[17:26:02] phone user=424242 chat=424242 (update 700000021) >> /decisions -1
+[17:26:02] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[],"pagination":{"page":9999,"page_size":10,"collection":"in_flight","next_page":null,"next_offset":null,"next_command":null},"generated":"2026-10-13T22:26:00Z"}
+[17:26:02] bot -> chat=424242 << decisions page must be between 1 and 100000
+[17:26:15] phone user=424242 chat=424242 (update 700000022) >> /note check the lab deploy after lunch; $(touch /tmp/fm-lab.wnWqz2/PWNED) `touch /tmp/fm-lab.wnWqz2/PWNED2` ; rm -rf ~
+[17:26:15] bot -> chat=424242 << {"schema":"fm-inbox-note.v1","outcome":"created","id":"1791930375-mrDdtf","request_id":"telegram-700000022","saved":true,"announced":true,"acknowledged":false}
+[17:26:43] phone user=424242 chat=424242 (update 700000023) >> /note second note sent during a Telegram outage
+[17:26:44] phone user=424242 chat=424242 (update 700000024) >> /status 9999
+[17:26:44] bot -> chat=424242 << {"schema":"fm-inbox-note.v1","outcome":"created","id":"1791930403-ivZcRD","request_id":"telegram-700000023","saved":true,"announced":true,"acknowledged":false}
+[17:27:03] phone user=424242 chat=424242 (update 700000025) >> /steer w-steer please rerun the lab smoke test and report back
+[17:27:03] bot -> chat=424242 << completed
+[17:28:11] phone user=424242 chat=424242 (update 700000026) >> /steer w-steer second check: confirm the cache was warmed
+[17:28:14] bot -> chat=424242 << completed
+[17:28:33] phone user=424242 chat=424242 (update 700000027) >> /steer w-steer /exit
+[17:28:33] phone user=424242 chat=424242 (update 700000028) >> /steer w-steer $(touch /tmp/fm-lab.wnWqz2/PWNED3)
+[17:28:33] phone user=424242 chat=424242 (update 700000029) >> /steer w-steer --dangerously-skip-permissions
+[17:28:33] phone user=424242 chat=424242 (update 700000030) >> /steer ../../etc hi
+[17:28:33] phone user=424242 chat=424242 (update 700000031) >> /steer w;rm hi
+[17:28:33] phone user=424242 chat=424242 (update 700000032) >> /steer nosuchtask hello there
+[17:28:33] phone user=424242 chat=424242 (update 700000033) >> /steer w-steer
+[17:28:33] phone user=424242 chat=424242 (update 700000034) >> /merge 42
+[17:28:33] phone user=424242 chat=424242 (update 700000035) >> /delete w-steer
+[17:28:33] phone user=424242 chat=424242 (update 700000036) >> /status; rm -rf ~
+[17:28:33] phone user=424242 chat=424242 (update 700000037) >> /note xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ...[4669 more chars]
+[17:28:33] phone user=424242 chat=424242 (update 700000038) >> /note ring the bell
+[17:28:33] bot -> chat=424242 << steer text cannot start with a parser-native prefix
+[17:28:33] bot -> chat=424242 << steer text cannot start with a parser-native prefix
+[17:28:33] bot -> chat=424242 << steer text cannot start with a parser-native prefix
+[17:28:33] bot -> chat=424242 << steer target or text is invalid
+[17:28:33] bot -> chat=424242 << steer target or text is invalid
+[17:28:33] bot -> chat=424242 << Firstmate owner script rejected request
+[17:28:33] bot -> chat=424242 << steer target or text is invalid
+[17:28:33] bot -> chat=424242 << unsupported Telegram command
+[17:28:33] bot -> chat=424242 << unsupported Telegram command
+[17:28:33] bot -> chat=424242 << unsupported Telegram command
+[17:28:33] bot -> chat=424242 << text is empty or too large
+[17:28:33] bot -> chat=424242 << text contains control bytes
+[17:29:10] phone user=424242 chat=424242 (update 700000039) >> /status 2
+[17:29:12] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t11","kind":"ship","state":"parked","name":"Lab task t11","doing":"review [path redacted] then pick postgres or sqlite"},{"id":"t12","kind":"ship","state":"working","name":"Lab task t12","doing":"harness busy (claude-hook)"},{"id":"w-steer","kind":"ship","state":"working","name":"Lab task w-steer","doing":"harness busy ...[173 more chars]
+[17:29:28] phone user=424242 chat=424242 (update 700000040) >> /decisions 2
+[17:29:30] bot -> chat=424242 << {"schema":"fm-bearings.v1","decisions_open":[{"id":"dec-11","key":"dec-11","verb":"captain-hold","summary":"Lab decision 11: captain choice 11 pending","owner":"(main)"},{"id":"dec-12","key":"dec-12","verb":"captain-hold","summary":"Approve deleting [path redacted] captain approval for [path redacted]","owner":"(main)"}],"pagination":{"page":2,"page_size":10,"colle ...[116 more chars]
+[17:29:32] phone user=424242 chat=424242 (update 700000041) >> /status
+[17:30:20] phone user=424242 chat=424242 (update 700000042) >> /steer rsm please check the remote build
+[17:30:23] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[{"id":"t01","kind":"ship","state":"working","name":"Lab task t01","doing":"harness busy (claude-hook)"},{"id":"t02","kind":"ship","state":"working","name":"Lab task t02","doing":"harness busy (claude-hook)"},{"id":"t03","kind":"ship","state":"working","name":"Lab task t03","doing":"harness busy (claude-hook)"},{"id":"t04","ki ...[873 more chars]
+[17:30:23] bot -> chat=424242 << steer unconfirmed - may have landed; check before resending

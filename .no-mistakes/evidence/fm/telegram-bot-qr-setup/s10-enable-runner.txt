@@ -1,0 +1,19 @@
+$ bin/fm-telegram.py enable
+registered: telegram-bot (telegram)
+exit=0
+
+$ bin/fm-procevent.sh list
+SOURCE                       ADAPTER      OWNER      PENDING
+telegram-bot                 telegram     none       0
+
+phone >> /status 2 (update 700000039)
+$ bin/fm-procevent.sh start telegram-bot   # one supervised runner round, as the watcher/reconcile would launch
+captured: $LAB/state/procevent-inbox/telegram-bot.1.result
+exit=0
+bot reply delivered by the runner round: {'page': 2, 'page_size': 10, 'collection': 'in_flight', 'next_page': None, 'next_offset': None, 'next_command': None}
+captured result files:
+$LAB/state/procevent-inbox/telegram-bot.1.handled
+$LAB/state/procevent-inbox/telegram-bot.1.result
+$LAB/state/procevent-inbox/telegram-bot.1.adapter
+$LAB/state/procevent/telegram-bot.56-1416287.last-launch
+$LAB/state/procevent/telegram-bot.source

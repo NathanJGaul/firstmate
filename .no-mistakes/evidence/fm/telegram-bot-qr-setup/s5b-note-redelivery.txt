@@ -1,0 +1,12 @@
+## primary wake queue after /note:
+1791930375	1	check	inbox:1791930375-mrDdtf	check: captain inbox note 1791930375-mrDdtf - check the lab deploy after lunch; $(touch /tmp/fm-lab.wnWqz2/PWNED) `touch /tmp/fm-lab.wnWqz2/PWNED2
+
+## simulate crash before offset publish: offset rolled back from 700000023 to 700000022, Telegram redelivers update 700000022
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 1; rejected 0; unconfirmed 0
+exit=0
+replies re-sent: 0; offset now 700000023
+## inbox notes after redelivery (must still be exactly one):
+1
+## wake queue lines (must still be one check wake):
+1

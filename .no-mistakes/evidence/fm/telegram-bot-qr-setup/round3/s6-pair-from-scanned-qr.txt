@@ -1,0 +1,27 @@
+s6-pair-setup-80x24 light DECODED https://t.me/fm_lab_bot?start=GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM
+s6-pair-setup-80x24 dark DECODED https://t.me/fm_lab_bot?start=GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM
+## phone camera scans the dark-theme 80x24 screen: https://t.me/fm_lab_bot?start=GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM
+## Telegram opens @fm_lab_bot and sends /start <nonce> from owner user 424242
+700000001
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+pairing.json: {'bot_username': 'fm_lab_bot', 'paired_user_id': '424242', 'paired_chat_id': '424242', 'paired_at': '2026-10-13T22:50:28Z'}
+## another user (666) photographs the same QR and replays the nonce
+700000002
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+exit=0
+## paired owner sends /status from the phone
+700000003
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+
+## chat transcript
+[17:50:28] phone user=424242 chat=424242 (update 700000001) >> /start GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM
+[17:50:28] phone user=666 chat=666 (update 700000002) >> /start GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM
+[17:50:28] phone user=424242 chat=424242 (update 700000003) >> /status
+[17:50:28] bot -> chat=424242 << Telegram paired.
+[17:50:28] bot -> chat=666 << Telegram pairing is already complete
+[17:50:28] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[],"pagination":{"page":1,"page_size":10,"collection":"in_flight","next_page":null,"next_offset":null,"next_command":null},"generated":"2026-10-13T22:50:28Z"}

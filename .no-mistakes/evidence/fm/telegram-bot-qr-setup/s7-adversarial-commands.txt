@@ -1,0 +1,20 @@
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 12; unconfirmed 0
+exit=0
+phone >> /steer w-steer /exit                                         | bot << steer text cannot start with a parser-native prefix
+phone >> /steer w-steer $(touch /tmp/fm-lab.wnWqz2/PWNED3)            | bot << steer text cannot start with a parser-native prefix
+phone >> /steer w-steer --dangerously-skip-permissions                | bot << steer text cannot start with a parser-native prefix
+phone >> /steer ../../etc hi                                          | bot << steer target or text is invalid
+phone >> /steer w;rm hi                                               | bot << steer target or text is invalid
+phone >> /steer nosuchtask hello there                                | bot << Firstmate owner script rejected request
+phone >> /steer w-steer                                               | bot << steer target or text is invalid
+phone >> /merge 42                                                    | bot << unsupported Telegram command
+phone >> /delete w-steer                                              | bot << unsupported Telegram command
+phone >> /status; rm -rf ~                                            | bot << unsupported Telegram command
+phone >> /note xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...(5006 chars)      | bot << text is empty or too large
+phone >> /note ring\a the bell                                        | bot << text contains control bytes
+
+worker inbox .msg count (unchanged at 3): 3; acted lines: 3
+notes (unchanged at 2): 2
+PWNED3 present? no
+all tasks still present: 13 metas

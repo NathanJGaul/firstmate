@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run a command against the lab home only: fleet overrides stripped, tmux pinned to the lab socket.
+LAB=/tmp/fm-lab.wnWqz2
+exec env -u NO_MISTAKES_GATE -u FM_GATE_REFUSE_BYPASS -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE \
+  -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE -u TMUX -u TMUX_PANE \
+  PATH="$LAB/tools/bin:$PATH" TMUX_TMPDIR="$LAB/tmux" FM_HOME="$LAB" \
+  FM_TELEGRAM_API_BASE="${FM_TELEGRAM_API_BASE:-http://127.0.0.1:$(cat "$LAB/api/port")/bot}" "$@"

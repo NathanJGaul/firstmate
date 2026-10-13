@@ -1,0 +1,24 @@
+operator$ /home/nathanjgaul/.no-mistakes/evidence/01M4VEQBXY5E40EYNFHPFTNPK8/rou
+nd3/lab-tools/fm bin/fm-telegram.py setup
+Telegram bot token:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

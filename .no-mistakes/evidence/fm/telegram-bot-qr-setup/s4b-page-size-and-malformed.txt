@@ -1,0 +1,36 @@
+## FM_TELEGRAM_PAGE_SIZE=4: walk /status by following next_command
+phone >> /status
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+  reply ids: ['t01', 't02', 't03', 't04'] next: /status 2
+phone >> /status 2
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+  reply ids: ['t05', 't06', 't07', 't08'] next: /status 3
+phone >> /status 3
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+  reply ids: ['t09', 't10', 't11', 't12'] next: /status 4
+phone >> /status 4
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+  reply ids: ['w-steer'] next: None
+## FM_TELEGRAM_PAGE_SIZE=0, phone >> /status
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+  reply: Telegram page size must be between 1 and 50
+## FM_TELEGRAM_PAGE_SIZE=51, phone >> /status
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+  reply: Telegram page size must be between 1 and 50
+## FM_TELEGRAM_PAGE_SIZE=abc, phone >> /status
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+  reply: Telegram page size must be between 1 and 50
+## phone >> /status 0
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+  reply: status page must be between 1 and 100000
+## phone >> /status abc
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+  reply: status page must be between 1 and 100000
+## phone >> /status 9999
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+  reply ids: [] next: None
+## phone >> /decisions -1
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+  reply: decisions page must be between 1 and 100000
+## leak sweep over every bot reply sent so far: occurrences of /home/, /tmp/, lab path, token
+0

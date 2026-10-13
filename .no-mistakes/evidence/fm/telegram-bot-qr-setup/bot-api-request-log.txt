@@ -1,0 +1,79 @@
+17:22:47 getMe token_ok=False params={}
+17:22:52 getMe token_ok=True params={}
+17:23:44 getMe token_ok=True params={}
+17:24:02 getUpdates token_ok=True params={"offset": 0, "timeout": 1, "allowed_updates": ["message"]}
+17:24:02 sendMessage token_ok=True params={"chat_id": 666}
+17:24:02 sendMessage token_ok=True params={"chat_id": 666}
+17:24:02 getUpdates token_ok=True params={"offset": 700000003, "timeout": 1, "allowed_updates": ["message"]}
+17:24:02 sendMessage token_ok=True params={"chat_id": 424242}
+17:24:02 getUpdates token_ok=True params={"offset": 700000004, "timeout": 1, "allowed_updates": ["message"]}
+17:24:02 sendMessage token_ok=True params={"chat_id": 666}
+17:24:02 getUpdates token_ok=True params={"offset": 700000005, "timeout": 1, "allowed_updates": ["message"]}
+17:24:02 sendMessage token_ok=True params={"chat_id": -1001234}
+17:24:02 sendMessage token_ok=True params={"chat_id": 666}
+17:25:31 getUpdates token_ok=True params={"offset": 700000007, "timeout": 1, "allowed_updates": ["message"]}
+17:25:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:34 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:36 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:38 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:51 getUpdates token_ok=True params={"offset": 700000011, "timeout": 1, "allowed_updates": ["message"]}
+17:25:52 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:53 getUpdates token_ok=True params={"offset": 700000012, "timeout": 1, "allowed_updates": ["message"]}
+17:25:54 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:55 getUpdates token_ok=True params={"offset": 700000013, "timeout": 1, "allowed_updates": ["message"]}
+17:25:56 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:57 getUpdates token_ok=True params={"offset": 700000014, "timeout": 1, "allowed_updates": ["message"]}
+17:25:58 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:59 getUpdates token_ok=True params={"offset": 700000015, "timeout": 1, "allowed_updates": ["message"]}
+17:25:59 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:59 getUpdates token_ok=True params={"offset": 700000016, "timeout": 1, "allowed_updates": ["message"]}
+17:25:59 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:59 getUpdates token_ok=True params={"offset": 700000017, "timeout": 1, "allowed_updates": ["message"]}
+17:25:59 sendMessage token_ok=True params={"chat_id": 424242}
+17:25:59 getUpdates token_ok=True params={"offset": 700000018, "timeout": 1, "allowed_updates": ["message"]}
+17:25:59 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:00 getUpdates token_ok=True params={"offset": 700000019, "timeout": 1, "allowed_updates": ["message"]}
+17:26:00 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:00 getUpdates token_ok=True params={"offset": 700000020, "timeout": 1, "allowed_updates": ["message"]}
+17:26:02 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:02 getUpdates token_ok=True params={"offset": 700000021, "timeout": 1, "allowed_updates": ["message"]}
+17:26:02 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:15 getUpdates token_ok=True params={"offset": 700000022, "timeout": 1, "allowed_updates": ["message"]}
+17:26:15 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:15 getUpdates token_ok=True params={"offset": 700000023, "timeout": 1, "allowed_updates": ["message"]}
+17:26:30 getUpdates token_ok=True params={"offset": 700000022, "timeout": 1, "allowed_updates": ["message"]}
+17:26:43 getUpdates token_ok=True params={"offset": 700000023, "timeout": 1, "allowed_updates": ["message"]}
+17:26:43 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:43 getUpdates token_ok=True params={"offset": 700000023, "timeout": 1, "allowed_updates": ["message"]}
+17:26:43 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:44 getUpdates token_ok=True params={"offset": 700000023, "timeout": 1, "allowed_updates": ["message"]}
+17:26:44 sendMessage token_ok=True params={"chat_id": 424242}
+17:26:44 getUpdates token_ok=True params={"offset": 700000024, "timeout": 1, "allowed_updates": ["message"]}
+17:26:46 sendMessage token_ok=True params={"chat_id": 424242}
+17:27:03 getUpdates token_ok=True params={"offset": 700000025, "timeout": 1, "allowed_updates": ["message"]}
+17:27:03 sendMessage token_ok=True params={"chat_id": 424242}
+17:27:05 getUpdates token_ok=True params={"offset": 700000025, "timeout": 1, "allowed_updates": ["message"]}
+17:28:11 getUpdates token_ok=True params={"offset": 700000026, "timeout": 1, "allowed_updates": ["message"]}
+17:28:14 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:16 getUpdates token_ok=True params={"offset": 700000026, "timeout": 1, "allowed_updates": ["message"]}
+17:28:33 getUpdates token_ok=True params={"offset": 700000027, "timeout": 1, "allowed_updates": ["message"]}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:33 sendMessage token_ok=True params={"chat_id": 424242}
+17:28:50 getUpdates token_ok=True params={"offset": 700000039, "timeout": 1, "allowed_updates": ["message"]}
+17:29:10 getUpdates token_ok=True params={"offset": 700000039, "timeout": 2, "allowed_updates": ["message"]}
+17:29:12 sendMessage token_ok=True params={"chat_id": 424242}
+17:29:28 getUpdates token_ok=True params={"offset": 700000040, "timeout": 3, "allowed_updates": ["message"]}
+17:29:30 sendMessage token_ok=True params={"chat_id": 424242}
+17:30:21 getUpdates token_ok=True params={"offset": 700000041, "timeout": 1, "allowed_updates": ["message"]}
+17:30:23 sendMessage token_ok=True params={"chat_id": 424242}
+17:30:23 sendMessage token_ok=True params={"chat_id": 424242}

@@ -1,0 +1,27 @@
+phone >> /note check the lab deploy after lunch; $(touch $LAB/PWNED) `touch $LAB/PWNED2` ; rm -rf ~   (update 700000022)
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+bot reply: {"schema":"fm-inbox-note.v1","outcome":"created","id":"1791930375-mrDdtf","request_id":"telegram-700000022","saved":true,"announced":true,"acknowledged":false}
+
+## primary's view: bin/fm-inbox.sh list
+1791930375-mrDdtf
+    check the lab deploy after lunch; $(touch /tmp/fm-lab.wnWqz2/PWNED) `touch /tmp/fm-lab.wnWqz2/PWNED2` ; rm -rf ~
+
+## shell metacharacters were not evaluated:
+ls: cannot access '/tmp/fm-lab.wnWqz2/PWNED*': No such file or directory
+
+## new state entries (wake queue etc.):
+> inbox
+> .wake-queue
+> .wake-queue.seq
+> .watcher-down
+
+## replay the SAME Telegram update id 700000022 (Telegram redelivery)
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+replies sent for the replay: 0
+## inbox after replay:
+1791930375-mrDdtf
+    check the lab deploy after lunch; $(touch /tmp/fm-lab.wnWqz2/PWNED) `touch /tmp/fm-lab.wnWqz2/PWNED2` ; rm -rf ~

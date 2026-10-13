@@ -1,0 +1,6 @@
+REPLY chars=1240 in_flight=['t01', 't02', 't03', 't04', 't05', 't06', 't07', 't08', 't09', 't10'] pagination={"page": 1, "page_size": 10, "collection": "in_flight", "next_page": 2, "next_offset": 10, "next_command": "/status 2"}
+REPLY chars=540 in_flight=['t11', 't12', 'w-steer'] pagination={"page": 2, "page_size": 10, "collection": "in_flight", "next_page": null, "next_offset": null, "next_command": null}
+    t11 -> review [path redacted] then pick postgres or sqlite
+REPLY chars=1461 decisions_open=['dec-01', 'dec-02', 'dec-03', 'dec-04', 'dec-05', 'dec-06', 'dec-07', 'dec-08', 'dec-09', 'dec-10'] pagination={"page": 1, "page_size": 10, "collection": "decisions_open", "next_page": 2, "next_offset": 10, "next_command": "/decisions 2"}
+REPLY chars=483 decisions_open=['dec-11', 'dec-12'] pagination={"page": 2, "page_size": 10, "collection": "decisions_open", "next_page": null, "next_offset": null, "next_command": null}
+    dec-12 -> Approve deleting [path redacted] captain approval for [path redacted]

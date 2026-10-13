@@ -1,0 +1,31 @@
+(note: 001.msg = first Telegram steer and 002.msg = a direct fm-send diagnostic were recorded while the earlier bash stand-in was judged a dead agent; they remain pending in the inbox)
+phone >> /steer w-steer second check: confirm the cache was warmed   (update 700000026)
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+bot reply: completed
+
+## worker pane (fleet:fm-w-steer) after the steer:
+scripted worker ready; inbox=/tmp/fm-lab.wnWqz2/state/w-steer.inbox
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'w-steer.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+doorbell received: : Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'w-steer.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+--- acting on 001.msg: please rerun the lab smoke test and report back
+    moved 001.msg -> handled/
+--- acting on 002.msg: diagnostic direct fm-send ring check
+    moved 002.msg -> handled/
+--- acting on 003.msg: second check: confirm the cache was warmed
+    moved 003.msg -> handled/
+
+## worker inbox files:
+./handled/001.msg
+./handled/002.msg
+./handled/003.msg
+## acted log:
+001.msg please rerun the lab smoke test and report back
+002.msg diagnostic direct fm-send ring check
+003.msg second check: confirm the cache was warmed
+
+## redelivery of update 700000026 (offset rolled back), must not create or ring a new record
+processed 0; duplicates 2; rejected 0; unconfirmed 0
+exit=0
+replies re-sent: 0; inbox .msg count (root+handled): 3; acted log lines: 3

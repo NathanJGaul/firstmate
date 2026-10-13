@@ -1,0 +1,17 @@
+# Round 3 QR decode matrix: bin/fm-telegram.py setup run in a bash pane on the lab tmux socket,
+# visible screen only (tmux capture-pane -e -p, no scrollback) -> render_ansi.py -> zbarimg
+capture                                        theme  pane      qr_rows result
+s1-setup-piped-80x24                           light  80x24     21     DECODED https://t.me/fm_lab_bot?start=P0U2KNcosSfiyYXjJzOsEjJfQoS7pf0Z
+s1-setup-piped-80x24                           dark   80x24     21     DECODED https://t.me/fm_lab_bot?start=P0U2KNcosSfiyYXjJzOsEjJfQoS7pf0Z
+s2-setup-interactive-80x24                     light  80x24     21     DECODED https://t.me/fm_lab_bot?start=OTargjuIWJXxwSqcDPR2vkPrzofLd2y3
+s2-setup-interactive-80x24                     dark   80x24     21     DECODED https://t.me/fm_lab_bot?start=OTargjuIWJXxwSqcDPR2vkPrzofLd2y3
+s3-setup-piped-120x30                          light  120x30    21     DECODED https://t.me/fm_lab_bot?start=WctOJrKs-v9vHoZRolJjKy59G14U2Uou
+s3-setup-piped-120x30                          dark   120x30    21     DECODED https://t.me/fm_lab_bot?start=WctOJrKs-v9vHoZRolJjKy59G14U2Uou
+s4b-setup-longest-username-120x30              light  120x30    23     DECODED https://t.me/firstmate_remote_control_lab_bot?start=yCCF_wTLrozIHAhTj-j54d0l-WuPlkVa
+s4b-setup-longest-username-120x30              dark   120x30    23     DECODED https://t.me/firstmate_remote_control_lab_bot?start=yCCF_wTLrozIHAhTj-j54d0l-WuPlkVa
+s4-setup-longest-username-80x24                light  80x24     23     DECODED https://t.me/firstmate_remote_control_lab_bot?start=7nVIxeFaiS7A1gi65x42wrmODnkAHpnH
+s4-setup-longest-username-80x24                dark   80x24     23     DECODED https://t.me/firstmate_remote_control_lab_bot?start=7nVIxeFaiS7A1gi65x42wrmODnkAHpnH
+s5-longest-username-two-line-prompt-80x24      light  80x24     22     DECODED https://t.me/firstmate_remote_control_lab_bot?start=hYJADPgHJHpoo5pSjqWh370GCmLfv_Dy
+s5-longest-username-two-line-prompt-80x24      dark   80x24     22     DECODED https://t.me/firstmate_remote_control_lab_bot?start=hYJADPgHJHpoo5pSjqWh370GCmLfv_Dy
+s6-pair-setup-80x24                            light  80x24     21     DECODED https://t.me/fm_lab_bot?start=GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM
+s6-pair-setup-80x24                            dark   80x24     21     DECODED https://t.me/fm_lab_bot?start=GqK4N0mNzC9OI8ewtqU2hP7J_OIpr6aM

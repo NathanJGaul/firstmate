@@ -1,0 +1,1 @@
+pane size 120x30

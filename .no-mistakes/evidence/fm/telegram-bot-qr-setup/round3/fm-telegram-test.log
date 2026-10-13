@@ -1,0 +1,21 @@
+ok - setup stores token privately and prints a decodable QR deep link
+ok - setup reads the bot token from a non-echoing prompt and never from argv
+ok - QR pairing is one-time and rotates nonce
+ok - expired and malformed pairing nonces are rejected
+ok - Telegram deep-link pairing binds user and chat identities
+ok - paired command owner boundaries are enforced
+ok - a steer whose fm-send delivery is unconfirmed or outlives its bound replies that it may have landed
+ok - status and decision pagination continue after response compaction without skipping or repeating rows
+ok - legacy inbox idempotency compares exact record bodies
+ok - poll persists updates and deduplicates replay
+ok - Telegram polling enablement uses the process-event owner
+ok - poll records malformed API failures without changing command state
+ok - poll retries durable outbound responses without re-running local effects
+ok - process-event adapter uses stable source and bounded result classification
+ok - Bot API redirects are refused as recorded poll errors
+ok - permanent Bot API response rejections release the update offset
+ok - an unconfirmed steer is recorded and counted as unconfirmed rather than rejected
+ok - a different bot starts from a fresh offset and update namespace
+ok - offsets older than Telegram update retention are not trusted
+ok - rejected command replies redact local filesystem paths
+exit=0

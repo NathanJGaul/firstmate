@@ -1,0 +1,19 @@
+$ bin/fm-procevent.sh reconcile   # what the watcher runs every cycle
+reconciled: published=0 started=1 stopped=0 uncertain=0 failed=0
+exit=0
+SOURCE                       ADAPTER      OWNER      PENDING
+telegram-bot                 telegram     live       0
+listener processes for this lab: 2 adapter / 3 poll
+phone >> /decisions 2 (update 700000040) - no manual poll
+answered by background listener after ~2s: ['dec-11', 'dec-12']
+
+$ bin/fm-telegram.py disable
+retired: telegram-bot
+exit=0
+no sources registered
+listener processes after disable: 2 adapter / 2 poll
+phone >> /status after disable (update 700000041): replies in 6s = 0 (expected 0)
+$ bin/fm-procevent.sh reconcile   # must not resurrect a retired source
+reconciled: published=0 started=0 stopped=0 uncertain=0 failed=0
+replies after reconcile: 0 (expected 0)
+lab-home telegram/procevent processes still running after disable: 0

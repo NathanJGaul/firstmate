@@ -1,0 +1,3 @@
+$ bin/fm-telegram.py poll --once   (default page size 10)
+processed 4; duplicates 0; rejected 0; unconfirmed 0
+exit=0

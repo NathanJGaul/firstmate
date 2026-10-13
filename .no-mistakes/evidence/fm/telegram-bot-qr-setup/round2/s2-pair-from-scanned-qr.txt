@@ -1,0 +1,31 @@
+## phone camera scans the dark-theme QR: https://t.me/fm_lab_bot?start=zXN0Z77QCDWx1aC6zVTB_5d8L3FPZ2Yc
+## Telegram opens the bot and sends /start <nonce> from owner user 424242
+700000001
+$ bin/fm-telegram.py poll --once
+processed 1; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+pairing.json: {'bot_username': 'fm_lab_bot', 'paired_user_id': '424242', 'paired_chat_id': '424242', 'paired_at': '2026-10-13T22:38:51Z'}
+## attacker 666 photographs the same QR and replays the nonce
+700000002
+$ bin/fm-telegram.py poll --once
+processed 0; duplicates 0; rejected 1; unconfirmed 0
+exit=0
+## paired owner: /status, /decisions, /note
+700000003
+700000004
+700000005
+$ bin/fm-telegram.py poll --once
+processed 3; duplicates 0; rejected 0; unconfirmed 0
+exit=0
+
+## chat transcript
+[17:38:50] phone user=424242 chat=424242 (update 700000001) >> /start zXN0Z77QCDWx1aC6zVTB_5d8L3FPZ2Yc
+[17:38:51] phone user=666 chat=666 (update 700000002) >> /start zXN0Z77QCDWx1aC6zVTB_5d8L3FPZ2Yc
+[17:38:51] phone user=424242 chat=424242 (update 700000003) >> /status
+[17:38:51] phone user=424242 chat=424242 (update 700000004) >> /decisions
+[17:38:51] phone user=424242 chat=424242 (update 700000005) >> /note round2 QR pairing check
+[17:38:51] bot -> chat=424242 << Telegram paired.
+[17:38:51] bot -> chat=666 << Telegram pairing is already complete
+[17:38:51] bot -> chat=424242 << {"schema":"fm-bearings.v1","in_flight":[],"pagination":{"page":1,"page_size":10,"collection":"in_flight","next_page":null,"next_offset":null,"next_command":null},"generated":"2026-10-13T22:38:51Z"}
+[17:38:52] bot -> chat=424242 << {"schema":"fm-bearings.v1","decisions_open":[],"pagination":{"page":1,"page_size":10,"collection":"decisions_open","next_page":null,"next_offset":null,"next_command":null},"generated":"2026-10-13T22:38:51Z"}
+[17:38:52] bot -> chat=424242 << {"schema":"fm-inbox-note.v1","outcome":"created","id":"1791931132-hdFQ0d","request_id":"telegram-700000005","saved":true,"announced":true,"acknowledged":false}
