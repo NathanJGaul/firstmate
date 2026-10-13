@@ -305,7 +305,7 @@ if grep -F '"nonce"' "$home/state/telegram/pairing.json" >/dev/null 2>&1; then
 fi
 
 set +e
-direct_pair=$(FM_HOME="$home" "$TELEGRAM" pair --json --nonce "$nonce" --user-id 7 --chat-id 8 2>&1)
+FM_HOME="$home" "$TELEGRAM" pair --json --nonce "$nonce" --user-id 7 --chat-id 8 >/dev/null 2>&1
 direct_pair_code=$?
 set -e
 expect_code 2 "$direct_pair_code" 'direct pairing bypass is unavailable'
@@ -410,9 +410,9 @@ assert_contains "$unknown" 'unsupported Telegram command' 'unsupported command r
 expect_code 1 "$control_code" 'control bytes are rejected'
 assert_contains "$control" 'contains control bytes' 'control-byte rejection is explicit'
 set +e
-blank_note=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 9 --text '/note ' 2>&1)
+FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 9 --text '/note ' >/dev/null 2>&1
 blank_note_code=$?
-blank_steer=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 10 --text '/steer worker ' 2>&1)
+FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 10 --text '/steer worker ' >/dev/null 2>&1
 blank_steer_code=$?
 parser_slash=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$owner_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 11 --text '/steer worker /exit' 2>&1)
 parser_slash_code=$?
@@ -654,8 +654,8 @@ cat > "$api/updates" <<'JSON'
 JSON
 touch "$api/fail-send"
 set +e
-response_outage=$(FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" FM_TELEGRAM_POLL_TIMEOUT=1 \
-  "$TELEGRAM" poll --once --json 2>&1)
+FM_HOME="$home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" FM_TELEGRAM_POLL_TIMEOUT=1 \
+  "$TELEGRAM" poll --once --json >/dev/null 2>&1
 response_outage_code=$?
 set -e
 expect_code 1 "$response_outage_code" 'failed Telegram response keeps poll pending'
