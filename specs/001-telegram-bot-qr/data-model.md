@@ -16,9 +16,10 @@ Successful pairing atomically replaces the nonce hash with a fresh nonce hash an
 `state/telegram/inbox/<update-id>.json` stores the durable update envelope and effect state before deduplication, owner dispatch, or offset publication.
 `state/telegram/inbound/<update-id>.json` stores schema, update ID, receipt time, bounded command text, and identity IDs.
 `state/telegram/processed/<update-id>` is an empty exclusive marker claimed after the inbox record; a marker never suppresses an unfinished inbox effect.
-`state/telegram/offset` stores the next Telegram offset as a decimal integer.
+`state/telegram/offset` stores the next Telegram offset as a decimal integer; an offset older than Telegram's 24-hour update retention is not reused.
+`state/telegram/bot-id` names the bot whose updates own the offset, inbox, inbound, processed, and outbound records; polling a different bot first moves those records into `state/telegram/retired/`.
 
-`state/telegram/outbound/<sequence>.json` stores schema, update ID, chat ID, command, bounded response text, receipt time, and API result.
+`state/telegram/outbound/<sequence>.json` stores schema, update ID, chat ID, command, bounded response text, receipt time, and API result; a Bot API HTTP 400 or 403 response is a terminal `rejected` delivery.
 `state/telegram/errors/<sequence>.json` stores a bounded poll failure and timestamp without bot credentials.
 Bot tokens never appear in any record.
 

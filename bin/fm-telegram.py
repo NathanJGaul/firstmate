@@ -42,6 +42,9 @@ PORTABLE_OWNER_TIMEOUT = 20
 DEFAULT_POLL_TIMEOUT = 30
 MAX_POLL_TIMEOUT = 50
 DEFAULT_PAIRING_TTL = 600
+TELEGRAM_UPDATE_RETENTION = 24 * 60 * 60
+TELEGRAM_REJECTED_CODES = (400, 403)
+UPDATE_STATE_NAMES = ("offset", "inbox", "inbound", "processed", "outbound")
 DEFAULT_TELEGRAM_PAGE_SIZE = 10
 MAX_TELEGRAM_PAGE_SIZE = 50
 MAX_TELEGRAM_PAGE = 100000
@@ -69,6 +72,10 @@ class TelegramError(Exception):
 
 
 class DurableOwnerError(TelegramError):
+    pass
+
+
+class TelegramRejected(TelegramError):
     pass
 
 
@@ -229,14 +236,13 @@ def api_base() -> str:
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req: urllib.request.Request, newurl: str, code: int, msg: str, headers: Any, fp: Any) -> None:
-        _validate_api_url(urllib.parse.urljoin(req.full_url, newurl))
+    def redirect_request(self, req: urllib.request.Request, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
         raise TelegramError("Telegram API redirects are not allowed")
 
 
-def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[str, Any]:
+def api_call(method: str, params: dict[str, Any], timeout: float = 35, token: str | None = None) -> dict[str, Any]:
     base = api_base()
-    token = token_value()
+    token = token or token_value()
     url = f"{base}{urllib.parse.quote(token, safe=':')}/{method}"
     body = json.dumps(params, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
@@ -246,6 +252,10 @@ def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[s
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except TelegramError:
         raise
+    except urllib.error.HTTPError as exc:
+        if exc.code in TELEGRAM_REJECTED_CODES:
+            raise TelegramRejected("Telegram API rejected request") from exc
+        raise TelegramError("Telegram API unavailable") from exc
     except (OSError, urllib.error.URLError, TimeoutError) as exc:
         raise TelegramError("Telegram API unavailable") from exc
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -255,6 +265,8 @@ def api_call(method: str, params: dict[str, Any], timeout: float = 35) -> dict[s
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise TelegramError("Telegram API returned malformed JSON") from exc
     if not isinstance(payload, dict) or payload.get("ok") is not True:
+        if isinstance(payload, dict) and payload.get("error_code") in TELEGRAM_REJECTED_CODES:
+            raise TelegramRejected("Telegram API rejected request")
         raise TelegramError("Telegram API rejected request")
     return payload
 
@@ -1115,10 +1127,7 @@ def portable_snapshot(all_decisions: bool, page_kind: str | None = None, page_of
         "decisions_open": visible_decisions,
         "omitted": omitted,
     }
-    raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
-    if len(raw.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        return _compact_bearings_output(result)
-    return raw
+    return json.dumps(result, sort_keys=True, separators=(",", ":"))
 
 
 def _portable_windows_process(pid: int, terminate: bool = False) -> tuple[Any, Any, str] | None:
@@ -1770,62 +1779,6 @@ def _telegram_redact_value(value: Any) -> Any:
     return value
 
 
-def _compact_bearings_output(value: dict[str, Any]) -> str:
-    array_counts = {key: len(item) for key, item in value.items() if isinstance(item, list)}
-    existing = value.get("omitted")
-
-    def build(row_limit: int, text_limit: int) -> str:
-        def short(item: Any) -> str:
-            text = _telegram_redact_paths(str(item or "")).replace("\r", " ").replace("\n", " ")
-            return text[:text_limit]
-
-        def rows(name: str) -> list[dict[str, Any]]:
-            source = value.get(name)
-            if not isinstance(source, list):
-                return []
-            result: list[dict[str, Any]] = []
-            for row in source[:row_limit]:
-                if not isinstance(row, dict):
-                    continue
-                names = ("id", "key", "verb", "summary", "owner") if name == "decisions_open" else ("id", "kind", "state", "name", "doing")
-                result.append({key: short(row.get(key)) for key in names if row.get(key) is not None})
-            return result
-
-        compact: dict[str, Any] = {
-            "schema": "fm-bearings.v1",
-            "summary": array_counts,
-            "tasks": rows("tasks"),
-            "in_flight": rows("in_flight"),
-            "decisions_open": rows("decisions_open"),
-            "omitted": [],
-        }
-        if isinstance(value.get("pagination"), dict):
-            compact["pagination"] = {
-                key: value["pagination"].get(key)
-                for key in ("page", "page_size", "next_page", "next_command")
-                if key in value["pagination"]
-            }
-        omitted: list[dict[str, Any]] = []
-        if isinstance(existing, list):
-            for item in existing[:4]:
-                if isinstance(item, dict):
-                    omitted.append({key: short(item.get(key)) for key in ("surface", "reveal", "count") if item.get(key) is not None})
-        for key in ("tasks", "in_flight", "decisions_open"):
-            total = array_counts.get(key, 0)
-            shown = len(compact[key])
-            if total > shown:
-                omitted.append({"surface": key, "count": total - shown, "reveal": "request bounded status again"})
-        compact["omitted"] = omitted[:8]
-        compact["omitted_count"] = sum(int(item.get("count", 0)) for item in omitted if str(item.get("count", "")).isdigit())
-        return json.dumps(compact, separators=(",", ":"))
-
-    for row_limit, text_limit in ((3, 40), (2, 32), (1, 24), (0, 16)):
-        encoded = build(row_limit, text_limit)
-        if len(encoded) <= MAX_MESSAGE_CHARS:
-            return encoded
-    return json.dumps({"schema": "fm-bearings.v1", "omitted": [{"surface": "status", "count": 1, "reveal": "request bounded status again"}]}, separators=(",", ":"))
-
-
 def _telegram_owner_output(output: str) -> str:
     try:
         value = json.loads(output)
@@ -1841,8 +1794,6 @@ def _telegram_owner_output(output: str) -> str:
     encoded = json.dumps(value, separators=(",", ":"))
     if len(encoded) <= MAX_MESSAGE_CHARS:
         return encoded
-    if value.get("schema") == "fm-bearings.v1":
-        return _compact_bearings_output(value)
     schema = value.get("schema") if isinstance(value.get("schema"), str) else "fm-telegram-owner-result.v1"
     return json.dumps({"schema": schema, "omitted": True, "message": "Firstmate response exceeded Telegram's message limit"}, separators=(",", ":"))
 
@@ -1945,15 +1896,15 @@ def _telegram_page_number(text: str, command: str) -> tuple[int, int | None]:
     raw = text[len(prefix):]
     parts = raw.split(":")
     if len(parts) not in (1, 2) or any(re.fullmatch(r"[0-9]{1,7}", part) is None for part in parts):
-        raise TelegramError(f"{command} page must be between 1 and {MAX_TELEGRAM_PAGE}")
+        raise TelegramError(f"{command[1:]} page must be between 1 and {MAX_TELEGRAM_PAGE}")
     page = int(parts[0])
     if page < 1 or page > MAX_TELEGRAM_PAGE:
-        raise TelegramError(f"{command} page must be between 1 and {MAX_TELEGRAM_PAGE}")
+        raise TelegramError(f"{command[1:]} page must be between 1 and {MAX_TELEGRAM_PAGE}")
     if len(parts) == 1:
         return page, None
     offset = int(parts[1])
     if offset < 0 or offset > MAX_TELEGRAM_PAGE * MAX_TELEGRAM_PAGE_SIZE:
-        raise TelegramError(f"{command} continuation is malformed")
+        raise TelegramError(f"{command[1:]} continuation is malformed")
     return page, offset
 
 
@@ -2204,7 +2155,7 @@ def apply_effect(record: dict[str, Any]) -> None:
         record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
         return
     except TelegramError as exc:
-        reply = str(exc)
+        reply = _telegram_redact_paths(str(exc))
         outcome = "rejected"
     record.update({"state": "response_pending", "effect": "complete", "reply": bounded(reply), "outcome": outcome, "command": command})
     record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
@@ -2227,6 +2178,10 @@ def complete_update(record: dict[str, Any]) -> bool:
         record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
     try:
         send_message(chat_id, str(record["update_id"]), str(record.get("command", "rejected")), str(record.get("reply", "")), sequence)
+    except TelegramRejected:
+        record.update({"state": "complete", "delivery": "rejected"})
+        record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
+        return True
     except TelegramError:
         record["delivery"] = "pending"
         record_json(state_dir() / "inbox", f"{record['update_id']}.json", record)
@@ -2237,9 +2192,11 @@ def complete_update(record: dict[str, Any]) -> bool:
 
 
 def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
+    token = token_value()
+    claim_update_state(token.split(":", 1)[0])
     offset = read_offset()
     timeout = poll_timeout()
-    response = api_call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 5)
+    response = api_call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 5, token=token)
     updates = response.get("result")
     if not isinstance(updates, list) or len(_json_encode(updates, "Telegram update response")) > MAX_UPDATE_BYTES:
         raise TelegramError("Telegram update response is malformed or too large")
@@ -2256,7 +2213,7 @@ def _poll_once(machine: bool, event: bool = False) -> dict[str, Any]:
         persist_inbound(record)
         marker = state_dir() / "processed" / update_id
         marker_was_present = not claim_marker(marker)
-        if record.get("effect") == "complete" and record.get("delivery") in ("sent", "not-applicable"):
+        if record.get("effect") == "complete" and record.get("delivery") in ("sent", "not-applicable", "rejected"):
             duplicates += 1
             continue
         if marker_was_present:
@@ -2356,8 +2313,10 @@ def send_message(chat_id: str, update_id: str, command: str, text: str, sequence
     record_json(out_dir, f"{sequence}.json", record)
     try:
         api_call("sendMessage", {"chat_id": int(chat_id), "text": text})
-    except TelegramError:
+    except TelegramError as exc:
         record["error"] = "Telegram API unavailable or rejected response"
+        if isinstance(exc, TelegramRejected):
+            record["delivery"] = "rejected"
         record_json(out_dir, f"{sequence}.json", record)
         raise
     record.update({"api_ok": True, "delivery": "sent"})
@@ -2377,7 +2336,31 @@ def read_offset() -> int:
     value = read_text(path)
     if numeric_value(value, ID_RE, MAX_TELEGRAM_OFFSET) is None:
         raise TelegramError("Telegram offset is malformed")
-    return int(value)
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError as exc:
+        raise TelegramError("Telegram offset is unreadable") from exc
+    return int(value) if age <= TELEGRAM_UPDATE_RETENTION else 0
+
+
+def claim_update_state(bot_id: str) -> None:
+    path = state_dir() / "bot-id"
+    previous = read_text(path) if path.exists() or path.is_symlink() else None
+    if previous == bot_id:
+        return
+    if previous is not None:
+        if numeric_value(previous, ID_RE) is None:
+            raise TelegramError("Telegram bot identity state is malformed")
+        retired = state_dir() / "retired" / f"{previous}-{now()}-{secrets.token_hex(4)}"
+        for name in UPDATE_STATE_NAMES:
+            source = state_dir() / name
+            if source.exists() or source.is_symlink():
+                ensure_private_dir(retired)
+                try:
+                    os.replace(source, retired / name)
+                except OSError as exc:
+                    raise TelegramError("Telegram update state could not be retired") from exc
+    atomic_write(path, f"{bot_id}\n".encode())
 
 
 

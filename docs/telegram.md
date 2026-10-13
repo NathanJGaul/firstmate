@@ -55,3 +55,6 @@ Repeated Telegram update IDs do not execute commands twice.
 
 Polling errors are recorded as bounded local evidence and do not mutate pairing state.
 A temporary Telegram outage leaves the update offset unchanged. A later process-event retry reuses the durable effect and outbound record, so a response may be delivered again but the local command is not re-executed.
+A response that the Bot API permanently rejects with HTTP 400 or 403, such as one to a user who blocked the bot, is recorded as a terminal `rejected` delivery and the offset advances.
+An offset older than Telegram's 24-hour update retention is not reused.
+When polling uses a different bot than the one recorded in `state/telegram/bot-id`, it first moves the offset, inbox, inbound, processed-update, and outbound records into `state/telegram/retired/`.

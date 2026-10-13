@@ -1023,6 +1023,28 @@ CORR=$(newest_remote_inbox_corr)
 assert_grep "FM_PENDING_REPLY_EXISTING_CORR=$CORR" "$TMP_ROOT/send.err" "ambiguous remote send did not print its correlation-reusing command"
 phase=$(grep '^phase=' "$PARENT/state/pending-replies/$CORR" | cut -d= -f2-)
 [ "$phase" = delivery_unknown ] || fail "ambiguous remote send did not preserve its pending expectation"
+# The remote worker acknowledges with the command its seeded charter renders,
+# and the documented correlation-reusing resend then lands on that
+# acknowledged record instead of enqueueing a duplicate instruction.
+ack_template=$(sed -n 's/.*`\(mv [^`]*\/NNN\.msg [^`]*\)`.*/\1/p' "$REMOTE_HOME/data/charter.md" | head -1)
+[ -n "$ack_template" ] || fail "remote charter did not render an inbox acknowledgement command"
+corr_record=$(grep -l "corr=$CORR" "$PARENT_ROUTE_INBOX"/*.msg)
+corr_name=${corr_record##*/}
+bash -c "${ack_template//NNN/${corr_name%.msg}}" || fail "the remote charter's acknowledgement command failed: $ack_template"
+assert_absent "$corr_record" "the remote charter's acknowledgement left the record unhandled"
+assert_present "$PARENT_ROUTE_INBOX/handled/$corr_name" "the remote charter's acknowledgement did not file the record into handled/"
+records_before_resend=$(find "$PARENT_ROUTE_INBOX" "$PARENT_ROUTE_INBOX/handled" -maxdepth 1 -name '*.msg' | wc -l | tr -d ' ')
+doorbells_before_resend=$(grep -c 'Firstmate instruction waiting' "$HERDR_LOG")
+remote_env env FM_PENDING_REPLY_EXISTING_CORR="$CORR" "$ROOT/bin/fm-send.sh" fm-ios 'report the build result' \
+  > "$TMP_ROOT/resend.out" 2> "$TMP_ROOT/resend.err" \
+  || fail "correlation-reusing resend failed: $(cat "$TMP_ROOT/resend.err")"
+records_after_resend=$(find "$PARENT_ROUTE_INBOX" "$PARENT_ROUTE_INBOX/handled" -maxdepth 1 -name '*.msg' | wc -l | tr -d ' ')
+[ "$records_after_resend" -eq "$records_before_resend" ] \
+  || fail "correlation-reusing resend enqueued a duplicate instruction, went $records_before_resend -> $records_after_resend"
+assert_absent "$corr_record" "correlation-reusing resend restored the acknowledged record"
+[ "$(grep -c 'Firstmate instruction waiting' "$HERDR_LOG")" -eq "$doorbells_before_resend" ] \
+  || fail "correlation-reusing resend rang the doorbell for an acknowledged record"
+pass "a remote-seeded charter acknowledges host-local records, and a correlation-reusing resend lands on the acknowledged record"
 printf 'done [corr=%s]: remote build passed\n' "$CORR" >> "$REMOTE_HOME/state/parent-replies.status"
 SID='remote-reply-ios'
 await_reply_result "$PARENT/state/procevent-inbox/$SID.1.result" \

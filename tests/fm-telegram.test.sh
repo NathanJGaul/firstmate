@@ -34,6 +34,13 @@ class Handler(BaseHTTPRequestHandler):
             stream.write(body + b"\n")
         with open(root + "/paths", "a", encoding="utf-8") as stream:
             stream.write(self.path + "\n")
+        if os.path.exists(root + "/redirect"):
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:1/redirected")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        status = 200
         if self.path.endswith("/getMe"):
             payload = {"ok": True, "result": {"id": 99, "is_bot": True, "username": "firstmate_test_bot"}}
         elif self.path.endswith("/getUpdates"):
@@ -45,12 +52,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.endswith("/sendMessage"):
             if os.path.exists(root + "/fail-send"):
                 payload = {"ok": False, "error_code": 503, "description": "send unavailable"}
+            elif os.path.exists(root + "/reject-send"):
+                status = 403
+                payload = {"ok": False, "error_code": 403, "description": "Forbidden: bot was blocked by the user"}
             else:
                 payload = {"ok": True, "result": {"message_id": 1}}
         else:
             payload = {"ok": False, "error_code": 404, "description": "unknown"}
         raw = json.dumps(payload).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -357,6 +367,7 @@ cat > "$pagination_root/bin/fm-bearings-snapshot.sh" <<'SH'
 #!/usr/bin/env python3
 import json
 import os
+import sys
 
 offset = int(os.environ.get("FM_BEARINGS_IN_FLIGHT_OFFSET", "0"))
 limit = int(os.environ.get("FM_BEARINGS_IN_FLIGHT", "20"))
@@ -368,6 +379,16 @@ end = offset + limit
 result = {"schema": "fm-bearings.v1", "generated": "2026-01-01T00:00:00Z", "in_flight": rows[offset:end], "decisions_open": [], "omitted": []}
 if end < len(rows):
     result["omitted"].append({"surface": f"in_flight showing {end} of {len(rows)}", "count": len(rows) - end})
+if os.environ.get("FM_BEARINGS_DECISIONS_PAGED") == "1" and "--all-decisions" in sys.argv:
+    decisions = [
+        {"id": f"task-{index:03d}", "key": f"q{index:03d}", "verb": "needs-decision", "summary": "s" * 200, "owner": "main"}
+        for index in range(45)
+    ]
+    decisions_offset = int(os.environ.get("FM_BEARINGS_DECISIONS_OFFSET", "0"))
+    decisions_end = decisions_offset + int(os.environ.get("FM_BEARINGS_DECISIONS", "20"))
+    result["decisions_open"] = decisions[decisions_offset:decisions_end]
+    if decisions_end < len(decisions):
+        result["omitted"].append({"surface": f"decisions_open showing {decisions_end} of {len(decisions)}", "count": len(decisions) - decisions_end})
 print(json.dumps(result))
 SH
 chmod 755 "$pagination_root/bin/fm-bearings-snapshot.sh"
@@ -391,7 +412,39 @@ first = json.loads(sys.argv[1])
 second = json.loads(sys.argv[2])
 assert second["in_flight"][0]["id"] == f"worker-{first['pagination']['next_offset']:03d}-" + "x" * 117
 PY
-pass 'status pagination continues after response compaction without skipping rows'
+python3 - "$TELEGRAM" "$home" "$pagination_root" <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+telegram, home, owner_root = sys.argv[1:4]
+update = 100
+
+
+def pages(command, collection, field):
+    global update
+    seen = []
+    text = command
+    while text is not None:
+        update += 1
+        output = subprocess.run(
+            [telegram, "dispatch", "--user-id", "7", "--chat-id", "8", "--update-id", str(update), "--text", text],
+            env={**os.environ, "FM_HOME": home, "FM_ROOT_OVERRIDE": owner_root, "FM_TELEGRAM_PAGE_SIZE": "50"},
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        assert len(output) <= 4096
+        value = json.loads(output)
+        assert value[collection]
+        seen.extend(row[field] for row in value[collection])
+        text = value["pagination"]["next_command"]
+    return seen
+
+
+assert pages("/status", "in_flight", "id") == [f"worker-{index:03d}-" + "x" * 117 for index in range(80)]
+assert pages("/decisions", "decisions_open", "key") == [f"q{index:03d}" for index in range(45)]
+PY
+pass 'status and decision pagination continue after response compaction without skipping or repeating rows'
 
 legacy_state="$TMP_ROOT/legacy-inbox"
 mkdir -p "$legacy_state/task.inbox/handled"
@@ -490,3 +543,95 @@ set -e
 expect_code 0 "$silent_code" 'adapter suppresses routine poll wake'
 pass 'process-event adapter uses stable source and bounded result classification'
 
+
+paired_home() {  # <name>
+  local home
+  home=$(make_home "$1")
+  mkdir -p "$home/state/telegram"
+  cat > "$home/state/telegram/pairing.json" <<'JSON'
+{"schema":"fm-telegram-pairing.v1","bot_username":"firstmate_test_bot","nonce_hash":"unused","nonce_expires_at":4102444800,"paired_user_id":"7","paired_chat_id":"8","paired_at":"2026-01-01T00:00:00Z"}
+JSON
+  printf '%s\n' '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' > "$home/config/telegram-bot-token"
+  chmod 600 "$home/config/telegram-bot-token"
+  printf '%s\n' "$home"
+}
+
+poll_home() {  # <home>
+  FM_HOME="$1" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" FM_TELEGRAM_POLL_TIMEOUT=1 \
+    "$TELEGRAM" poll --once --json
+}
+
+redirect_home=$(paired_home redirect)
+touch "$api/redirect"
+set +e
+redirect_out=$(poll_home "$redirect_home" 2>&1)
+redirect_code=$?
+set -e
+rm -f "$api/redirect"
+expect_code 1 "$redirect_code" 'redirected Bot API response fails the poll'
+assert_contains "$redirect_out" 'redirects are not allowed' 'redirect rejection is reported as a Telegram error'
+assert_not_contains "$redirect_out" 'Traceback' 'redirect rejection does not crash the poller'
+assert_contains "$(cat "$redirect_home/state/telegram/errors/1.json")" 'redirects are not allowed' 'redirect rejection is recorded as a poll error'
+pass 'Bot API redirects are refused as recorded poll errors'
+
+blocked_home=$(paired_home blocked)
+cat > "$api/updates" <<'JSON'
+{"ok":true,"result":[{"update_id":50,"message":{"message_id":1,"from":{"id":31},"chat":{"id":32,"type":"private"},"text":"/status"}}]}
+JSON
+touch "$api/reject-send"
+blocked_poll=$(poll_home "$blocked_home")
+blocked_replay=$(poll_home "$blocked_home")
+rm -f "$api/reject-send"
+assert_contains "$blocked_poll" '"rejected": 1' 'blocked stranger update completes as rejected'
+assert_equals '51' "$(cat "$blocked_home/state/telegram/offset")" 'permanent response rejection publishes the offset'
+assert_contains "$(cat "$blocked_home/state/telegram/inbox/50.json")" '"delivery":"rejected"' 'permanent response rejection is a terminal delivery'
+assert_contains "$(cat "$blocked_home/state/telegram/outbound/50.json")" '"delivery":"rejected"' 'outbound record keeps the terminal rejection'
+assert_absent "$blocked_home/state/telegram/errors" 'permanent response rejection is not a retried poll error'
+assert_contains "$blocked_replay" '"duplicates": 1' 'a replayed update with a rejected response is not resent'
+pass 'permanent Bot API response rejections release the update offset'
+
+switch_home=$(paired_home bot-switch)
+cat > "$api/updates" <<'JSON'
+{"ok":true,"result":[{"update_id":60,"message":{"message_id":1,"from":{"id":41},"chat":{"id":42,"type":"private"},"text":"/status"}}]}
+JSON
+poll_home "$switch_home" >/dev/null
+assert_equals '61' "$(cat "$switch_home/state/telegram/offset")" 'first bot publishes its offset'
+printf '%s\n' '654321:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi' > "$switch_home/config/telegram-bot-token"
+: > "$api/requests"
+switch_poll=$(poll_home "$switch_home")
+assert_contains "$(head -1 "$api/requests")" '"offset":0' 'a different bot does not reuse the previous bot offset'
+assert_contains "$switch_poll" '"duplicates": 0' 'previous bot records do not mark a reused update ID duplicate'
+assert_contains "$switch_poll" '"rejected": 1' 'a different bot processes its reused update ID'
+assert_equals '654321' "$(cat "$switch_home/state/telegram/bot-id")" 'polling records the bot that owns update state'
+assert_present "$(find "$switch_home/state/telegram/retired" -path '*/123456-*/inbox/60.json' -print -quit)" 'previous bot update records are retired by bot identity'
+pass 'a different bot starts from a fresh offset and update namespace'
+
+stale_home=$(paired_home stale-offset)
+printf '%s\n' '{"ok":true,"result":[]}' > "$api/updates"
+printf '900\n' > "$stale_home/state/telegram/offset"
+python3 -c 'import os, sys, time; old = time.time() - 2 * 86400; os.utime(sys.argv[1], (old, old))' "$stale_home/state/telegram/offset"
+: > "$api/requests"
+poll_home "$stale_home" >/dev/null
+assert_contains "$(head -1 "$api/requests")" '"offset":0' 'an offset older than Telegram update retention is not reused'
+printf '900\n' > "$stale_home/state/telegram/offset"
+: > "$api/requests"
+poll_home "$stale_home" >/dev/null
+assert_contains "$(head -1 "$api/requests")" '"offset":900' 'a fresh offset is reused'
+pass 'offsets older than Telegram update retention are not trusted'
+
+redact_home=$(make_home redact-errors)
+redact_setup=$(FM_HOME="$redact_home" FM_TELEGRAM_API_BASE="http://127.0.0.1:$API_PORT/bot" \
+  "$TELEGRAM" setup --json --token '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi')
+redact_nonce=$(python3 -c 'import json,sys,urllib.parse; print(urllib.parse.parse_qs(urllib.parse.urlparse(json.load(sys.stdin)["deep_link"]).query)["start"][0])' <<<"$redact_setup")
+ln -s "$TMP_ROOT/missing-lock" "$redact_home/state/telegram/.pairing.lock"
+cat > "$api/updates" <<JSON
+{"ok":true,"result":[{"update_id":70,"message":{"message_id":1,"from":{"id":51},"chat":{"id":52,"type":"private"},"text":"/start $redact_nonce"}}]}
+JSON
+: > "$api/requests"
+redact_poll=$(poll_home "$redact_home")
+redact_reply=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["text"])' "$redact_home/state/telegram/outbound/70.json")
+assert_contains "$redact_poll" '"rejected": 1' 'pairing state failure is rejected'
+assert_contains "$redact_reply" 'unsafe portable lock: [path redacted]' 'pairing failure reply keeps its reason'
+assert_not_contains "$redact_reply" "$redact_home" 'pairing failure reply omits the local home path'
+assert_not_contains "$(cat "$api/requests")" "$redact_home" 'Telegram never receives the local home path'
+pass 'rejected command replies redact local filesystem paths'
