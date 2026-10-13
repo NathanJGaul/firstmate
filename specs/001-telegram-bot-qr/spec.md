@@ -53,7 +53,7 @@ As an operator, I can leave Telegram polling enabled while Firstmate remains aut
 - **FR-008**: Reject unpaired, mismatched, malformed, empty, oversized, and unsafe command inputs without invoking owner scripts.
 - **FR-009**: Exclude merge, destructive, irreversible, credential, and security-sensitive authority from Telegram-only commands.
 - **FR-010**: Keep token and pairing records in gitignored home configuration/state and support Linux, macOS, and Windows environments with Python standard library and shell-free subprocess boundaries. Windows uses the bundled Python polling worker and Python owner implementations instead of Unix shell runners.
-- **FR-011**: Bound Telegram API responses to 256 KiB, command text to 4096 UTF-8 bytes, outbound message text to 4096 characters, owner calls to 20 seconds, and long-poll waits to 50 seconds.
+- **FR-011**: Bound Telegram API responses to 256 KiB, command text to 4096 UTF-8 bytes, outbound message text to 4096 characters, owner calls to 20 seconds (`/steer` calls to twice `FM_SEND_REMOTE_BUDGET` plus 20 seconds), and long-poll waits to 50 seconds.
 - **FR-012**: Document setup, pairing, enablement, command surface, and limitations.
 
 ## Success Criteria

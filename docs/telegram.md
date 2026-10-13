@@ -51,6 +51,7 @@ The pairing record stores only a hash of the active nonce; the raw nonce appears
 Bot tokens never enter those records.
 - A single Telegram response is limited to 256 KiB, command text to 4096 UTF-8 bytes, and outbound message text to 4096 characters. Status and decision pages stay within the Telegram message limit and expose `pagination.next_command` when more rows remain.
 - Owner-script calls are limited to 20 seconds, and one `getUpdates` request waits up to 50 seconds.
+- A `/steer` owner call is limited to twice `FM_SEND_REMOTE_BUDGET` plus 20 seconds (80 seconds by default), so a remote secondmate steer reaches `fm-send.sh`'s own unconfirmed-delivery outcome. When `fm-send.sh` reports a steer as unconfirmed (exit 3), or the call exceeds that bound, the reply says `steer unconfirmed - may have landed; check before resending` instead of reporting a rejection.
 Repeated Telegram update IDs do not execute commands twice.
 
 Polling errors are recorded as bounded local evidence and do not mutate pairing state.

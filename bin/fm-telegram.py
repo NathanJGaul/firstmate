@@ -39,6 +39,9 @@ PORTABLE_MAX_RECORD_BYTES = 16 * 1024
 PORTABLE_MAX_RECORDS = 4096
 PORTABLE_MAX_TASKS = 256
 PORTABLE_OWNER_TIMEOUT = 20
+OWNER_TIMEOUT = 20
+DEFAULT_SEND_REMOTE_BUDGET = 30
+STEER_UNCONFIRMED = "steer unconfirmed - may have landed; check before resending"
 DEFAULT_POLL_TIMEOUT = 30
 MAX_POLL_TIMEOUT = 50
 DEFAULT_PAIRING_TTL = 600
@@ -1729,7 +1732,13 @@ def _durable_note_owner_result(output: str) -> str | None:
     return output.strip()
 
 
-def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None) -> str:
+def steer_owner_timeout() -> int:
+    raw = os.environ.get("FM_SEND_REMOTE_BUDGET", "")
+    budget = int(raw) if re.fullmatch(r"[1-9][0-9]{0,5}", raw) else DEFAULT_SEND_REMOTE_BUDGET
+    return 2 * budget + OWNER_TIMEOUT
+
+
+def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None, steer: bool = False) -> str:
     if os.name == "nt":
         output = portable_owner(argv, stdin, env_extra).strip() or "completed"
         if utf8_length(output, "Firstmate owner response") > MAX_RESPONSE_BYTES:
@@ -1737,8 +1746,10 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
         return output
     try:
         input_bytes = stdin.encode("utf-8")
-        proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home()), **(env_extra or {})}, input=input_bytes, text=False, capture_output=True, timeout=20, check=False)
+        proc = subprocess.run(argv, cwd=root(), env={**os.environ, "FM_HOME": str(home()), **(env_extra or {})}, input=input_bytes, text=False, capture_output=True, timeout=steer_owner_timeout() if steer else OWNER_TIMEOUT, check=False)
     except (OSError, subprocess.SubprocessError, UnicodeEncodeError) as exc:
+        if steer and isinstance(exc, subprocess.TimeoutExpired):
+            raise TelegramError(STEER_UNCONFIRMED) from exc
         raise TelegramError("Firstmate owner script unavailable") from exc
     try:
         stdout = proc.stdout.decode("utf-8")
@@ -1748,6 +1759,8 @@ def owner(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = N
         partial = _durable_note_owner_result(stdout)
         if partial is not None:
             return partial
+        if steer and proc.returncode == 3:
+            raise TelegramError(STEER_UNCONFIRMED)
         raise TelegramError("Firstmate owner script rejected request")
     output = stdout.strip() or "completed"
     if utf8_length(output, "Firstmate owner response") > MAX_RESPONSE_BYTES:
@@ -1927,9 +1940,9 @@ def _telegram_snapshot_page(command: str, page: int, page_size: int, page_offset
     return owner_result(arguments, env_extra=env_extra, page=(command, page, page_size, collection, offset))
 
 
-def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None, page: tuple[str, int, int, str, int] | None = None) -> str:
+def owner_result(argv: list[str], stdin: str = "", env_extra: dict[str, str] | None = None, page: tuple[str, int, int, str, int] | None = None, steer: bool = False) -> str:
     try:
-        output = owner(argv, stdin, env_extra)
+        output = owner(argv, stdin, env_extra, steer)
     except DurableOwnerError as exc:
         raise DurableOwnerError(_telegram_owner_error(exc)) from exc
     except TelegramError as exc:
@@ -1968,8 +1981,8 @@ def dispatch(text: str, user_id: str, chat_id: str, update_id: str) -> str:
             raise TelegramError("Windows remote worker status and steer are unsupported; run Telegram on the remote Firstmate home")
         delivery_id = hashlib.sha256(f"telegram-steer-{update_id}".encode("ascii")).hexdigest()[:16]
         if portable_target_kind(target, operational_state_dir()) == "secondmate":
-            return owner_result([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
-        return owner_result([str(root() / "bin" / "fm-send.sh"), target, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id})
+            return owner_result([str(root() / "bin" / "fm-send.sh"), target, "--fire-and-forget", delivery_id, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id}, steer=True)
+        return owner_result([str(root() / "bin" / "fm-send.sh"), target, body], env_extra={"FM_SEND_IDEMPOTENT": "1", "FM_TELEGRAM_DELIVERY_ID": delivery_id}, steer=True)
     raise TelegramError("unsupported Telegram command")
 
 

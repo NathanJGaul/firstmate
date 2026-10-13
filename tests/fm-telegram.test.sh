@@ -361,6 +361,69 @@ assert_contains "$parser_dollar" 'parser-native prefix' 'codex parser rejection 
 assert_contains "$parser_key" 'parser-native prefix' 'key parser rejection is explicit'
 pass 'paired command owner boundaries are enforced'
 
+unconfirmed_root="$TMP_ROOT/unconfirmed-root"
+mkdir -p "$unconfirmed_root/bin"
+cat > "$unconfirmed_root/bin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+echo "error: steer is unconfirmed (delivery-id=x); retry only with the same delivery id" >&2
+exit 3
+SH
+chmod 755 "$unconfirmed_root/bin/fm-send.sh"
+set +e
+unconfirmed=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$unconfirmed_root" "$TELEGRAM" dispatch --json --user-id 7 --chat-id 8 --update-id 16 --text '/steer worker hello' 2>&1)
+unconfirmed_code=$?
+set -e
+expect_code 1 "$unconfirmed_code" 'unconfirmed steer is not reported as accepted'
+assert_contains "$unconfirmed" 'steer unconfirmed - may have landed; check before resending' 'unconfirmed steer reply says it may have landed'
+assert_not_contains "$unconfirmed" 'rejected request' 'unconfirmed steer is not reported as rejected'
+python3 - "$TELEGRAM" "$home" "$unconfirmed_root" <<'PY'
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+
+telegram, home, owner_root = sys.argv[1:4]
+os.environ.update({"FM_HOME": home, "FM_ROOT_OVERRIDE": owner_root})
+os.environ.pop("FM_SEND_REMOTE_BUDGET", None)
+loader = importlib.machinery.SourceFileLoader("fm_telegram_steer_bound", telegram)
+module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+loader.exec_module(module)
+
+
+def remote_send(argv, timeout, **kwargs):
+    needed = 2 * int(os.environ.get("FM_SEND_REMOTE_BUDGET", "30")) + 1
+    if timeout < needed:
+        raise subprocess.TimeoutExpired(argv, timeout)
+    return subprocess.CompletedProcess(argv, 3, b"", b"unconfirmed")
+
+
+module.subprocess.run = remote_send
+for budget in (None, "45"):
+    if budget is not None:
+        os.environ["FM_SEND_REMOTE_BUDGET"] = budget
+    try:
+        module.dispatch("/steer worker hello", "7", "8", "17")
+    except module.TelegramError as exc:
+        assert str(exc) == "steer unconfirmed - may have landed; check before resending", str(exc)
+    else:
+        raise AssertionError("unconfirmed remote steer was reported as accepted")
+
+
+def slow_send(argv, timeout, **kwargs):
+    raise subprocess.TimeoutExpired(argv, timeout)
+
+
+module.subprocess.run = slow_send
+try:
+    module.dispatch("/steer worker hello", "7", "8", "18")
+except module.TelegramError as exc:
+    assert str(exc) == "steer unconfirmed - may have landed; check before resending", str(exc)
+else:
+    raise AssertionError("timed-out steer was reported as accepted")
+PY
+pass 'a steer whose fm-send delivery is unconfirmed or outlives its bound replies that it may have landed'
+
 pagination_root="$TMP_ROOT/pagination-root"
 mkdir -p "$pagination_root/bin"
 cat > "$pagination_root/bin/fm-bearings-snapshot.sh" <<'SH'
