@@ -1544,6 +1544,34 @@ test_section_caps_and_expansion_flags() {
   pass "all fleet-sized sections are capped with counted opt-in expansion"
 }
 
+test_offset_pages_cover_each_row_once() {
+  local home fakebin full want_in_flight want_decisions got_in_flight='[]' got_decisions='[]' offset page
+  home=$(make_home offset-pages); write_large_fixture "$home" 5
+  fakebin=$(make_fakebin "$home")
+  full=$(run "$home" "$fakebin" --json --all-in-flight --all-decisions)
+  want_in_flight=$(printf '%s' "$full" | jq -c '[.in_flight[].id]')
+  want_decisions=$(printf '%s' "$full" | jq -c '[.decisions_open[] | [.id, .key]]')
+  printf '%s %s' "$want_in_flight" "$want_decisions" | jq -se 'map(length) == [5, 5]' >/dev/null \
+    || fail "offset paging fixture did not expose five rows per collection: $full"
+  for offset in 0 2 4; do
+    page=$(FM_BEARINGS_IN_FLIGHT=2 FM_BEARINGS_IN_FLIGHT_OFFSET=$offset FM_BEARINGS_DECISIONS=2 \
+      FM_BEARINGS_DECISIONS_OFFSET=$offset FM_BEARINGS_DECISIONS_PAGED=1 \
+      run "$home" "$fakebin" --json --all-decisions)
+    printf '%s' "$page" | jq -e --argjson offset "$offset" --argjson in_flight "$want_in_flight" \
+      --argjson decisions "$want_decisions" '
+      ([.in_flight[].id] == $in_flight[$offset:$offset + 2])
+        and ([.decisions_open[] | [.id, .key]] == $decisions[$offset:$offset + 2])
+        and ((([.omitted[].surface] | index("in_flight showing \($offset + 2) of 5")) != null) == ($offset + 2 < 5))
+        and ((([.omitted[].surface] | index("decisions_open showing \($offset + 2) of 5")) != null) == ($offset + 2 < 5))
+    ' >/dev/null || fail "offset page $offset did not continue the full in_flight and decisions_open order: $page"
+    got_in_flight=$(printf '%s' "$page" | jq -c --argjson seen "$got_in_flight" '$seen + [.in_flight[].id]')
+    got_decisions=$(printf '%s' "$page" | jq -c --argjson seen "$got_decisions" '$seen + [.decisions_open[] | [.id, .key]]')
+  done
+  [ "$got_in_flight" = "$want_in_flight" ] || fail "in_flight offset pages did not cover each row once: $got_in_flight"
+  [ "$got_decisions" = "$want_decisions" ] || fail "decisions_open offset pages did not cover each row once: $got_decisions"
+  pass "in_flight and paged decisions_open offsets cover every row exactly once"
+}
+
 test_pr_repository_cap_and_expansion() {
   local home fakebin json expanded
   home=$(make_home repo-caps); write_large_fixture "$home" 5
@@ -3407,6 +3435,7 @@ test_include_prs_maps_custom_branch_prefix_to_task
 test_partial_github_failure_degrades
 test_perl_fallback_bounds_github_call
 test_section_caps_and_expansion_flags
+test_offset_pages_cover_each_row_once
 test_collapsed_captain_call_deferral_and_landed
 test_undated_hold_phrasing_and_aging_projection
 test_blocked_deferred_hold_has_concrete_disclosure

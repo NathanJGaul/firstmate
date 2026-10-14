@@ -40,7 +40,7 @@ The full guide lives in the **[project wiki](https://github.com/d0whc3r/spec-kit
 | [FAQ](https://github.com/d0whc3r/spec-kit-tdd/wiki/FAQ)                           | Conceptual questions, design rationale, and how it composes.               |
 | [Architecture](https://github.com/d0whc3r/spec-kit-tdd/wiki/Architecture)         | What happens when you run a command.                                       |
 
-The wiki is generated from [`docs/`](docs/) on every push to `main`. To browse the same content as plain markdown, open the [docs folder](docs/).
+The wiki is generated from the extension's [`docs/`](https://github.com/d0whc3r/spec-kit-tdd/tree/main/docs) on every push to `main`.
 
 ## At a glance
 
@@ -134,8 +134,8 @@ work on smells in generated unit tests.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) at the repo root.
+See [CONTRIBUTING.md](https://github.com/d0whc3r/spec-kit-tdd/blob/main/CONTRIBUTING.md) at the extension repository root.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT license: see [LICENSE](https://github.com/d0whc3r/spec-kit-tdd/blob/main/LICENSE).

@@ -15,6 +15,8 @@
 #   2. Re-running the identical leg is idempotent: an ambiguous transport
 #      (executed remotely, then ssh exit 255) makes fm-send retry the same
 #      leg once, and the remote inbox holds exactly ONE record afterwards.
+#      A recovery repost that reuses the correlation with a new body still
+#      enqueues its own record, even after the original was acknowledged.
 #   3. A remote --resolve-key answer closes its decision at enqueue.
 #   4. A remote harness-native "/..." steer also rides the inbox: the deleted
 #      remote typed-payload plane is gone for every remote text.
@@ -346,6 +348,46 @@ test_remote_rerun_is_idempotent() {
   [ "$(fm_pending_reply_get "$pend" phase)" = awaiting_report ] \
     || fail "the successful resend did not restore awaiting_report: $(cat "$pend")"
   pass "fm-send remote: the printed correlation-reusing resend deduplicates onto the same record"
+}
+
+test_remote_corr_repost_enqueues_new_record() {
+  local dir rhome corr original repost rec rc
+  dir="$TMP_ROOT/remote-corr-repost"; mkdir -p "$dir"
+  rhome=$(setup_remote_secondmate_home remote-corr-repost)
+  corr=abcdef0123456789
+  fm_pending_reply_embed_corr "please rename the metric" "$corr" original
+  fm_pending_reply_embed_corr "REPOST REQUIRED: previous marked request had no correlated parent report. Original request: please rename the metric" "$corr" repost
+
+  env FM_HOME="$rhome" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-remote-secondmate-control.sh" send rsm "$original" \
+    >"$dir/original.out" 2>"$dir/original.err" \
+    || fail "the original corr-marked remote send failed: $(cat "$dir/original.err")"
+  rec=$(remote_inbox_records "$rhome")
+  [ "$rec" = "$rhome/state/parent-route/rsm.inbox/001.msg" ] \
+    || fail "the original remote send did not create 001.msg: $rec"
+  mv "$rec" "$rhome/state/parent-route/rsm.inbox/handled/" \
+    || fail "could not acknowledge the original remote record"
+
+  env FM_HOME="$rhome" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-remote-secondmate-control.sh" send rsm "$original" \
+    >"$dir/resend.out" 2>"$dir/resend.err" \
+    || fail "the same-body correlation resend failed: $(cat "$dir/resend.err")"
+  assert_contains "$(cat "$dir/resend.err")" "already delivered and acknowledged" \
+    "the same-body correlation resend must land on the acknowledged record"
+  [ -z "$(remote_inbox_records "$rhome")" ] \
+    || fail "the same-body correlation resend re-enqueued an acknowledged steer"
+
+  rc=0
+  env FM_HOME="$rhome" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-remote-secondmate-control.sh" send rsm "$repost" \
+    >"$dir/repost.out" 2>"$dir/repost.err" || rc=$?
+  expect_code 0 "$rc" "a recovery repost reusing the correlation must be recorded: $(cat "$dir/repost.err")"
+  rec=$(remote_inbox_records "$rhome")
+  [ "$rec" = "$rhome/state/parent-route/rsm.inbox/002.msg" ] \
+    || fail "the recovery repost did not enqueue its own record: $rec"
+  [ "$(fm_task_inbox_body "$rec")" = "$repost" ] \
+    || fail "the recovery repost record does not carry the repost body: $(cat "$rec")"
+  pass "remote control: a recovery repost reusing a correlation with a new body enqueues its own record"
 }
 
 test_remote_retry_failure_preserves_ambiguous_expectation() {
@@ -787,6 +829,7 @@ test_local_pending_does_not_close_resolve_key() {
 
 test_remote_steer_lands_in_remote_inbox
 test_remote_rerun_is_idempotent
+test_remote_corr_repost_enqueues_new_record
 test_remote_retry_failure_preserves_ambiguous_expectation
 test_remote_fire_and_forget_never_arms_reply_recovery
 test_remote_send_revalidates_after_retirement_lock

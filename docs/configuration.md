@@ -2335,6 +2335,14 @@ The two read files use different parsing rules:
 
 `FM_VOICE_RELAY` and `FM_VOICE_PYTHON` belong to the laptop rather than to a home, so they have no config file: `bin/fm-voice-client.py` requires the relay path as a flag or that variable and carries no default path.
 
+## Telegram remote control (`config/telegram-bot-token`)
+
+The optional Telegram transport stores one Bot API token in the home-local, gitignored `config/telegram-bot-token` file with mode `0600`.
+`bin/fm-telegram.py setup` reads the token from a non-echoing prompt, or from standard input when piped, validates it, prints a one-time deep link and bundled QR rendering, and creates pairing state under `state/telegram/`.
+The token is never copied into Telegram inbound or outbound records.
+`FM_TELEGRAM_BOT_TOKEN` and `FM_TELEGRAM_API_BASE` are test and per-invocation overrides; the API base defaults to Telegram's HTTPS Bot API.
+Enablement and command limits are owned by [docs/telegram.md](telegram.md).
+
 ## Environment variables
 
 Runtime tuning via environment variables (defaults shown):

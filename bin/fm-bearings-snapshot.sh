@@ -107,6 +107,9 @@ FM_BEARINGS_LANDED=${FM_BEARINGS_LANDED:-6}
 FM_BEARINGS_LANDED_PER_HOME=${FM_BEARINGS_LANDED_PER_HOME:-$FM_BEARINGS_LANDED}
 FM_BEARINGS_IN_FLIGHT=${FM_BEARINGS_IN_FLIGHT:-20}
 FM_BEARINGS_DECISIONS=${FM_BEARINGS_DECISIONS:-20}
+FM_BEARINGS_IN_FLIGHT_OFFSET=${FM_BEARINGS_IN_FLIGHT_OFFSET:-0}
+FM_BEARINGS_DECISIONS_OFFSET=${FM_BEARINGS_DECISIONS_OFFSET:-0}
+FM_BEARINGS_DECISIONS_PAGED=${FM_BEARINGS_DECISIONS_PAGED:-0}
 FM_BEARINGS_SECONDMATES=${FM_BEARINGS_SECONDMATES:-20}
 FM_BEARINGS_GATES=${FM_BEARINGS_GATES:-20}
 FM_BEARINGS_REPORTS=${FM_BEARINGS_REPORTS:-20}
@@ -119,6 +122,12 @@ case "$FM_BEARINGS_PR_TIMEOUT" in ''|*[!0-9]*|0) FM_BEARINGS_PR_TIMEOUT=20 ;; es
 validate_bound() {  # <name> <value>
   case "$2" in ''|*[!0-9]*|0) echo "fm-bearings-snapshot: $1 must be a positive integer" >&2; exit 2 ;; esac
 }
+validate_offset() {  # <name> <value>
+  case "$2" in ''|*[!0-9]*) echo "fm-bearings-snapshot: $1 must be a nonnegative integer" >&2; exit 2 ;; esac
+}
+validate_offset FM_BEARINGS_IN_FLIGHT_OFFSET "$FM_BEARINGS_IN_FLIGHT_OFFSET"
+validate_offset FM_BEARINGS_DECISIONS_OFFSET "$FM_BEARINGS_DECISIONS_OFFSET"
+case "$FM_BEARINGS_DECISIONS_PAGED" in 0|1) ;; *) echo "fm-bearings-snapshot: FM_BEARINGS_DECISIONS_PAGED must be 0 or 1" >&2; exit 2 ;; esac
 validate_bound FM_BEARINGS_LANDED "$FM_BEARINGS_LANDED"
 validate_bound FM_BEARINGS_LANDED_PER_HOME "$FM_BEARINGS_LANDED_PER_HOME"
 validate_bound FM_BEARINGS_IN_FLIGHT "$FM_BEARINGS_IN_FLIGHT"
@@ -361,6 +370,9 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson landed_per_home_n "$FM_BEARINGS_LANDED_PER_HOME" \
   --argjson in_flight_n "$FM_BEARINGS_IN_FLIGHT" \
   --argjson decisions_n "$FM_BEARINGS_DECISIONS" \
+  --argjson in_flight_offset "$FM_BEARINGS_IN_FLIGHT_OFFSET" \
+  --argjson decisions_offset "$FM_BEARINGS_DECISIONS_OFFSET" \
+  --argjson decisions_paged "$FM_BEARINGS_DECISIONS_PAGED" \
   --argjson secondmates_n "$FM_BEARINGS_SECONDMATES" \
   --argjson gates_n "$FM_BEARINGS_GATES" \
   --argjson reports_n "$FM_BEARINGS_REPORTS" \
@@ -635,12 +647,12 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            missing_verdicts:([$measured[].missing_verdicts] | add // 0),
            captain_omitted:([$measured[].captain_omitted] | add // 0),
            captain:[$measured[] as $h | $h.captain[]? | . + {owner:$h.owner}]}),
-      in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end),
+      in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[$in_flight_offset:($in_flight_offset + $in_flight_n)] end),
       secondmates: (if $all_secondmates == 1 then $secondmates_all else $secondmates_all[:$secondmates_n] end),
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
         | {id, spawn_gen:(.spawn_gen // null), host:(.host // null), kind:(.reconcile_inventory.kind // null), ids:((.reconcile_inventory.ids // []) | map(select(type == "string")) | sort)} ],
-      decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
+      decisions_open: (if $all_decisions == 1 and $decisions_paged == 0 then $decisions_all else $decisions_all[$decisions_offset:($decisions_offset + $decisions_n)] end),
       landed: ($done | map({id, what:(.title | trunc(70)),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
       gates: ($return_catchup_gate
@@ -671,7 +683,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | if $n > 0 then {surface:("main in-flight backlog item(s) have no child metadata: \($n)"), reveal:"inspect main data/backlog.md In flight vs state/*.meta"} else empty end),
         ((($snap.main_inventory.unstructured_current_count // 0)) as $n
          | if $n > 0 then {surface:("main unstructured current backlog row(s): \($n)"), reveal:"inspect main data/backlog.md In flight and Queued free-form rows"} else empty end),
-        (if $all_in_flight == 0 and ($in_flight_all | length) > $in_flight_n then {surface:("in_flight showing \($in_flight_n) of \($in_flight_all | length)"), reveal:"--all-in-flight"} else empty end),
+        (if $all_in_flight == 0 and ($in_flight_all | length) > ($in_flight_offset + $in_flight_n) then {surface:("in_flight showing \(($in_flight_offset + $in_flight_n)) of \($in_flight_all | length)"), reveal:"--all-in-flight"} else empty end),
         (($snap.secondmate_current.records // [])[] as $m
          | ([($m.omitted // [])[] | select(.surface == "active_children") | .count] | add // 0) as $n
          | if $n > 0 then {surface:("secondmate " + $m.id + " active children omitted by snapshot bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
@@ -685,7 +697,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | {surface:("secondmate " + .id + " served from cached home ledger"),reveal:"inspect the home ledger publication and remote route"}),
         (([($snap.secondmate_current.records // [])[] | select(.parent_event.activity_scan.input_truncated == true or .parent_event.activity_scan.retained_truncated == true)] | length) as $n | if $n > 0 then {surface:("secondmate parent activity evidence truncated for \($n) record(s)"), reveal:"raise FM_SNAPSHOT_PARENT_ACTIVITY_LINES, FM_SNAPSHOT_PARENT_ACTIVITY_BYTES, or FM_SNAPSHOT_PARENT_ACTIVITIES"} else empty end),
         (([($snap.secondmate_current.records // [])[] | select(.parent_event.activity_scan.available == false)] | length) as $n | if $n > 0 then {surface:("secondmate parent activity evidence unavailable for \($n) record(s)"), reveal:"inspect the parent status logs"} else empty end),
-        (if $all_decisions == 0 and ($decisions_all | length) > $decisions_n then {surface:("decisions_open showing \($decisions_n) of \($decisions_all | length)"), reveal:"--all-decisions"} else empty end),
+        (if ($all_decisions == 0 or $decisions_paged == 1) and ($decisions_all | length) > ($decisions_offset + $decisions_n) then {surface:("decisions_open showing \(($decisions_offset + $decisions_n)) of \($decisions_all | length)"), reveal:"--all-decisions"} else empty end),
         (if $all_decisions == 0 and $decisions_marked_deferred > 0 then {surface:("captain holds bucketed blocked, dated, or aged: \($decisions_marked_deferred)"), reveal:"--all-decisions"} else empty end),
         (if $all_queued == 0 and ($gates_all | length) > $gates_n then {surface:("gates showing \($gates_n) of \($gates_all | length)"), reveal:"--all-queued"} else empty end),
         (if $all_reports == 0 and ($reports_all | length) > $reports_n then {surface:("reports showing \($reports_n) of \($reports_all | length)"), reveal:"--all-reports"} else empty end),
