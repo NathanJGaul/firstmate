@@ -29,3 +29,9 @@ Returns 0 when `<pid>` has a child process whose command basename is `sleep`.
 Polls every 0.05 seconds up to `tries` (default 100) and returns 1 when none appears.
 It never signals the process.
 Entry point: `tests/fm-wake-queue.test.sh`.
+
+## C5 - Guard payload write
+
+Input: a session-idle event while the guard script exits without reading stdin, with the host stalled so the write loses the race.
+Output: no unhandled error; the blind-turn prompt is delivered.
+Entry point: `tests/fm-pi-watch-extension.test.sh::test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin`.

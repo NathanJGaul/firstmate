@@ -2,9 +2,9 @@
 feature: 002-restore-main-ci
 loop: outside-in
 profile: .specify/memory/tdd-profile.md
-spec_criteria: 13
+spec_criteria: 14
 planned_at: 0457fccc
-updated_at: 7d770409
+updated_at: a980664d
 suite_baseline: red
 ---
 
@@ -32,6 +32,7 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 | A11 | An interrupted parked drain exits with the interrupted status and its durable row replays exactly once            | US4.1, FR-009  | example | `bin/fm-test-run.sh tests/fm-wake-queue.test.sh`      | DONE    | `tests/fm-wake-queue.test.sh::test_interruption_before_and_after_raw_commit`                 |
 | A12 | The interruption case waits for the parked drain and, when it never parks, fails naming the serialized read boundary | US4.2, FR-009 | example | `bin/fm-test-run.sh tests/fm-wake-queue.test.sh`      | DONE    | `tests/fm-wake-queue.test.sh::test_interruption_before_and_after_raw_commit`                 |
 | A13 | The interruption case shows zero unexpected successes in 1500 randomized-timing runs under bash 5.2.21            | US4.3, SC-004  | example | scratch fuzz in the `ubuntu:24.04` container          | DONE    | recorded run in `tdd/cycle-log.md` (not part of CI)                                          |
+| A14 | A guard that exits without reading its payload does not crash the OpenCode host and the blind-turn prompt is still delivered | US5.1, FR-012 | example | `bin/fm-test-run.sh tests/fm-pi-watch-extension.test.sh` | DONE | `tests/fm-pi-watch-extension.test.sh::test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin` |
 
 ## Inner loop: unit behaviors
 
@@ -41,7 +42,7 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 | --- | ---------------------------------------------------------------------------------------------------------- | ------------- | ------- | ------- | ------------------------------------------------------------ |
 | U1  | A custom run with no prompt does not read a prompt and stages no captain message                           | FR-001, A1    | example | DONE    | `tests/fm-pi-branch-extension.test.sh`                       |
 | U2  | A custom run whose message is the queued processing request sets the processing-opened flag                | FR-002, A2    | example | DONE    | `tests/fm-pi-branch-extension.test.sh`                       |
-| U3  | A custom run whose message is not the processing request leaves the processing-opened flag unset          | FR-002        | example | DONE    | `tests/fm-pi-branch-extension.test.sh`                       |
+| U3  | A custom run whose message is not the processing request leaves the processing-opened flag unset          | FR-002        | characterization | BASELINE | `tests/fm-pi-branch-extension.test.sh` (adopted upstream behavior; first run green, mutant-verified, see cycle 4) |
 | U4  | A user run whose prompt is operational or empty stages nothing                                             | FR-001        | example | DONE    | `tests/fm-pi-branch-extension.test.sh` operational-input case |
 
 ### `.pi/extensions/fm-primary-pi-watch.ts`
@@ -49,7 +50,7 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 | id  | behavior                                                              | traces      | kind    | state   | test                                                |
 | --- | --------------------------------------------------------------------- | ----------- | ------- | ------- | --------------------------------------------------- |
 | U5  | A user run consumes the pending wake whose content equals the prompt  | FR-003      | example | DONE    | `tests/fm-pi-watch-extension.test.sh`               |
-| U6  | A custom run consumes no pending wake                                 | FR-003, A4  | example | DONE    | `tests/fm-pi-watch-extension.test.sh`               |
+| U6  | A custom run consumes no pending wake                                 | FR-003, A4  | characterization | BASELINE | `tests/fm-pi-watch-extension.test.sh` (first run green against unchanged code, mutant-verified, see cycle 2) |
 
 ### `tests/fm-contributions.test.sh` (fake forge)
 
@@ -65,6 +66,12 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 | U9  | The queued-operational-rows fixture resolves the visibility module's policy import | FR-007, A9   | example | DONE    | `tests/fm-calm-pi-extension.test.sh` queued-operational-rows case     |
 | U10 | The queued-escape project resolves the visibility module's policy import          | FR-007, A9   | example | DONE    | `tests/fm-calm-pi-extension.test.sh` queued-escape case               |
 | U11 | The live guard's scratch project lets Pi load the probe extension                 | FR-008, A10  | example | DONE    | `tests/fm-calm-pi-queue-retention-live-e2e.test.sh`                   |
+
+### `.opencode/plugins/fm-primary-turnend-guard.js`
+
+| id  | behavior                                                                                  | traces       | kind    | state | test                                                                                           |
+| --- | ----------------------------------------------------------------------------------------- | ------------ | ------- | ----- | ---------------------------------------------------------------------------------------------- |
+| U16 | A broken pipe on the guard's stdin is ignored and the guard's exit status is still honored | FR-012, A14  | example | DONE  | `tests/fm-pi-watch-extension.test.sh::test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin` |
 
 ### `tests/wake-helpers.sh` and `tests/fm-wake-queue.test.sh`
 
@@ -85,6 +92,7 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 
 - A pinned Pi version in CI: rejected in research R1.
 - Support for Pi releases older than the run-start event split: not a supported host (spec edge cases).
+- The sibling stdin writes in `.opencode/plugins/lib/fm-operational-input.js` and `.omp/extensions/fm-primary-turnend-guard.ts`: same class, not exercised by a failing test, follow-up.
 - A shared helper for all fifteen visibility-module copies: follow-up, not required by any failure.
 - Production changes to `bin/fm-wake-drain.sh` or `bin/fm-wake-lib.sh`: the fault is bash trap handling, avoided in the test.
 - The three-case assertion that a missing fixture dependency "names the missing module": platform behavior of Node and Pi, removed from the spec.

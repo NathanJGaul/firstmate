@@ -97,7 +97,27 @@ Replace the TERM trap string with a function (the same parser state would still 
 
 **Portable detection**: `ps -A -o ppid= -o comm=` works on Linux and macOS; `comm` may be a full path on macOS, so match the basename.
 
-## R5 - Verification plan
+## R5 - OpenCode turn-end guard crash (found during verification)
+
+**Evidence**:
+The final local pass over `tests/fm-pi-watch-extension.test.sh` failed once with `not ok - OpenCode watch plugin must not treat external healthy output as an owned arm` although the case passed in three earlier runs.
+Six more sequential runs failed once (1 of 6); the case alone failed 1 of 30 runs and 5 of 80 under four-way parallel load.
+The captured Node output was `Error: write EPIPE ... Emitted 'error' event on Socket instance` at `.opencode/plugins/fm-primary-turnend-guard.js:25`, which is `child.stdin.end(input)` with no error listener.
+The fake guard in the case exits without reading stdin; whether the payload write loses the race depends on how fast the host starts the process.
+The same defect exists upstream.
+The Pi async exec helper (`.pi/extensions/lib/fm-async-exec.ts`) already carries the answer in a comment: a child that exits before reading stdin makes the write fail with EPIPE, "which is its answer".
+
+**Decision**: Add `child.stdin.on("error", () => {})` before the write in the OpenCode guard plugin, and pin it with a case that stalls the host for 300 ms between spawning the guard and writing its payload, which makes the write fail every time.
+
+**Rationale**:
+This is a real crash path of the host, not only a test race, and the fix is the repository's own convention.
+A deterministic regression exists only with the stall, because without it the outcome depends on process start-up speed (a plain case passed 20 of 20 runs on the unfixed plugin).
+
+**Alternatives considered**:
+Retry the flaky case (hides the defect; rejected).
+Fix the two sibling write sites in `.opencode/plugins/lib/fm-operational-input.js` and `.omp/extensions/fm-primary-turnend-guard.ts` in the same change (same class, but neither is exercised by a failing test, and their children always read stdin; deferred as follow-up).
+
+## R6 - Verification plan
 
 Run each named test file against Pi 1.2.0 and 1.3.0 scratch installs and the machine's Pi.
 Run the interruption case 1500 times under bash 5.2.21 with randomized TERM timing before and after.

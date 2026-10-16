@@ -82,6 +82,23 @@ Each task is complete only when the named outer-loop behavior is green through i
 - [X] T033 [A12] The helper case and the interruption case's bounded, named wait are green.
 - [X] T034 [A13] The 1500-run fuzz shows zero unexpected successes.
 
+## Phase 8: User Story 5 - OpenCode guard stdin (Priority: P2, added during verification)
+
+**Goal**: A guard that exits without reading its payload does not crash the OpenCode host.
+
+**Independent Test**: `tests/fm-pi-watch-extension.test.sh`.
+
+- [X] T035 [US5] [U16] Test: add `test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin` to `tests/fm-pi-watch-extension.test.sh`, stalling the host 300 ms between spawning the guard and writing its payload; observe it fail with `Error: write EPIPE` on the unfixed plugin (5 of 5 runs).
+- [X] T036 [US5] [U16] Implement: in `.opencode/plugins/fm-primary-turnend-guard.js` add `child.stdin.on("error", () => {})` before `child.stdin.end(input)`.
+- [X] T037 [US5] [A14] Verify the case passes (5 of 5) and that the originally flaky OpenCode case passes 160 of 160 runs under four-way parallel load.
+
+## Phase 9: TDD remediation
+
+The verdict is PASS_WITH_GAPS; no finding blocks the feature.
+
+- [X] T038 Finding 2: record the interruption fuzz harness in `specs/002-restore-main-ci/tdd/verification.md` so the 1727-run claim can be repeated from a checkout (appendix present).
+- [ ] T039 Findings 1, 3, 4, 5, 6, 7 are accepted as documented in `tdd/verification.md`: each is MED or lower, none can hide a regression of the five causes, and splitting or relocating the helper case would widen a CI-fix change; revisit only if a reviewer asks.
+
 ## Dependencies
 
 T001 and T002 precede everything.

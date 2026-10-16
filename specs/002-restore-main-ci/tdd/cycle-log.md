@@ -90,3 +90,13 @@ Append only. Newest last.
 - A13: the same fuzz with the fixed shape (wait for the parked child, then random 0 to 70 ms, then TERM) in the `ubuntu:24.04` container (bash 5.2.21) -> 1727 runs, 0 with a status other than 143, 0 with a trap parse error (1407 runs from the first container, which exited when its 3000-second sleep ended, plus 320 more after a restart).
 - deviation: the control (old shape) ratio is the single failure in 931 recorded in the baseline; the failure window is narrow, so the control rate is a lower bound.
 - commit: `9a9ce918`
+
+## Cycle 9: A14, U16 OpenCode turn-end guard survives an unread payload (US5)
+
+- discovery: the final verification pass failed `tests/fm-pi-watch-extension.test.sh` once with `not ok - OpenCode watch plugin must not treat external healthy output as an owned arm: expected exit 0, got 1`; a re-run of the file failed 1 in 6, the case alone 1 in 30, and 5 in 80 under four-way parallel load. The captured output was `Error: write EPIPE` / `Emitted 'error' event on Socket instance` at `.opencode/plugins/fm-primary-turnend-guard.js:25` (`child.stdin.end(input)`).
+- test: `test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin` in `tests/fm-pi-watch-extension.test.sh`.
+- note: a plain version of the case (no stall) passed 20 of 20 runs on the unfixed plugin, because the write only loses the race when the host is slow; a shim that deferred the write until the child's `exit` event also passed, because Node raises no error for a write after the exit has been processed. A shim that stalls the host for 300 ms (`Atomics.wait`) between spawning the guard and writing its payload, applied to the guard spawn only (the operational-input encoder must read its payload), produced the failure every time.
+- red: the stalled case against the unfixed plugin -> `Error: write EPIPE ... code: 'EPIPE'`, `not ok - OpenCode turn-end guard must survive a guard that exits without reading its payload: expected exit 0, got 1`, 5 of 5 runs.
+- green: `child.stdin.on("error", () => {})` before the write, with the comment the Pi async exec helper already carries. The same case -> `ok`, 5 of 5 runs. The originally flaky case, 160 runs in groups of four -> 0 failures (baseline 5 of 80).
+- refactor: none needed.
+- commit: `a980664d`

@@ -6,7 +6,7 @@
 
 ## Summary
 
-Four independent defects keep four CI jobs red.
+Four independent defects keep four CI jobs red, and a fifth, found while verifying, makes a fifth check intermittent.
 One is a runtime defect in two shipped Pi extensions (they read a prompt that custom-message runs do not carry).
 Two are test fixtures left inconsistent by a conflicted merge and by a later module split.
 One is a test that signals a process at a moment where bash 5.2 can lose the signal handler.
@@ -58,9 +58,10 @@ specs/002-restore-main-ci/
 ```text
 .pi/extensions/fm-branch-supervision.ts      # R1 production narrowing
 .pi/extensions/fm-primary-pi-watch.ts        # R1 production narrowing
+.opencode/plugins/fm-primary-turnend-guard.js # R5 stdin error listener
 tests/fm-pi-branch-extension.test.sh         # R1 event typing and custom-run regression
 tests/fm-pi-branch-live-e2e.test.sh          # R1 event typing
-tests/fm-pi-watch-extension.test.sh          # R1 event typing and custom-run regression
+tests/fm-pi-watch-extension.test.sh          # R1 event typing and custom-run regression; R5 broken-pipe regression
 tests/fm-contributions.test.sh               # R2 fake forge block restored
 tests/fm-calm-pi-extension.test.sh           # R3 policy module copies
 tests/fm-calm-pi-queue-retention-live-e2e.test.sh  # R3 policy module copy
@@ -75,6 +76,8 @@ tests/fm-wake-queue.test.sh                  # R4 interruption case and helper c
 **R1**: In `fm-branch-supervision.ts` replace the unconditional `event.prompt` read with the upstream shape: compute `processingOpenedThisRun` from a custom event whose message is the queued processing request, then return unless `event.messageType === "user"`, then read `event.prompt`.
 In `fm-primary-pi-watch.ts` return unless `event.messageType === "user"` before consuming a wake.
 Tests: type user-prompt events with `messageType: "user"`, fire the processing request as `{ messageType: "custom", message }`, and add the custom-run regression for the mirror and for the watch extension.
+
+**R5**: In `.opencode/plugins/fm-primary-turnend-guard.js` add a no-op `error` listener on the child's stdin before the payload write, and add a case in `tests/fm-pi-watch-extension.test.sh` that stalls the host between spawning the guard and writing its payload.
 
 **R2**: Replace the `gh` wrapper block in `wrap_forge` with the 388d56c6 version (clock_bump with rename publish, single-caller `reserve`, `slow-wave` cases, `exhaust`, `fail-late`).
 

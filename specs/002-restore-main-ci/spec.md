@@ -6,13 +6,14 @@
 
 **Status**: Draft
 
-**Input**: User description: "Make the firstmate fork's own CI on main green again. Four of eighteen jobs fail on main (Behavior portable parallel 1, serial 5, serial 6, serial 9) from four distinct causes: the Pi extensions read the prompt on before_agent_start, which current Pi does not provide for custom-message-started runs; a merge dropped the slow-forge fault cases from the contributions test; Calm Pi tests copy the visibility module into scratch projects without its policy dependency; the wake-queue interruption test signals the wake drain at an arbitrary moment. Fix each at its cause without loosening budgets or skipping tests."
+**Input**: User description: "Make the firstmate fork's own CI on main green again. Four of eighteen jobs fail on main (Behavior portable parallel 1, serial 5, serial 6, serial 9) from five distinct causes: the Pi extensions read the prompt on before_agent_start, which current Pi does not provide for custom-message-started runs; a merge dropped the slow-forge fault cases from the contributions test; Calm Pi tests copy the visibility module into scratch projects without its policy dependency; the wake-queue interruption test signals the wake drain at an arbitrary moment. Fix each at its cause without loosening budgets or skipping tests."
 
 ## Overview
 
 Main has failed its checks on every run since 2026-10-07.
 The latest red run (2026-10-14) has four of eighteen jobs failing.
 Each red job was reproduced locally and traced to a separate cause: one real runtime defect in a shipped extension, two test fixtures left inconsistent by a merge or a later module split, and one test that signals a process at an unsafe moment.
+While verifying, a fifth cause surfaced in the same job family: an intermittent crash of the OpenCode turn-end guard plugin (a second real runtime defect), added as user story 5.
 The operator's standing rule is that lint, test failures, and flakiness are fixed even when unrelated to the work in hand, so the goal is a fleet whose own checks are trustworthy again.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -85,6 +86,21 @@ A maintainer relies on the test that interrupts the wake drain before it commits
 
 ---
 
+### User Story 5 - The OpenCode turn-end guard survives a guard that does not read its payload (Priority: P2)
+
+An operator runs Firstmate's primary inside OpenCode.
+The turn-end guard plugin hands its stop payload to the guard script, and the script may exit before reading it.
+
+**Why this priority**: A broken pipe on that write is raised as an unhandled error and crashes the host, and the same defect made the OpenCode plugin check fail about once in thirty isolated runs, which can turn any CI run red.
+
+**Independent Test**: Run the OpenCode plugin case with a guard script that exits at once and a host stalled long enough that the script has already exited when the payload is written, and observe the host survives and still delivers the blind-turn prompt.
+
+**Acceptance Scenarios**:
+
+1. **Given** a guard script that exits without reading its payload, **When** the host fires a session-idle event, **Then** the plugin does not raise an unhandled error and delivers the blind-turn prompt.
+
+---
+
 ### Edge Cases
 
 - A Pi release older than the one that split the run-start event is not a supported host for the Pi extensions; the typecheck and the runtime narrowing target the current event shape.
@@ -107,7 +123,8 @@ A maintainer relies on the test that interrupts the wake drain before it commits
 - **FR-008**: The queue-retention live guard MUST build a scratch project in which Pi can load its probe extension.
 - **FR-009**: The wake-drain interruption case MUST signal the drain only after the drain is parked at its test delay, and MUST bound and name that wait.
 - **FR-010**: No change MAY loosen a time budget, skip a case, delete an assertion, or weaken a gate; the CI gate-skip refusals stay as they are.
-- **FR-011**: The change MUST NOT alter supervision behavior beyond FR-001 through FR-003.
+- **FR-011**: The change MUST NOT alter supervision behavior beyond FR-001 through FR-003 and FR-012.
+- **FR-012**: The OpenCode turn-end guard plugin MUST treat a broken pipe on the guard's stdin as the guard's answer and MUST NOT raise it as an unhandled error.
 
 ### Key Entities
 
@@ -125,6 +142,7 @@ A maintainer relies on the test that interrupts the wake drain before it commits
 - **SC-003**: A run started by a custom message produces zero extension errors in the regression case.
 - **SC-004**: The interruption case shows zero unexpected successes across at least one thousand five hundred randomized runs under bash 5.2, against a baseline of one failure in 931.
 - **SC-005**: No time budget, assertion, or skip in the touched tests is weaker than before.
+- **SC-006**: The OpenCode plugin case shows zero failures in at least 150 runs under four-way parallel load, against a baseline of 5 failures in 80.
 
 ## Assumptions
 
