@@ -2266,6 +2266,41 @@ SH
   pass "wake drain: recovery acknowledgement failures are explicit and retryable"
 }
 
+test_wait_for_sleep_child_requires_a_parked_child() {
+  local idle busy parked rc
+  # Stop owned processes together with the children they left running.
+  reap_owned() {
+    local owned
+    for owned in "$@"; do
+      pkill -P "$owned" 2>/dev/null || true
+      kill "$owned" 2>/dev/null || true
+    done
+    { wait "$@"; } 2>/dev/null || true
+  }
+  # A process with no children is not parked, and the wait is bounded.
+  sleep 30 &
+  idle=$!
+  rc=0
+  wait_for_sleep_child "$idle" 3 || rc=$?
+  [ "$rc" -eq 1 ] || { reap_owned "$idle"; fail "a process without children counted as parked (status $rc)"; }
+  # A child that is not a sleep does not count either.
+  bash -c 'tail -f /dev/null; :' 2>/dev/null &
+  busy=$!
+  rc=0
+  wait_for_sleep_child "$busy" 3 || rc=$?
+  [ "$rc" -eq 1 ] || { reap_owned "$idle" "$busy"; fail "a non-sleep child counted as parked (status $rc)"; }
+  # The wait polls until a sleep child appears, even when the process is busy first.
+  bash -c 'i=0; while [ "$i" -lt 200000 ]; do i=$((i + 1)); done; sleep 30; :' 2>/dev/null &
+  parked=$!
+  rc=0
+  wait_for_sleep_child "$parked" 200 || rc=$?
+  # Waiting never signals the process it watches.
+  kill -0 "$idle" "$busy" "$parked" 2>/dev/null || { reap_owned "$idle" "$busy" "$parked"; fail "waiting signalled a watched process"; }
+  reap_owned "$idle" "$busy" "$parked"
+  [ "$rc" -eq 0 ] || fail "a process parked in a sleep child was not recognized (status $rc)"
+  pass "wait_for_sleep_child recognizes only a process parked in a sleep child, within a bound, without signalling it"
+}
+
 test_interruption_before_and_after_raw_commit() {
   local dir state before_out after_out replay_out empty_out pid rc count i sequence generation
   dir=$(make_case interruption)
@@ -2289,6 +2324,11 @@ test_interruption_before_and_after_raw_commit() {
     i=$((i + 1))
   done
   [ "$i" -lt 100 ] || { kill "$pid" 2>/dev/null || true; fail "pre-commit drain never entered its serialized read boundary"; }
+  # The lock and the pending marker appear well before the delay, while the
+  # drain is still forking command substitutions. Interrupt it only once it is
+  # parked in the delay, which is the boundary this case is named for.
+  wait_for_sleep_child "$pid" \
+    || { kill "$pid" 2>/dev/null || true; fail "pre-commit drain never parked at the delay inside its serialized read boundary"; }
   kill -TERM "$pid" 2>/dev/null || fail "could not interrupt drain before raw commitment"
   set +e
   wait "$pid"
@@ -3558,6 +3598,7 @@ test_stale_recovery_generation_cannot_touch_a_newer_episode
 test_stale_ack_that_consumes_nothing_names_the_current_wake
 test_branch_stale_ack_that_consumes_nothing_names_its_granted_wake
 test_recovery_ack_failure_is_reported
+test_wait_for_sleep_child_requires_a_parked_child
 test_interruption_before_and_after_raw_commit
 test_wake_queue_prune_task
 test_drain_rotates_orphaned_scratch
