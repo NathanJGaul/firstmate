@@ -2117,6 +2117,17 @@ if (stolen?.messages?.some((message) => message.customType === "fm-branch-proces
 }
 await fire("agent_end", {});
 aborted = false;
+// A run another extension starts with a custom message is not the queued
+// processing request, so the dedicated-processing abort must not apply to it.
+await fire("before_agent_start", {
+  messageType: "custom",
+  message: { role: "custom", customType: "fm-other-custom", content: "unrelated custom run" },
+}, abortCtx);
+await fire("agent_start", {}, defaultSessionCtx);
+await fire("context", { messages: [...history, processingMsg] }, abortCtx);
+if (aborted) throw new Error("a custom run that is not the processing request was aborted as a dedicated processing turn");
+await fire("agent_end", {});
+aborted = false;
 await fire("before_agent_start", { messageType: "custom", message: processingMsg }, abortCtx);
 await fire("agent_start", {}, defaultSessionCtx);
 const openedByRequest = await fire("context", { messages: [...history, processingMsg] }, abortCtx);
