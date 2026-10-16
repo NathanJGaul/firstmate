@@ -338,6 +338,26 @@ wait_for_exit() {
   return 124
 }
 
+# Poll until <pid> is parked in a foreground `sleep` child, which is where a
+# script with a test delay waits. A signal sent earlier can land while bash is
+# still forking command substitutions, and bash 5.2 may then evaluate the trap
+# string in the middle of a parse, print "unexpected EOF while looking for
+# matching `)'" and never run the trap's exit. Parked in the child, bash defers
+# the trap until the child exits, so the signal is always delivered cleanly.
+# Returns 1 after <tries> polls of 0.05s and never signals the process.
+wait_for_sleep_child() {  # <pid> [tries]
+  local pid=$1 tries=${2:-100} i=0
+  while [ "$i" -lt "$tries" ]; do
+    if ps -A -o ppid= -o comm= 2>/dev/null \
+      | awk -v pid="$pid" '$1 == pid && $2 ~ /(^|\/)sleep$/ { found = 1 } END { exit !found }'; then
+      return 0
+    fi
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+
 is_live_non_zombie() {
   local pid=$1 stat
   kill -0 "$pid" 2>/dev/null || return 1
