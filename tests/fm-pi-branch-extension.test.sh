@@ -1060,15 +1060,15 @@ const operational = spawnSync(
   { encoding: "utf8", input: "operational watcher injection" },
 );
 if (operational.status !== 0) throw new Error(`could not create operational input: ${operational.stderr}`);
-await fire("before_agent_start", { prompt: operational.stdout }, mainCtx);
+await fire("before_agent_start", { messageType: "user", prompt: operational.stdout }, mainCtx);
 entries.push({ type: "message", message: { role: "user", content: operational.stdout } });
 const unsolicitedPrompt = "Please keep responses concise while monitoring the fleet.";
-await fire("before_agent_start", { prompt: unsolicitedPrompt }, mainCtx);
+await fire("before_agent_start", { messageType: "user", prompt: unsolicitedPrompt }, mainCtx);
 entries.push({ type: "message", message: { role: "user", content: unsolicitedPrompt } });
 await fire("agent_start", {}, mainCtx);
 await fire("agent_end", {}, mainCtx);
 const legacyOperational = "⁣FIRSTMATE_OP: give me a fresh system-resource report.";
-await fire("before_agent_start", { prompt: legacyOperational }, mainCtx);
+await fire("before_agent_start", { messageType: "user", prompt: legacyOperational }, mainCtx);
 entries.push({ type: "message", message: { role: "user", content: legacyOperational } });
 await fire("agent_start", {}, mainCtx);
 const unsolicited = dispatch("signal: healthy resource result");
@@ -1096,7 +1096,7 @@ for (let index = 0; index < requestedPrompts.length; index += 1) {
   if (index < longRequests.length && content.length <= 4000) {
     throw new Error(`request fixture ${index} did not exceed the mirror bound`);
   }
-  await fire("before_agent_start", { prompt: content }, mainCtx);
+  await fire("before_agent_start", { messageType: "user", prompt: content }, mainCtx);
   // Pi persists this only after every before_agent_start handler has returned.
   entries.push({ type: "message", message: { role: "user", content } });
   await fire("agent_start", {}, mainCtx);
@@ -2107,7 +2107,7 @@ if (openedByCaptain?.messages?.some((message) => message.customType === "fm-bran
   throw new Error(`captain-opened processing was not stripped: ${JSON.stringify(openedByCaptain)}`);
 }
 aborted = false;
-await fire("before_agent_start", { prompt: "captain typed this now" }, abortCtx);
+await fire("before_agent_start", { messageType: "user", prompt: "captain typed this now" }, abortCtx);
 const stolen = await fire("context", {
   messages: [{ role: "user", content: "captain typed this now" }, processingMsg],
 }, abortCtx);
@@ -2117,7 +2117,7 @@ if (stolen?.messages?.some((message) => message.customType === "fm-branch-proces
 }
 await fire("agent_end", {});
 aborted = false;
-await fire("before_agent_start", { prompt: pending.message.content }, abortCtx);
+await fire("before_agent_start", { messageType: "custom", message: processingMsg }, abortCtx);
 await fire("agent_start", {}, defaultSessionCtx);
 const openedByRequest = await fire("context", { messages: [...history, processingMsg] }, abortCtx);
 if (!aborted) throw new Error("a dedicated processing turn with history was not aborted under the record");
@@ -3186,6 +3186,19 @@ if (mirrored[2].content !== `[captain] ${entries[6].message.content}`) {
 }
 if (mirrored.some((m) => m.content.includes("operational injection") || m.content.includes("tool output") || m.content.includes("merged note"))) {
   throw new Error("mirror leaked operational, tool, or merge-note traffic");
+}
+
+// A run that pi.sendCustomMessage starts carries a custom message and no
+// prompt, so reading the prompt here threw and every such run surfaced the
+// failure instead of starting. It is not captain input either, so nothing of
+// it reaches the mirror.
+const mirroredBeforeCustomRun = session.ops.filter((op) => op.kind === "custom").length;
+await fire("before_agent_start", {
+  messageType: "custom",
+  message: { role: "custom", customType: "fm-branch-merge", content: "merge note that starts its own run" },
+}, ctx);
+if (session.ops.filter((op) => op.kind === "custom").length !== mirroredBeforeCustomRun) {
+  throw new Error("a custom-message run was mirrored as captain dialog");
 }
 
 // The durable cursor advances: a second turn_end mirrors only NEW dialog.

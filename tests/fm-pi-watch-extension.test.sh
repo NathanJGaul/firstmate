@@ -3471,7 +3471,24 @@ await waitFor(
 if (finalSession.prompts.filter((message) => message.includes("signal: streaming queued actionable outcome")).length !== 1) {
   throw new Error(`second replacement did not replay the idle queued follow-up exactly once: ${finalSession.prompts.join(" | ")}`);
 }
-finalSession.handlers.get("before_agent_start")?.({ prompt: finalSession.prompts[0] }, {});
+// Pi starts a run from pi.sendMessage(..., { triggerTurn }) with a custom
+// message and no prompt. That is not the user turn that consumes a wake, even
+// when its content equals the wake text, so the follow-up must still ride the
+// next replacement handoff.
+finalSession.handlers.get("before_agent_start")?.({
+  messageType: "custom",
+  message: { role: "custom", customType: "fm-other-custom", content: finalSession.prompts[0] },
+}, {});
+await finalSession.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "new" }, {});
+const afterCustomMod = await import(`${pathToFileURL(process.env.PLUGIN).href}?replacement=after-custom-run`);
+const afterCustom = makePi();
+afterCustomMod.default(afterCustom.pi);
+await afterCustom.handlers.get("session_start")?.({ type: "session_start", reason: "new" }, {});
+await waitFor(
+  () => afterCustom.prompts.some((message) => message.includes("signal: streaming queued actionable outcome")),
+  "replay of a follow-up a custom run did not consume",
+);
+afterCustom.handlers.get("before_agent_start")?.({ messageType: "user", prompt: afterCustom.prompts[0] }, {});
 await new Promise((resolve) => setTimeout(resolve, 20));
 process.exit(0);
 EOF
@@ -3531,7 +3548,7 @@ const pi = {
     prompts.push(message);
     if (streaming) return;
     beforeAgentStarts += 1;
-    handlers.get("before_agent_start")?.({ prompt: message }, {});
+    handlers.get("before_agent_start")?.({ messageType: "user", prompt: message }, {});
   },
   events: { on() {}, emit() {} },
 };
@@ -3992,7 +4009,7 @@ if (!prompts[1].includes("signal: persistence failure actionable outcome")) {
 if (!prompts[1].includes("could not persist a replacement-session actionable wake")) {
   throw new Error(`replacement did not surface the persistence failure: ${prompts[1]}`);
 }
-handlers.get("before_agent_start")?.({ prompt: prompts[1] }, {});
+handlers.get("before_agent_start")?.({ messageType: "user", prompt: prompts[1] }, {});
 process.exit(0);
 EOF
 )
