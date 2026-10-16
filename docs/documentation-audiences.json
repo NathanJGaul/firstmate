@@ -777,6 +777,62 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/002-restore-main-ci/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/contracts/test-contracts.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/data-model.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/002-restore-main-ci/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     },

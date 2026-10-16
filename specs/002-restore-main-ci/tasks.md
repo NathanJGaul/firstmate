@@ -61,8 +61,8 @@ Tasks are grouped by user story; the four stories touch disjoint files, so they 
 
 ## Phase 6: Polish
 
-- [ ] T020 Run `bin/fm-lint.sh`, `bin/fm-test-run.sh --check-coverage`, and `bin/fm-doc-audience-check.sh`; fix findings.
-- [ ] T021 Run each named failing test file once more against Pi 1.3.0 and record the results in `specs/002-restore-main-ci/tdd/verification.md`.
+- [X] T020 Run `bin/fm-lint.sh`, `bin/fm-test-run.sh --check-coverage`, and `bin/fm-doc-audience-check.sh`; fix findings.
+- [X] T021 Run each named failing test file once more against Pi 1.3.0 and record the results in `specs/002-restore-main-ci/tdd/verification.md`.
 
 ## Phase 7: Acceptance gates
 
@@ -97,7 +97,11 @@ Each task is complete only when the named outer-loop behavior is green through i
 The verdict is PASS_WITH_GAPS; no finding blocks the feature.
 
 - [X] T038 Finding 2: record the interruption fuzz harness in `specs/002-restore-main-ci/tdd/verification.md` so the 1727-run claim can be repeated from a checkout (appendix present).
-- [ ] T039 Findings 1, 3, 4, 5, 6, 7 are accepted as documented in `tdd/verification.md`: each is MED or lower, none can hide a regression of the five causes, and splitting or relocating the helper case would widen a CI-fix change; revisit only if a reviewer asks.
+- [X] T039 Findings 1, 3, 4, 5, 6, 7 are accepted as documented in `tdd/verification.md`: each is MED or lower, none can hide a regression of the five causes, and splitting or relocating the helper case would widen a CI-fix change; revisit only if a reviewer asks.
+
+## Phase 10: Analysis follow-up
+
+- [X] T040 Review `git diff 0457fccc..HEAD` outside `specs/` for removed or weakened assertions, added skips, lowered thresholds, and supervision changes beyond FR-001 to FR-003 and FR-012; the result is the "Existing-test audit" in `specs/002-restore-main-ci/tdd/verification.md` (FR-010, FR-011, SC-005).
 
 ## Dependencies
 
@@ -110,3 +114,7 @@ T020 and T021 run after all stories; Phase 7 closes the feature.
 
 Deliver all four stories in one pull request, since the goal is one green run of all eighteen jobs.
 If time-boxed, US1 is the MVP because it is the only runtime defect.
+
+## Phase 11: Convergence
+
+- [X] T041 Document in `docs/pi-supervision-branch.md` (mirroring section, the `before_agent_start` bullet) that only a user-started run carries a prompt to stage and that a run started by a custom message stages nothing, per FR-001 (partial)

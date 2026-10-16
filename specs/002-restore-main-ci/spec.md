@@ -151,3 +151,4 @@ The turn-end guard plugin hands its stop payload to the guard script, and the sc
 - Restoring the upstream fake-forge cases is correct because the merge that dropped them kept the fork's older clock fix, and the upstream clock fix addresses the same race.
 - A bash 5.2 trap-parsing fault under signal timing is outside this repository's code and is avoided by signalling at a quiescent point.
 - Pi release tracking policy needs no new decision because this change keeps the existing unpinned policy.
+- Out of scope and noted for follow-up: the two other child-process stdin writes in the OpenCode operational-input encoder and the OMP turn-end guard, and the local-only locale sensitivity of the coverage guard's sorted-list comparison, which CI's C locale does not hit.

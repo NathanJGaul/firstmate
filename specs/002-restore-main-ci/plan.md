@@ -30,7 +30,7 @@ The plan fixes each at its cause with the smallest change that matches how the s
 
 **Constraints**: One sentence per line in tracked Markdown, plain dash, shellcheck-clean scripts, no agent co-author, no `commands.test` suite walks in no-mistakes config.
 
-**Scale/Scope**: Two production extension files, four test files, one shared test helper file, and the Spec-Kit artifacts.
+**Scale/Scope**: Three production files (two Pi extensions and the OpenCode turn-end guard plugin), seven test files, one shared test helper file, and the Spec-Kit artifacts.
 
 ## Constitution Check
 
