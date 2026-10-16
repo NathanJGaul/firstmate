@@ -5199,6 +5199,74 @@ EOF
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }
 
+test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin() {
+  local guard_plugin repo home out status
+  guard_plugin="$ROOT/.opencode/plugins/fm-primary-turnend-guard.js"
+  repo="$TMP_ROOT/opencode-guard-ignores-stdin-root"
+  home="$TMP_ROOT/opencode-guard-ignores-stdin-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  git init -q "$repo"
+  : > "$repo/AGENTS.md"
+  cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'guard ran without reading its payload\n' >&2
+exit 2
+SH
+  chmod +x "$repo/bin/fm-turnend-guard.sh"
+  out=$(GUARD_PLUGIN="$guard_plugin" WORKTREE="$repo" FM_HOME="$home" node 2>&1 <<'EOF'
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { pathToFileURL } from "node:url";
+
+// Whether the payload write loses the race against the guard's exit depends on
+// how fast the host starts the process, so force the losing interleaving: stall
+// the host the way a slow start-up or a pause does, so the guard has already
+// exited when its payload is written and the write fails with EPIPE every time.
+// Only the guard is stalled; the operational-input encoder must read its payload.
+const realSpawn = childProcess.spawn;
+childProcess.spawn = (...args) => {
+  const child = realSpawn(...args);
+  if (!String(args[0]).endsWith("fm-turnend-guard.sh")) return child;
+  const end = child.stdin.end.bind(child.stdin);
+  child.stdin.end = (chunk) => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    return end(chunk);
+  };
+  return child;
+};
+syncBuiltinESMExports();
+
+const guardMod = await import(pathToFileURL(process.env.GUARD_PLUGIN).href);
+let promptBody = "";
+const client = {
+  session: {
+    promptAsync: async (request) => {
+      promptBody = request.body.parts[0].text;
+    },
+  },
+};
+const hooks = await guardMod.FmPrimaryTurnendGuard({
+  client,
+  directory: process.env.WORKTREE,
+  worktree: process.env.WORKTREE,
+});
+await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-test" } } });
+// The broken pipe is the guard's answer, not a crash of the host, so the process
+// must still be alive once the event loop has surfaced it.
+await new Promise((resolve) => setTimeout(resolve, 200));
+if (!promptBody.includes("TURN WOULD END BLIND")) {
+  console.error(`missing blind-turn prompt: ${promptBody}`);
+  process.exit(1);
+}
+EOF
+)
+  status=$?
+  [ "$status" -eq 0 ] || printf '%s\n' "$out" >&2
+  expect_code 0 "$status" "OpenCode turn-end guard must survive a guard that exits without reading its payload"
+  pass "OpenCode turn-end guard survives a guard that exits without reading stdin"
+}
+
+test_opencode_turnend_guard_survives_a_guard_that_exits_without_reading_stdin
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
 test_pi_redundant_tool_call_is_owned_noop
