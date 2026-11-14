@@ -143,6 +143,26 @@ write_github_rollup_json() {
 JSON
 }
 
+# A local CI result file in the shape the runner emits: the run's full head
+# commit and one job record per <name>:<exit-code> argument, in the order
+# given. The runner writes this beside its logs, and --local-ci-result consumes
+# it. Args: path head_sha name:code...
+write_local_ci_result() {
+  local path=$1 head=$2 spec name code first=true
+  shift 2
+  {
+    printf '{"version":1,"head_sha":"%s","target":"120","created_at":"2026-10-26T00:00:00Z","jobs":[' "$head"
+    for spec in "$@"; do
+      name=${spec%:*}
+      code=${spec##*:}
+      [ "$first" = true ] || printf ','
+      first=false
+      printf '{"name":"%s","exit_code":%s}' "$name" "$code"
+    done
+    printf ']}\n'
+  } > "$path"
+}
+
 assert_logged_gh_merge() {
   local case_dir=$1 number=$2 repo=$3 head line extra=
   shift 3
@@ -3832,6 +3852,287 @@ test_allow_missing_follows_the_allow_red_rules() {
   pass "fm-pr-merge --allow-missing is single use, attended-only, and GitHub-only like --allow-red"
 }
 
+# ---- local CI result file (--local-ci-result) ---------------------------------
+# Hosted checks cannot report while the account's credits are exhausted, so the
+# merge may rest on a local runner's result file instead. The file is head-bound
+# evidence: it proves exactly one commit and one exit code per job, it is
+# attended-only, and it writes nothing to the forge. The cases below drive the
+# acceptance path and every refusal path.
+
+test_local_ci_result_waives_unreported_required_checks() {
+  local case_dir head variant
+  head=1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b
+  for variant in refused merged; do
+    case_dir=$(make_case "local-ci-result-required-$variant")
+    add_gh_mocks "$case_dir" "$head"
+    write_github_rollup_json "$case_dir" "$head" "$(check_run ci COMPLETED SUCCESS)"
+    write_github_required "$case_dir" classic:'Unit and component tests' classic:'End-to-end tests'
+    write_local_ci_result "$case_dir/local-ci-result.json" "$head" \
+      "Format, lint, types, and build:0" \
+      'Unit and component tests:0' \
+      'End-to-end tests:0'
+    if [ "$variant" = refused ]; then
+      run_required_case "$case_dir" 120
+      expect_code 1 "$RC" "local-ci-result-required-refused: an unreported required check must still refuse without the file"
+      assert_grep "required check 'Unit and component tests' has not reported" "$case_dir/stderr" \
+        "local-ci-result-required-refused: the unreported check was not named"
+      assert_no_grep 'pr merge' "$case_dir/gh.log" \
+        "local-ci-result-required-refused: gh pr merge ran without the evidence flag"
+    else
+      run_required_case "$case_dir" 120 --local-ci-result "$case_dir/local-ci-result.json"
+      expect_code 0 "$RC" "local-ci-result-required-merged: a matching head with every job passing must merge: $(cat "$case_dir/stderr")"
+      assert_logged_gh_merge "$case_dir" 120 example/repo --squash
+      assert_grep "waived 2 check names the forge did not prove" "$case_dir/stderr" \
+        "local-ci-result-required-merged: the waived count was not reported"
+      assert_grep 'attended' "$case_dir/state/task-x1.merge-authority" \
+        "local-ci-result-required-merged: the merge was not recorded as attended"
+      assert_grep 'pr=https://github.com/example/repo/pull/120' "$case_dir/state/task-x1.meta" \
+        "local-ci-result-required-merged: pr= was not recorded"
+    fi
+  done
+  pass "fm-pr-merge merges on a local CI result file that proves the live head and waives only the checks it records"
+}
+
+test_local_ci_result_waives_a_red_check_of_the_same_name() {
+  local case_dir head
+  head=1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c
+  case_dir=$(make_case local-ci-result-red)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_red_json "$case_dir" "$head" lint
+  write_github_required "$case_dir" classic:lint
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" "lint:0" "ci:0"
+  run_required_case "$case_dir" 121
+  expect_code 1 "$RC" "local-ci-result-red: the red check must refuse without the file"
+  assert_grep "check 'lint' is not green" "$case_dir/stderr" \
+    "local-ci-result-red: the red check was not named"
+
+  case_dir=$(make_case local-ci-result-red-merged)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_red_json "$case_dir" "$head" lint
+  write_github_required "$case_dir" classic:lint
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" "lint:0" "ci:0"
+  run_required_case "$case_dir" 122 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 0 "$RC" "local-ci-result-red-merged: a red check proven locally must merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 122 example/repo --squash
+  assert_no_grep "check 'lint' is not green" "$case_dir/stderr" \
+    "local-ci-result-red-merged: the waived check was still reported red"
+  pass "fm-pr-merge waives a red check whose exact name the local CI result file records as passing"
+}
+
+test_local_ci_result_writes_nothing_to_the_forge() {
+  local case_dir head
+  head=1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d
+  case_dir=$(make_case local-ci-result-no-forge-writes)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" "$(check_run ci COMPLETED SUCCESS)"
+  write_github_required "$case_dir" classic:'End-to-end tests'
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" 'End-to-end tests:0'
+  run_required_case "$case_dir" 123 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 0 "$RC" "local-ci-result-no-forge-writes: the evidence merge should land: $(cat "$case_dir/stderr")"
+  [ "$(grep -c '^pr merge ' "$case_dir/gh.log")" -eq 1 ] \
+    || fail "local-ci-result-no-forge-writes: the forge must merge exactly once"
+  assert_no_grep 'statuses' "$case_dir/gh.log" \
+    "local-ci-result-no-forge-writes: a commit status was written"
+  assert_no_grep '--method ' "$case_dir/gh.log" \
+    "local-ci-result-no-forge-writes: a write call was made to the forge"
+  assert_no_grep 'pr comment' "$case_dir/gh.log" \
+    "local-ci-result-no-forge-writes: a comment was written to the forge"
+  pass "fm-pr-merge writes nothing to the forge besides the merge itself on the local evidence path"
+}
+
+test_local_ci_result_head_mismatch_refuses() {
+  local case_dir head other
+  head=1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e
+  other=9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e
+  case_dir=$(make_case local-ci-result-head-mismatch)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" "$(check_run ci COMPLETED SUCCESS)"
+  write_github_required "$case_dir" classic:'End-to-end tests'
+  write_local_ci_result "$case_dir/local-ci-result.json" "$other" 'End-to-end tests:0' ci:0
+  run_required_case "$case_dir" 124 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 1 "$RC" "local-ci-result-head-mismatch: a stale proof must refuse"
+  assert_grep "the local CI result file proves head $other, not the current head $head" "$case_dir/stderr" \
+    "local-ci-result-head-mismatch: both commits were not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "local-ci-result-head-mismatch: gh pr merge ran on a stale proof"
+  assert_no_grep 'waived 1 check' "$case_dir/stderr" \
+    "local-ci-result-head-mismatch: the stale proof still waived a check"
+  pass "fm-pr-merge refuses a local CI result file that proves a different commit"
+}
+
+test_local_ci_result_failed_job_refuses() {
+  local case_dir head
+  head=1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f
+  case_dir=$(make_case local-ci-result-failed-job)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" "$(check_run ci COMPLETED SUCCESS)"
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" "ci:0" "End-to-end tests (2/4):1"
+  run_required_case "$case_dir" 125 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 1 "$RC" "local-ci-result-failed-job: a recorded failure must refuse"
+  assert_grep 'records failed jobs: End-to-end tests (2/4)' "$case_dir/stderr" \
+    "local-ci-result-failed-job: the failed job was not named"
+  [ ! -s "$case_dir/gh.log" ] \
+    || fail "local-ci-result-failed-job: the forge was read before the failed evidence refused"
+  assert_no_grep 'pr=https://github.com/example/repo/pull/125' "$case_dir/state/task-x1.meta" \
+    "local-ci-result-failed-job: pr= was recorded before the refusal"
+  pass "fm-pr-merge refuses a local CI result file that records any failed job"
+}
+
+test_local_ci_result_uncovered_check_refuses() {
+  local case_dir head
+  head=2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a
+  case_dir=$(make_case local-ci-result-uncovered)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(check_run ci COMPLETED SUCCESS)" \
+    "$(check_run lint COMPLETED FAILURE)"
+  write_github_required "$case_dir" classic:'End-to-end tests'
+  # The shard name is a prefix of the aggregate name it does not prove: local
+  # evidence matches whole job names only, so a passing shard can never waive
+  # the aggregate a hosted run would compute from every shard.
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" ci:0 'End-to-end tests (1/4)':0
+  run_required_case "$case_dir" 126 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 1 "$RC" "local-ci-result-uncovered: an uncovered required check must refuse"
+  assert_grep "check 'lint' is not green" "$case_dir/stderr" \
+    "local-ci-result-uncovered: the red check kept its own refusal"
+  assert_grep "required check 'End-to-end tests' has not reported" "$case_dir/stderr" \
+    "local-ci-result-uncovered: the unreported check kept its own refusal"
+  assert_grep 'the local CI result file does not record a passing job for: lint, End-to-end tests' \
+    "$case_dir/stderr" "local-ci-result-uncovered: the uncovered checks were not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "local-ci-result-uncovered: gh pr merge ran with uncovered checks"
+  pass "fm-pr-merge refuses when the local CI result file does not cover a check the forge still needs"
+}
+
+test_local_ci_result_unusable_file_refuses() {
+  local case_dir head variant path
+  head=2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b
+  for variant in missing directory unreadable malformed; do
+    case_dir=$(make_case "local-ci-result-unusable-$variant")
+    add_gh_mocks "$case_dir" "$head"
+    path="$case_dir/local-ci-result.json"
+    case "$variant" in
+      missing) path="$case_dir/no-such-result.json" ;;
+      directory) mkdir -p "$path" ;;
+      unreadable)
+        write_local_ci_result "$path" "$head" ci:0
+        chmod 000 "$path"
+        ;;
+      malformed) printf 'not json at all\n' > "$path" ;;
+    esac
+    run_required_case "$case_dir" 127 --local-ci-result "$path"
+    [ "$variant" != unreadable ] || chmod 644 "$path"
+    expect_code 2 "$RC" "local-ci-result-unusable-$variant: an unusable file must refuse as a usage error"
+    [ ! -s "$case_dir/gh.log" ] \
+      || fail "local-ci-result-unusable-$variant: the forge was read before the file was validated"
+    assert_no_grep 'pr=https://github.com/example/repo/pull/127' "$case_dir/state/task-x1.meta" \
+      "local-ci-result-unusable-$variant: pr= was recorded before the refusal"
+  done
+  pass "fm-pr-merge refuses an unreadable, absent, or malformed local CI result file before recording anything"
+}
+
+test_local_ci_result_invalid_shape_refuses() {
+  local case_dir head variant
+  head=2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c
+  for variant in version short-head no-jobs tab-name; do
+    case_dir=$(make_case "local-ci-result-shape-$variant")
+    add_gh_mocks "$case_dir" "$head"
+    case "$variant" in
+      version) printf '{"version":2,"head_sha":"%s","jobs":[{"name":"ci","exit_code":0}]}\n' "$head" > "$case_dir/local-ci-result.json" ;;
+      short-head) printf '{"version":1,"head_sha":"%s","jobs":[{"name":"ci","exit_code":0}]}\n' "${head:0:12}" > "$case_dir/local-ci-result.json" ;;
+      no-jobs) printf '{"version":1,"head_sha":"%s","jobs":[]}\n' "$head" > "$case_dir/local-ci-result.json" ;;
+      tab-name) printf '{"version":1,"head_sha":"%s","jobs":[{"name":"ci\\tPASS","exit_code":0}]}\n' "$head" > "$case_dir/local-ci-result.json" ;;
+    esac
+    run_required_case "$case_dir" 128 --local-ci-result "$case_dir/local-ci-result.json"
+    expect_code 2 "$RC" "local-ci-result-shape-$variant: a wrongly shaped file must refuse"
+    [ ! -s "$case_dir/gh.log" ] \
+      || fail "local-ci-result-shape-$variant: the forge was read before the shape was validated"
+  done
+  pass "fm-pr-merge refuses a local CI result file with an unknown version, an abbreviated head, no jobs, or an unlineable name"
+}
+
+test_local_ci_result_is_attended_only() {
+  local case_dir head
+  head=2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d
+  case_dir=$(make_case local-ci-result-away)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" "$(check_run ci COMPLETED SUCCESS)"
+  write_github_required "$case_dir" classic:'End-to-end tests'
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" 'End-to-end tests:0'
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  run_required_case "$case_dir" 129 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 2 "$RC" "local-ci-result-away: the evidence flag must be refused while away"
+  assert_grep '--local-ci-result is attended-only' "$case_dir/stderr" \
+    "local-ci-result-away: the refusal did not name attended-only"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "local-ci-result-away: gh pr merge ran despite an away evidence flag"
+
+  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
+    "$ROOT/bin/fm-afk-contract.sh" archive >/dev/null 2>&1 \
+    || fail "local-ci-result-away: the away record could not be archived"
+  run_required_case "$case_dir" 130 --local-ci-result "$case_dir/local-ci-result.json"
+  expect_code 0 "$RC" "local-ci-result-returned: the archived record must restore the attended merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 130 example/repo --squash
+  pass "fm-pr-merge refuses --local-ci-result while the away record exists and honours it after the captain returns"
+}
+
+test_local_ci_result_refuses_on_gitlab() {
+  local case_dir
+  case_dir=$(make_gitlab_case gitlab-local-ci-result)
+  printf '{"version":1,"head_sha":"%s","jobs":[{"name":"ci","exit_code":0}]}\n' "$MR_HEAD" \
+    > "$case_dir/local-ci-result.json"
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" --local-ci-result "$case_dir/local-ci-result.json" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  RC=$?
+  set -e
+  expect_code 2 "$RC" "gitlab-local-ci-result: the evidence flag must not apply on GitLab"
+  assert_grep '--local-ci-result does not apply to GitLab' "$case_dir/stderr" \
+    "gitlab-local-ci-result: the refusal did not name GitLab"
+  [ ! -s "$case_dir/glab.log" ] \
+    || fail "gitlab-local-ci-result: glab ran despite the refused flag"
+  pass "fm-pr-merge refuses --local-ci-result on a forge whose merge already requires its head pipeline"
+}
+
+test_local_ci_result_argument_shape() {
+  local case_dir head result
+  head=2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e
+  case_dir=$(make_case local-ci-result-args)
+  add_gh_mocks "$case_dir" "$head"
+  write_local_ci_result "$case_dir/local-ci-result.json" "$head" ci:0
+  result="$case_dir/local-ci-result.json"
+
+  run_required_case "$case_dir" 131 --local-ci-result
+  expect_code 2 "$RC" "local-ci-result-args: the flag without a path must be refused"
+  assert_grep 'local-ci-result requires a file path' "$case_dir/stderr" \
+    "local-ci-result-args: the missing path was not named"
+
+  run_required_case "$case_dir" 132 "--local-ci-result=$result"
+  expect_code 2 "$RC" "local-ci-result-args: the inline value must be refused"
+  assert_grep 'local-ci-result requires a separate file path argument' "$case_dir/stderr" \
+    "local-ci-result-args: the inline-value refusal was not named"
+
+  run_required_case "$case_dir" 133 --local-ci-result "$result" --local-ci-result "$result"
+  expect_code 2 "$RC" "local-ci-result-args: a second flag must be refused"
+  assert_grep 'local-ci-result may be specified only once' "$case_dir/stderr" \
+    "local-ci-result-args: the duplicate was not refused by name"
+
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "local-ci-result-args: gh pr merge ran for a malformed flag"
+  pass "fm-pr-merge accepts --local-ci-result once with a separate path and refuses every other spelling"
+}
+
+test_local_ci_result_waives_unreported_required_checks
+test_local_ci_result_waives_a_red_check_of_the_same_name
+test_local_ci_result_writes_nothing_to_the_forge
+test_local_ci_result_head_mismatch_refuses
+test_local_ci_result_failed_job_refuses
+test_local_ci_result_uncovered_check_refuses
+test_local_ci_result_unusable_file_refuses
+test_local_ci_result_invalid_shape_refuses
+test_local_ci_result_is_attended_only
+test_local_ci_result_refuses_on_gitlab
+test_local_ci_result_argument_shape
 test_gitlab_head_override_args_refuse_before_recording
 test_secondmate_merge_reports_upward_once
 test_secondmate_merge_reports_on_the_local_route
