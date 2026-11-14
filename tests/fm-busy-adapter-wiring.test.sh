@@ -164,11 +164,51 @@ drive_oc_plugin() {
   PLUGIN_PATH="$plugin" node --input-type=module - "$@" 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.env.PLUGIN_PATH).href);
-const hooks = await mod.FmBusyState({});
+const hooks = await mod.default.server({});
 for (const arg of process.argv.slice(2)) {
   await hooks.event({ event: JSON.parse(arg) });
 }
 EOF
+}
+
+# drive_oc_plugin_v2 <plugin-path> <events-json-lines...>: load the generated
+# plugin the way OpenCode 2.x does - the default export must carry an id and a
+# setup function, and setup(ctx) subscribes through ctx.event.subscribe() - and
+# feed it one event per argument. OpenCode 2.2.5 rejects a plugin without that
+# default export ("failed to load plugin"), so a v1-only plugin never loads.
+drive_oc_plugin_v2() {
+  local plugin=$1
+  shift
+  PLUGIN_PATH="$plugin" node --input-type=module - "$@" 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.env.PLUGIN_PATH).href);
+const plugin = mod.default;
+if (!plugin || typeof plugin.id !== "string" || !plugin.id || typeof plugin.setup !== "function") {
+  console.error("plugin default export lacks an id and a setup function");
+  process.exit(3);
+}
+const queue = process.argv.slice(2).map((arg) => JSON.parse(arg));
+let drained;
+const drainedPromise = new Promise((resolve) => { drained = resolve; });
+const ctx = {
+  location: { directory: process.cwd() },
+  event: {
+    subscribe() {
+      return (async function* () {
+        for (const event of queue) yield event;
+        drained();
+      })();
+    },
+  },
+};
+await plugin.setup(ctx);
+await drainedPromise;
+await new Promise((resolve) => setTimeout(resolve, 700));
+EOF
+}
+
+oc2() {  # <type> <sessionID>
+  printf '{"type":"%s","data":{"sessionID":"%s"}}' "$1" "$2"
 }
 
 oc_status() {  # <sessionID> <type>
@@ -225,6 +265,51 @@ test_opencode_plugin_semantic_lifecycle() {
   out=$(classify opencode "$id" "$state")
   [ "$out" = "busy opencode-plugin" ] || fail "another session's idle must not clear the latched busy, got '$out'"
   pass "opencode plugin classifies from session.status, scoped to the latched worker session"
+}
+
+test_opencode_plugin_loads_and_tracks_state_on_opencode_2() {
+  local rec id=busy-oc-2 out state plugin
+  rec=$(make_spawn_case oc2-lifecycle opencode "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "opencode spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  plugin="$WT_DIR/.opencode/plugins/fm-busy-state.js"
+
+  out=$(drive_oc_plugin_v2 "$plugin" "$(oc2 session.execution.started ses_main)") || fail "v2 busy drive failed: $out"
+  out=$(classify opencode "$id" "$state")
+  [ "$out" = "busy opencode-plugin" ] || fail "execution.started must classify 'busy opencode-plugin', got '$out'"
+
+  out=$(drive_oc_plugin_v2 "$plugin" \
+    "$(oc2 session.execution.started ses_main)" \
+    "$(oc2 session.execution.started ses_child)" \
+    "$(oc2 session.execution.succeeded ses_child)") || fail "v2 child drive failed: $out"
+  out=$(classify opencode "$id" "$state")
+  [ "$out" = "busy opencode-plugin" ] || fail "a child session's end must not clear the worker, got '$out'"
+
+  local ending
+  for ending in session.execution.succeeded session.execution.failed session.execution.interrupted; do
+    rm -f "$state/$id.turn-ended"
+    out=$(drive_oc_plugin_v2 "$plugin" \
+      "$(oc2 session.execution.started ses_main)" \
+      "$(oc2 "$ending" ses_main)") || fail "v2 $ending drive failed: $out"
+    out=$(classify opencode "$id" "$state")
+    [ "$out" = "idle opencode-plugin" ] || fail "$ending for the latched session must classify idle, got '$out'"
+    [ -f "$state/$id.turn-ended" ] || fail "$ending no longer touches the turn-end marker"
+  done
+
+  out=$(drive_oc_plugin_v2 "$plugin" \
+    "$(oc2 session.execution.started ses_main)" \
+    "$(oc2 session.execution.succeeded ses_main)" \
+    "$(oc2 session.retry.scheduled ses_main)") || fail "v2 retry drive failed: $out"
+  out=$(classify opencode "$id" "$state")
+  [ "$out" = "busy opencode-plugin" ] || fail "a scheduled retry must classify busy, got '$out'"
+
+  out=$(drive_oc_plugin_v2 "$plugin" "$(oc2 session.text.delta ses_main)" "$(oc2 session.execution.succeeded ses_unlatched)") ||
+    fail "v2 unrelated-event drive failed: $out"
+  out=$(classify opencode "$id" "$state")
+  [ "$out" = "busy opencode-plugin" ] || fail "unrelated events must not clear the retry busy state, got '$out'"
+  pass "opencode plugin loads as an OpenCode 2 default export and classifies from session.execution events"
 }
 
 run_claude_hook() {  # <settings.json> <hook-event>
@@ -427,6 +512,7 @@ test_pi_extension_serializes_settle_before_next_start
 test_pi_extension_stale_incarnation_rejected
 test_kimi_and_grok_install_no_unverified_wiring
 test_opencode_plugin_semantic_lifecycle
+test_opencode_plugin_loads_and_tracks_state_on_opencode_2
 test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless
 test_gemini_hooks_semantic_lifecycle
