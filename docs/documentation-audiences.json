@@ -833,6 +833,42 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/003-opencode-v2-launch/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-opencode-v2-launch/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     },
