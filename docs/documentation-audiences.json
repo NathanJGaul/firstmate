@@ -833,6 +833,58 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/003-local-ci-merge-evidence/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/data-model.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/003-local-ci-merge-evidence/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/003-opencode-v2-launch/analyze.md",
       "audience": "maintainer-verification"
     },
