@@ -1,0 +1,12 @@
+ok - fm-pr-merge merges on a local CI result file that proves the live head and waives only the checks it records
+ok - fm-pr-merge waives a red check whose exact name the local CI result file records as passing
+ok - fm-pr-merge writes nothing to the forge besides the merge itself on the local evidence path
+ok - fm-pr-merge refuses a local CI result file that proves a different commit
+ok - fm-pr-merge refuses a local CI result file that records any failed job
+ok - fm-pr-merge refuses when the local CI result file does not cover a check the forge still needs
+ok - fm-pr-merge refuses an unreadable, absent, or malformed local CI result file before recording anything
+ok - fm-pr-merge refuses a local CI result file with an unknown version, an abbreviated head, no jobs, or an unlineable name
+ok - fm-pr-merge refuses --local-ci-result while the away record exists and honours it after the captain returns
+ok - fm-pr-merge refuses --local-ci-result on a forge whose merge already requires its head pipeline
+ok - fm-pr-merge accepts --local-ci-result once with a separate path and refuses every other spelling
+exit=0
