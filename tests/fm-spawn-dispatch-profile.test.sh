@@ -745,81 +745,106 @@ test_cursor_failed_catalog_probe_does_not_block_spawn() {
   pass "cursor preserves the requested model when its live catalog is unreachable"
 }
 
-test_opencode_threads_model_and_effort_variant() {
+# OpenCode 2.2.5 launch contract (verified 2026-11-14): the interactive TUI
+# rejects --model, ignores OPENCODE_CONFIG_CONTENT, honors the model key of the
+# worktree's .opencode/opencode.json, and --auto replaces the allow-all
+# permission config. Effort has no known 2.x surface, so it is recorded only.
+opencode_pin_model() {  # <worktree>
+  jq -r '.model // empty' "$1/.opencode/opencode.json" 2>/dev/null
+}
+
+# A relaunch reuses the task worktree, where the previous incarnation's pin is
+# excluded from version control; seed the same state so the pooled worktree
+# still reads as clean.
+opencode_seed_stale_pin() {  # <worktree>
+  local exclude_file
+  exclude_file=$(git -C "$1" rev-parse --path-format=absolute --git-path info/exclude)
+  mkdir -p "$(dirname "$exclude_file")" "$1/.opencode"
+  printf '.opencode/opencode.json\n' >>"$exclude_file"
+  printf '{"model":"opencode-go/stale"}\n' >"$1/.opencode/opencode.json"
+}
+
+test_opencode_v2_launch_pins_model_in_worktree_config() {
   local rec id out status launch
   id=profile-opencode-z7
   rec=$(make_spawn_case profile-opencode opencode "$id")
   read_case_record "$rec"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model anthropic/claude-sonnet-4-5 --effort high)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model opencode-go/glm-5.3 --effort high)
   status=$?
-  expect_code 0 "$status" "opencode spawn with model and effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 high
+  expect_code 0 "$status" "opencode spawn with model and effort should succeed: $out"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" opencode opencode-go/glm-5.3 high
   launch=$(cat "$LAUNCH_LOG")
-  # opencode 1.18.32's config schema carries per-model reasoning effort as
-  # agent.<name>.variant, so the effort rides the OPENCODE_CONFIG_CONTENT JSON
-  # the launch already writes, keyed to the resolved model on the default
-  # build agent, never as a launch flag.
-  assert_contains "$launch" \
-    "OPENCODE_CONFIG_CONTENT='{\"permission\":{\"*\":\"allow\"},\"agent\":{\"build\":{\"model\":\"anthropic/claude-sonnet-4-5\",\"variant\":\"high\"}}}' opencode --model 'anthropic/claude-sonnet-4-5' --prompt" \
-    "opencode launch did not write the effort as the build agent's variant in its config"
-  assert_not_contains "$launch" "--effort" "opencode launch must not pass unsupported --effort"
+  assert_contains "$launch" "opencode --auto --prompt" "opencode launch must use the v2 --auto --prompt form"
+  assert_not_contains "$launch" "--model" "the v2 opencode TUI rejects --model"
+  assert_not_contains "$launch" "OPENCODE_CONFIG_CONTENT" "opencode v2 ignores OPENCODE_CONFIG_CONTENT"
+  assert_not_contains "$launch" "--effort" "opencode launch must not pass an unsupported --effort"
   assert_not_contains "$launch" "--variant" "opencode launch must not pass run-only --variant"
   assert_not_contains "$launch" "--thinking" "opencode launch must not pass pi thinking flag"
-  pass "opencode receives --model and the effort as its config's agent variant"
+  [ "$(opencode_pin_model "$WT_DIR")" = "opencode-go/glm-5.3" ] ||
+    fail "worktree .opencode/opencode.json must pin the resolved model"
+  [ -z "$(git -C "$WT_DIR" status --porcelain -- .opencode/opencode.json)" ] ||
+    fail "the model pin must be excluded from version control"
+  pass "opencode launches with --auto --prompt and the model pinned in the worktree config, effort recorded only"
 }
 
-test_opencode_without_effort_keeps_launch_config_unchanged() {
+test_opencode_without_model_writes_no_pin() {
   local rec id out status launch
-  id=profile-opencode-noeffort-z7b
-  rec=$(make_spawn_case profile-opencode-noeffort opencode "$id")
+  id=profile-opencode-nomodel-z7b
+  rec=$(make_spawn_case profile-opencode-nomodel opencode "$id")
   read_case_record "$rec"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model anthropic/claude-sonnet-4-5)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "opencode spawn without effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 default
+  expect_code 0 "$status" "opencode spawn without a model should succeed: $out"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" \
-    "OPENCODE_CONFIG_CONTENT='{\"permission\":{\"*\":\"allow\"}}' opencode --model 'anthropic/claude-sonnet-4-5' --prompt" \
-    "opencode launch without effort must keep the permission-only config byte-identical"
-  assert_not_contains "$launch" '"variant"' "opencode launch without effort must not write a variant"
-  pass "opencode without an effort keeps its launch config unchanged"
+  assert_contains "$launch" "opencode --auto --prompt" "opencode launch must use the v2 --auto --prompt form"
+  [ ! -e "$WT_DIR/.opencode/opencode.json" ] || fail "no model must mean no model pin"
+  pass "opencode without a model writes no pin"
 }
 
-test_opencode_emits_variant_for_openai_family_effort() {
-  local rec id out status launch
-  id=profile-opencode-openai-z7c
-  rec=$(make_spawn_case profile-opencode-openai opencode "$id")
+test_opencode_stale_pin_follows_the_replacement_model() {
+  local rec id out status
+  id=profile-opencode-restale-z7c
+  rec=$(make_spawn_case profile-opencode-restale opencode "$id")
   read_case_record "$rec"
+  opencode_seed_stale_pin "$WT_DIR"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model openai/gpt-5.6-sol --effort xhigh)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model opencode-go/glm-5.3)
   status=$?
-  expect_code 0 "$status" "opencode spawn with an openai model and effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" opencode openai/gpt-5.6-sol xhigh
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" \
-    "OPENCODE_CONFIG_CONTENT='{\"permission\":{\"*\":\"allow\"},\"agent\":{\"build\":{\"model\":\"openai/gpt-5.6-sol\",\"variant\":\"xhigh\"}}}' opencode --model 'openai/gpt-5.6-sol' --prompt" \
-    "opencode launch did not write the openai family effort as the build agent's variant"
-  pass "opencode emits the variant for an effort the openai family exposes"
+  expect_code 0 "$status" "opencode spawn over an untracked stale pin should succeed: $out"
+  [ "$(opencode_pin_model "$WT_DIR")" = "opencode-go/glm-5.3" ] || fail "a stale untracked pin must be replaced by the new model"
+
+  id=profile-opencode-restale-z7d
+  rec=$(make_spawn_case profile-opencode-restale2 opencode "$id")
+  read_case_record "$rec"
+  opencode_seed_stale_pin "$WT_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "opencode spawn without a model over an untracked stale pin should succeed: $out"
+  [ ! -e "$WT_DIR/.opencode/opencode.json" ] || fail "a stale untracked pin must not survive a model-less replacement"
+  pass "opencode model pin follows the replacement incarnation's model"
 }
 
-test_opencode_omits_variant_when_model_family_lacks_effort() {
-  local rec id out status launch
-  id=profile-opencode-omit-z7d
-  rec=$(make_spawn_case profile-opencode-omit opencode "$id")
+test_opencode_refuses_to_overwrite_a_tracked_project_config() {
+  local rec id out status
+  id=profile-opencode-tracked-z7e
+  rec=$(make_spawn_case profile-opencode-tracked opencode "$id")
   read_case_record "$rec"
+  # The spawn refreshes the pooled worktree to the project's default branch, so
+  # the project's own file must land there, not only in the worktree.
+  mkdir -p "$PROJ_DIR/.opencode"
+  printf '{"theme":"project"}\n' >"$PROJ_DIR/.opencode/opencode.json"
+  git -C "$PROJ_DIR" add .opencode/opencode.json
+  git -C "$PROJ_DIR" -c user.name=t -c user.email=t@example.invalid commit -q -m "project opencode config"
+  git -C "$PROJ_DIR" push -q origin HEAD
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model anthropic/claude-sonnet-4-5 --effort medium)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model opencode-go/glm-5.3)
   status=$?
-  expect_code 0 "$status" "opencode spawn with an unsupported family effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 medium
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" \
-    "OPENCODE_CONFIG_CONTENT='{\"permission\":{\"*\":\"allow\"}}' opencode --model 'anthropic/claude-sonnet-4-5' --prompt" \
-    "opencode must keep the permission-only config when the model family lacks the effort"
-  assert_not_contains "$launch" '"variant"' "opencode must omit the variant when the model family lacks the effort"
-  pass "opencode omits the variant for an effort outside the model family's list"
+  [ "$status" -ne 0 ] || fail "a tracked project .opencode/opencode.json must stop the model pin: $out"
+  assert_contains "$out" ".opencode/opencode.json" "the refusal must name the tracked file"
+  [ "$(cat "$WT_DIR/.opencode/opencode.json")" = '{"theme":"project"}' ] || fail "the project's tracked config must be untouched"
+  pass "opencode refuses to overwrite a tracked project .opencode/opencode.json"
 }
 
 test_native_effort_validator_keeps_axes_separate() {
@@ -2213,10 +2238,10 @@ test_grok_omits_invalid_xhigh_reasoning_effort
 test_cursor_threads_model_workspace_and_omits_effort_axis
 test_cursor_refuses_model_absent_from_live_catalog
 test_cursor_failed_catalog_probe_does_not_block_spawn
-test_opencode_threads_model_and_effort_variant
-test_opencode_without_effort_keeps_launch_config_unchanged
-test_opencode_emits_variant_for_openai_family_effort
-test_opencode_omits_variant_when_model_family_lacks_effort
+test_opencode_v2_launch_pins_model_in_worktree_config
+test_opencode_without_model_writes_no_pin
+test_opencode_stale_pin_follows_the_replacement_model
+test_opencode_refuses_to_overwrite_a_tracked_project_config
 test_native_effort_validator_keeps_axes_separate
 test_native_pi_ultra_is_explicit_and_model_scoped
 test_batch_preserves_native_ultra

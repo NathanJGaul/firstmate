@@ -1,21 +1,30 @@
 # OpenCode
 
-Verified on 2026-06-11 across versions 1.15.7 through 1.17.6, with busy-queue behavior re-verified on 2026-07-20 using 1.18.4.
+Worker launch and busy-state facts were verified on 2026-11-14 with OpenCode 2.2.5.
+Earlier facts were verified on 2026-06-11 across versions 1.15.7 through 1.17.6, with busy-queue behavior re-verified on 2026-07-20 using 1.18.4.
 
 ## Operating facts
 
 | Fact | Value |
 |---|---|
-| Busy state | The Firstmate-owned plugin's semantic `session.status`: `busy` and `retry` are active, `idle` is inactive, latched to the worker's own session. |
+| Busy state | The Firstmate-owned plugin, latched to the worker's own session. On 2.x `session.execution.started` and `session.retry.scheduled` are active and `session.execution.succeeded`, `.failed`, and `.interrupted` are inactive; 2.x emits no `session.status` or `session.idle`. On 1.x `session.status` `busy` and `retry` are active and `idle` is inactive. |
 | Exit command | `/exit`. |
 | Interrupt | Double Escape; it is known to be flaky while a long shell command runs, so use `../../../bin/fm-control.sh <task-id> relaunch` for a wedged pane. |
 | Skill invocation | No separate verified form beyond normal slash-command behavior; use natural language when the exact command is uncertain. |
 | Resume | Relaunch with `--continue` to resume the most recent session for the current directory, then send the next instruction after the TUI is ready because `--prompt` does not auto-submit alongside `--continue`. |
-| Model flag | `--model <provider/model>`. |
-| Effort flag | None for Firstmate's interactive `opencode --prompt` launch; `opencode run` has `--variant`, but that is not this path. The effort instead rides the launch's `OPENCODE_CONFIG_CONTENT` JSON as the `build` agent's `variant` keyed to the resolved model, the config schema's per-model reasoning-effort field verified on 1.18.32. It is emitted only when the resolved model's provider is known to expose that effort as a variant (`anthropic/*`: high, max; `openai/*`: low, medium, high, xhigh); with no model resolved, another provider, or an effort outside its family's list, the variant is omitted and the permission-only launch is unchanged. |
+| Launch | `opencode --auto --prompt "<brief>"`. `--auto` auto-approves permissions that are not explicitly denied. The 2.x TUI flags are `--standalone`, `--server`, `--auto`, `--continue`, `--session`, and `--prompt`. |
+| Model flag | None on the interactive launch: 2.2.5 exits with "Unrecognized flag: --model". The spawn writes the resolved model to the task worktree's `.opencode/opencode.json` (`{"model":"<provider/model>"}`), excluded from version control; it stops rather than overwrite a tracked project file of that name. `opencode run --model` still works and is the headless way to check model resolution. |
+| Effort flag | None; 2.2.5 has no known effort surface for the interactive launch, so the spawn records the effort in task metadata and omits it. `OPENCODE_CONFIG_CONTENT`, which carried the 1.x permission and effort settings, is ignored entirely by 2.x. |
 | Model discovery | Run `opencode models [provider]` to list available provider/model identifiers. |
 | Trust dialog | None. |
 | Marker | None; OpenCode publishes no identity marker, so `../../../bin/fm-harness.sh` identifies it from process ancestry. |
+
+## Plugin loading
+
+OpenCode 2.x loads a plugin file only when its default export carries an `id` and a `setup` function (or an `effect`); a file with only a named `async` export fails with "failed to load plugin" and is skipped silently, so a plugin written for 1.x never runs.
+The spawn-written `.opencode/plugins/fm-busy-state.js` therefore exports one default object whose `setup(ctx)` subscribes to `ctx.event.subscribe()` for 2.x and whose `server()` keeps the 1.x `event` hook.
+Regression coverage is `../../../tests/fm-busy-adapter-wiring.test.sh` and `../../../tests/fm-spawn-dispatch-profile.test.sh`.
+The primary-side `.opencode/plugins/fm-primary-*.js` plugins use the 1.x named-export form and are not covered by that change.
 
 OpenCode can auto-upgrade in the background, and the running TUI can exit mid-task.
 That behavior was observed live during an upgrade from 1.15.7 to 1.17.3.

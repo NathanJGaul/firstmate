@@ -93,10 +93,11 @@
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
-#   OpenCode has no interactive effort flag, so its effort is written as the
-#   build agent's variant, keyed to the resolved model, inside the
-#   OPENCODE_CONFIG_CONTENT JSON its launch already carries (config schema
-#   verified on opencode 1.18.32); without a model the axis is recorded but omitted.
+#   OpenCode 2.x has no --model flag on its interactive launch and ignores
+#   OPENCODE_CONFIG_CONTENT, so the resolved model is written to the task
+#   worktree's .opencode/opencode.json (excluded from version control; a tracked
+#   project file of that name stops the spawn). Its effort has no known 2.x
+#   surface and is recorded but omitted from the launch.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -2134,7 +2135,12 @@ launch_template() {
       printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox --disable hooks -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     fi
     ;;
-  opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}__EFFORTFLAG__}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+  # OpenCode 2.2.5 (verified 2026-11-14): the interactive launch has no --model
+  # flag (the model rides the worktree's .opencode/opencode.json, written at
+  # spawn), OPENCODE_CONFIG_CONTENT is ignored, and --auto auto-approves every
+  # permission that is not explicitly denied. __MODELFLAG__ and __EFFORTFLAG__
+  # are therefore deliberately absent from this template.
+  opencode) printf '%s' 'opencode --auto --prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
   pi | pi-signed)
     printf '%s' '__PIBIN____PITUIMODE____PIAPPROVE____PIEXCLUDE____PIRESUME__'
     if [ "$kind" = secondmate ]; then
@@ -2676,9 +2682,11 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-  claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin)
+  claude | codex | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin)
     printf -- '--model %s ' "$(shell_quote "$model")"
     ;;
+  # opencode is absent on purpose: its 2.x interactive launch rejects --model
+  # and takes the model from the worktree's .opencode/opencode.json instead.
   esac
 }
 
@@ -2738,33 +2746,11 @@ effort_flag_for_harness() {
     esac
     ;;
   opencode)
-    # opencode's interactive `opencode --prompt` launch has no effort flag
-    # (`opencode run --variant` is a different, non-interactive mode). Its
-    # config schema (opencode 1.18.32, `opencode debug config` / config.json)
-    # carries per-model reasoning effort as agent.<name>.variant, "Default model
-    # variant for this agent (applies only when using the agent's configured
-    # model)", so the effort rides the OPENCODE_CONFIG_CONTENT JSON the launch
-    # already writes: the default build agent is pinned to the resolved model
-    # and the effort named as its variant, which OpenCode resolves against that
-    # model's own variant list. Those lists are per-provider (anthropic/* expose
-    # high|max, openai/* expose low|medium|high|xhigh), so emit the variant only
-    # when the resolved model's provider is known to expose that effort; any
-    # other provider, or an effort outside its family's list, keeps the
-    # permission-only launch and omits the variant (record-and-omit, as codex
-    # and grok do). Without a resolved model the variant has nothing to key to
-    # and is likewise omitted. The fragment lands inside the launch's
-    # single-quoted assignment, so a literal quote in the model id must close and
-    # reopen that quoting.
-    [ -n "$model" ] && [ "$model" != default ] || return 0
-    case "${model%%/*}:$effort" in
-    anthropic:high | anthropic:max) ;;
-    openai:low | openai:medium | openai:high | openai:xhigh) ;;
-    *) return 0 ;;
-    esac
-    local model_json
-    model_json=$(json_escape "$model")
-    model_json=${model_json//\'/\'\\\'\'}
-    printf ',"agent":{"build":{"model":"%s","variant":"%s"}}' "$model_json" "$effort"
+    # OpenCode 2.2.5's interactive launch has no effort flag and no known 2.x
+    # config surface for it (the 1.x agent.build.variant rode the now-ignored
+    # OPENCODE_CONFIG_CONTENT), so the axis is recorded in task metadata and
+    # omitted from the launch (record-and-omit, as kimi and cursor do).
+    return 0
     ;;
   muse)
     # muse 0.1.0-R708.1 --reasoning-effort accepts none|minimal|low|medium|
@@ -4718,16 +4704,46 @@ EOF
     ;;
   opencode*)
     mkdir -p "$WT/.opencode/plugins"
+    # OpenCode 2.x takes the model from the working directory's
+    # .opencode/opencode.json (its launch has no --model flag). A relaunch
+    # reaches this point too, so the pin always follows the replacement's model
+    # and a stale untracked pin is dropped when no model resolves. A tracked
+    # project file of that name is never overwritten.
+    OC_PIN="$WT/.opencode/opencode.json"
+    if git -C "$WT" ls-files --error-unmatch -- .opencode/opencode.json >/dev/null 2>&1; then
+      if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
+        echo "error: $WT/.opencode/opencode.json is tracked by the project, so the spawn will not overwrite it to pin model '$MODEL'; spawn without --model or remove the project's pin first" >&2
+        exit 1
+      fi
+    elif [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
+      command -v jq >/dev/null 2>&1 || {
+        echo "error: jq is required to write the OpenCode model pin for $ID" >&2
+        exit 1
+      }
+      jq -n --arg model "$MODEL" '{model: $model}' >"$OC_PIN" || {
+        echo "error: could not write the OpenCode model pin $OC_PIN" >&2
+        exit 1
+      }
+      exclude_path '.opencode/opencode.json'
+    else
+      rm -f "$OC_PIN"
+    fi
     cat >"$WT/.opencode/plugins/fm-busy-state.js" <<EOF
 // Firstmate semantic busy-state events + turn-end notification; written by
 // fm-spawn under the contract owned by bin/fm-busy-lib.sh.
-// Semantic state comes from OpenCode's session.status events: busy and retry
-// are active, idle is inactive. Scoping latches the first session that
-// reports activity (the worker's main session - a subagent child session can
-// only start while the main session is already busy) and ignores other
-// sessions' status until the latched session settles, so a child's idle can
-// never clear the worker's busy state. The session.idle touch stays the
-// watcher's wake NOTIFICATION, never current-state truth.
+// One default export serves both OpenCode generations (verified 2026-11-14):
+// OpenCode 2.x refuses any plugin file without a default export carrying an id
+// and a setup function ("failed to load plugin"), and reads session activity
+// from ctx.event: session.execution.started and session.retry.scheduled are
+// active, and session.execution.succeeded, .failed and .interrupted are
+// inactive (2.x emits no session.status or session.idle). OpenCode 1.x loads
+// the same default export through server() and reads session.status (busy and
+// retry active, idle inactive) and session.idle. Scoping latches the first
+// session that reports activity (the worker's main session - a subagent child
+// session can only start while the main session is already busy) and ignores
+// other sessions' state until the latched session settles, so a child's end can
+// never clear the worker's busy state. The turn-end touch stays the watcher's
+// wake NOTIFICATION, never current-state truth.
 import { execFile } from "node:child_process";
 const busyEvent = (state, event) =>
   new Promise((resolve) => {
@@ -4736,35 +4752,75 @@ const busyEvent = (state, event) =>
       "--gen", "$BUSY_GEN", "--source", "opencode-plugin", "--event", event,
     ], () => resolve());
   });
-export const FmBusyState = async () => {
+const touchTurnEnd = () =>
+  new Promise((resolve) => {
+    execFile("touch", ["$TURNEND"], () => resolve());
+  });
+const createTracker = () => {
   let activeSession = null;
+  const busy = async (sessionID, event) => {
+    if (activeSession === null) activeSession = sessionID;
+    if (sessionID === activeSession) await busyEvent("busy", event);
+  };
+  const idle = async (sessionID, event) => {
+    if (sessionID !== activeSession) return false;
+    activeSession = null;
+    await busyEvent("idle", event);
+    return true;
+  };
   return {
-    event: async ({ event }) => {
+    v1: async (event) => {
+      const sessionID = event.properties && event.properties.sessionID;
       if (event.type === "session.status") {
-        const sessionID = event.properties.sessionID;
         const statusType = event.properties.status && event.properties.status.type;
-        if (statusType === "busy" || statusType === "retry") {
-          if (activeSession === null) activeSession = sessionID;
-          if (sessionID === activeSession) await busyEvent("busy", "session-" + statusType);
-          return;
-        }
-        if (statusType === "idle" && sessionID === activeSession) {
-          activeSession = null;
-          await busyEvent("idle", "session-status-idle");
-        }
+        if (statusType === "busy" || statusType === "retry") await busy(sessionID, "session-" + statusType);
+        else if (statusType === "idle") await idle(sessionID, "session-status-idle");
         return;
       }
       if (event.type === "session.idle") {
-        if (event.properties.sessionID === activeSession) {
-          activeSession = null;
-          await busyEvent("idle", "session-idle");
-        }
-        await new Promise((resolve) => {
-          execFile("touch", ["$TURNEND"], () => resolve());
-        });
+        await idle(sessionID, "session-idle");
+        await touchTurnEnd();
+      }
+    },
+    v2: async (event) => {
+      const sessionID = event.data && event.data.sessionID;
+      if (typeof sessionID !== "string") return;
+      if (event.type === "session.execution.started" || event.type === "session.retry.scheduled") {
+        await busy(sessionID, event.type.replace(/^session\./, "session-"));
+        return;
+      }
+      if (
+        event.type === "session.execution.succeeded" ||
+        event.type === "session.execution.failed" ||
+        event.type === "session.execution.interrupted"
+      ) {
+        if (await idle(sessionID, event.type.replace(/^session\./, "session-"))) await touchTurnEnd();
       }
     },
   };
+};
+export default {
+  id: "fm-busy-state",
+  // OpenCode 2 entrypoint.
+  async setup(ctx) {
+    const tracker = createTracker();
+    (async () => {
+      for await (const event of ctx.event.subscribe()) {
+        try {
+          await tracker.v2(event);
+        } catch {}
+      }
+    })().catch(() => {});
+  },
+  // OpenCode 1 entrypoint.
+  async server() {
+    const tracker = createTracker();
+    return {
+      event: async ({ event }) => {
+        await tracker.v1(event);
+      },
+    };
+  },
 };
 EOF
     exclude_path '.opencode/plugins/fm-busy-state.js'
