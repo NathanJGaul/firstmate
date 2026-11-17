@@ -116,3 +116,11 @@ Method notes (strict redo, at the captain's direction):
   - A7 `not ok - teardown did not remove the matched Orca worktree (missing: ...)`; A9 `not ok - Orca spawn should remove the worktree when terminal creation fails (missing: ...)`
 - green: `fm_backend_orca_remove_worktree` passes `--force --delete-branch --json`, with a header comment on why that is safe. All twelve exit 0.
 - refactor: none.
+
+## Suite runs after cycle 11
+
+Run once, sequentially, on the final committed code, as the captain asked:
+
+- `bin/fm-test-run.sh tests/fm-backend-orca.test.sh` -> 73 ok, 0 not ok, `FM_TEST_SUMMARY total=1 failed=0` (212 s).
+  This includes the four refusal tests that assert no worktree release (A10) and the empty-id and `ok:false` release tests (U14, U15), unchanged and green.
+- `bin/fm-test-run.sh tests/fm-teardown-endpoint-safety.test.sh` -> 27 ok, 0 not ok, `FM_TEST_SUMMARY total=1 failed=0` (90 s).

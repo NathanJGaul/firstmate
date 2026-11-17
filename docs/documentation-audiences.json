@@ -1013,6 +1013,54 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/004-orca-leak-fixes/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-leak-fixes/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },

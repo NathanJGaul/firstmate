@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-17
 
-**Status**: Draft
+**Status**: Implemented
 
 **Input**: Stop the Orca backend leaking a spare terminal and a stray branch per task (slices P1-A and P1-B of the Orca evaluation plan, lead 4, section 4 and section 5.2 rows 2 and 3).
 
@@ -30,7 +30,7 @@ The operator dispatches a ship or scout task on the Orca backend.
 **Acceptance Scenarios**:
 
 1. **Given** Orca reports a startup terminal for the new worktree, **When** the task is spawned, **Then** that terminal is the task's recorded terminal, it is titled with the task's name, and no second terminal is created.
-2. **Given** Orca reports a terminal in the verified `terminal` shape and no startup terminal, **When** the task is spawned, **Then** that terminal is adopted exactly as before and no second terminal is created.
+2. **Given** Orca reports a terminal in the verified `terminal` shape and no startup terminal, **When** the task is spawned, **Then** that terminal is adopted as before, titled with the task's name, and no second terminal is created.
 3. **Given** Orca reports neither a startup terminal nor a terminal, **When** the task is spawned, **Then** firstmate creates one titled terminal for the worktree, as before.
 4. **Given** Orca reports a startup terminal that it did not spawn, **When** the task is spawned, **Then** firstmate does not adopt it and creates one titled terminal instead.
 5. **Given** Orca reports a startup terminal but no worktree path, **When** the spawn fails, **Then** that terminal is closed and the worktree is released, so the failed spawn leaves nothing behind.

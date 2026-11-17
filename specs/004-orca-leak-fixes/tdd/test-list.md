@@ -4,7 +4,7 @@ loop: outside-in
 profile: .specify/memory/tdd-profile.md
 spec_criteria: 9
 planned_at: af20b2c9
-updated_at: af20b2c9
+updated_at: 94d59155
 suite_baseline: unknown
 ---
 
@@ -23,16 +23,17 @@ Each runs through a real entry point, `bin/fm-spawn.sh --backend orca` or `bin/f
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| A1  | A spawn whose worktree creation reports a started startup terminal records that terminal in task metadata, titles it with the task name, creates no second terminal, and launches the harness through it | US1.1, FR-001, FR-003, FR-004 | example | PENDING | |
-| A2  | A spawn whose worktree creation reports a `terminal` adopts it with no create, and when a startup terminal is also reported the `terminal` one is recorded | US1.2, FR-002, FR-004 | example | PENDING | |
-| A3  | A spawn whose worktree creation reports neither shape creates exactly one terminal titled with the task name, issues no rename, and records it | US1.3, FR-005 | example | PENDING | |
-| A4  | A spawn whose startup terminal is reported not started, or has an empty or missing handle, creates one titled terminal instead | US1.4, FR-001, FR-005 | example | PENDING | |
-| A5  | A spawn whose worktree creation reports a startup terminal and no path fails, closes that terminal, releases the worktree, and issues no rename | US1.5, FR-006 | example | PENDING | |
-| A6  | A failing title rename leaves the spawn successful with the adopted terminal recorded | EC, FR-003 | example | PENDING | |
-| A7  | Tearing down an Orca ship task releases its worktree with `--force --delete-branch` and succeeds | US2.1, FR-007 | example | PENDING | |
-| A8  | A release in which Orca reports success but keeps the branch completes teardown and removes the task records | US2.2 | example | PENDING | |
-| A9  | A spawn that fails after the worktree was created releases the worktree with the same branch-deleting release | US2.3, FR-007 | example | PENDING | |
+| A1  | A spawn whose worktree creation reports a started startup terminal records that terminal in task metadata, titles it with the task name, creates no second terminal, and launches the harness through it | US1.1, FR-001, FR-003, FR-004 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_adopts_startup_terminal_without_creating_another` |
+| A2  | A spawn whose worktree creation reports a `terminal` adopts it with no create, and when a startup terminal is also reported the `terminal` one is recorded | US1.2, FR-002, FR-004 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal` |
+| A3  | A spawn whose worktree creation reports neither shape creates exactly one terminal titled with the task name, issues no rename, and records it | US1.3, FR-005 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_creates_one_titled_terminal_when_orca_reports_none` |
+| A4  | A spawn whose startup terminal is reported not started, or has an empty or missing handle, creates one titled terminal instead | US1.4, FR-001, FR-005 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_creates_a_terminal_for_an_unusable_startup_terminal` |
+| A5  | A spawn whose worktree creation reports a startup terminal and no path fails, closes that terminal, releases the worktree, and issues no rename | US1.5, FR-006 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything` |
+| A6  | A failing title rename leaves the spawn successful with the adopted terminal recorded | EC, FR-003 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_succeeds_when_titling_the_adopted_terminal_fails` |
+| A7  | Tearing down an Orca ship task releases its worktree with `--force --delete-branch` and succeeds | US2.1, FR-007 | example | DONE | `tests/fm-backend-orca.test.sh::test_ship_teardown_removes_orca_worktree_when_id_path_matches` |
+| A8  | A release in which Orca reports success but keeps the branch completes teardown and removes the task records | US2.2 | example | DONE | `tests/fm-backend-orca.test.sh::test_ship_teardown_completes_when_orca_keeps_the_branch` |
+| A9  | A spawn that fails after the worktree was created releases the worktree with the same branch-deleting release | US2.3, FR-007 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_removes_orca_worktree_when_terminal_create_fails` |
 | A10 | Every teardown refusal (id or path mismatch, unresolvable id) logs no worktree release | US2.4, FR-008 | example | DONE | `tests/fm-backend-orca.test.sh` refusal cases at the four `assert_not_contains ... worktree rm` sites |
+| A11 | A spawn whose worktree creation reports a `terminal` titles it once with the task name | FR-003, plan D4 | example | DONE | `tests/fm-backend-orca.test.sh::test_spawn_titles_a_terminal_reported_in_the_terminal_shape` |
 
 ## Inner loop: unit behaviors
 
@@ -40,29 +41,29 @@ Each runs through a real entry point, `bin/fm-spawn.sh --backend orca` or `bin/f
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U1  | `worktree-terminal-handle` returns `result.startupTerminal.handle` when `spawned` is `true` | FR-001 | example | PENDING | |
-| U2  | `worktree-terminal-handle` returns the startup handle when `spawned` is absent (boundary: not `false`) | FR-001 | example | PENDING | |
-| U3  | `worktree-terminal-handle` returns nothing when `spawned` is `false` (boundary: `false` side) | FR-001 | example | PENDING | |
-| U4  | `worktree-terminal-handle` returns nothing for an empty or absent startup handle | FR-001, EC | example | PENDING | |
-| U5  | `worktree-terminal-handle` returns `result.terminal.handle` when both shapes are present | FR-002 | example | PENDING | |
-| U6  | `terminal-handle`, used to parse a `terminal create` result, still ignores `startupTerminal` | FR-001 | example | PENDING | |
+| U1  | `worktree-terminal-handle` returns `result.startupTerminal.handle` when `spawned` is `true` | FR-001 | example | DONE | `tests/fm-backend-orca.test.sh::test_json_get_adopts_startup_terminal_handle` |
+| U2  | `worktree-terminal-handle` returns the startup handle when `spawned` is absent (boundary: not `false`) | FR-001 | example | DONE | `tests/fm-backend-orca.test.sh::test_json_get_adopts_startup_terminal_without_spawned_flag` |
+| U3  | `worktree-terminal-handle` returns nothing when `spawned` is `false` (boundary: `false` side) | FR-001 | example | DONE | `tests/fm-backend-orca.test.sh::test_json_get_ignores_startup_terminal_that_was_not_spawned` |
+| U4  | `worktree-terminal-handle` returns nothing for an empty or absent startup handle | FR-001, EC | example | DONE | `tests/fm-backend-orca.test.sh::test_json_get_ignores_startup_terminal_without_a_handle` |
+| U5  | `worktree-terminal-handle` returns `result.terminal.handle` when both shapes are present | FR-002 | example | DONE | `tests/fm-backend-orca.test.sh::test_json_get_prefers_terminal_over_startup_terminal` |
+| U6  | `terminal-handle`, used to parse a `terminal create` result, still ignores `startupTerminal` | FR-001 | example | DONE | `tests/fm-backend-orca.test.sh::test_json_get_terminal_handle_field_ignores_startup_terminal` |
 
 ### `bin/backends/orca.sh` - `fm_backend_orca_worktree_create`
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U7  | Prints `<id> <path> <startup handle>` for a startup-terminal result | FR-001 | example | PENDING | |
-| U8  | Issues exactly one `terminal rename --terminal <handle> --title <name>` for an adopted terminal | FR-003 | example | PENDING | |
-| U9  | Returns success when the rename exits non-zero | FR-003, EC | example | PENDING | |
-| U10 | Returns success when the rename reports `ok:false` | FR-003, EC | example | PENDING | |
-| U11 | Issues no rename when no terminal is returned | FR-005 | example | PENDING | |
-| U12 | With a startup terminal and no path, closes the terminal, releases the worktree, issues no rename, and fails | FR-006 | example | PENDING | |
+| U7  | Prints `<id> <path> <startup handle>` for a startup-terminal result | FR-001 | example | DONE | `tests/fm-backend-orca.test.sh::test_worktree_create_prints_the_startup_terminal_as_the_third_field` |
+| U8  | Issues exactly one `terminal rename --terminal <handle> --title <name>` for an adopted terminal | FR-003 | example | DONE | `tests/fm-backend-orca.test.sh::test_worktree_create_titles_the_adopted_startup_terminal` |
+| U9  | Returns success when the rename exits non-zero | FR-003, EC | example | DONE | `tests/fm-backend-orca.test.sh::test_worktree_create_survives_a_rename_that_exits_non_zero` |
+| U10 | Returns success when the rename reports `ok:false` | FR-003, EC | example | DONE | `tests/fm-backend-orca.test.sh::test_worktree_create_survives_a_rename_that_reports_an_error` |
+| U11 | Issues no rename when no terminal is returned | FR-005 | example | DONE | `tests/fm-backend-orca.test.sh::test_worktree_create_issues_no_rename_without_a_terminal` |
+| U12 | With a startup terminal and no path, closes the terminal, releases the worktree, issues no rename, and fails | FR-006 | example | DONE | `tests/fm-backend-orca.test.sh::test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal` |
 
 ### `bin/backends/orca.sh` - `fm_backend_orca_remove_worktree`
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U13 | Calls `orca worktree rm --worktree id:<id> --force --delete-branch --json` and nothing else | FR-007 | example | PENDING | |
+| U13 | Calls `orca worktree rm --worktree id:<id> --force --delete-branch --json` and nothing else | FR-007 | example | DONE | `tests/fm-backend-orca.test.sh::test_remove_worktree_asks_orca_to_delete_the_branch_safely` |
 | U14 | Refuses an empty worktree id without calling Orca | FR-008 | example | DONE | `tests/fm-backend-orca.test.sh::test_remove_worktree_refuses_empty_id` |
 | U15 | Fails on an Orca `ok:false` result and surfaces its message | FR-008 | example | DONE | `tests/fm-backend-orca.test.sh::test_remove_worktree_rejects_orca_error_json` |
 

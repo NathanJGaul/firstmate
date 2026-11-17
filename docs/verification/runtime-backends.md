@@ -1912,6 +1912,9 @@ tests/fm-bootstrap.test.sh
 ```
 
 The fake-Orca suite covers readiness, registration, create response parsing, metadata routing, popup-safe submit, and path-matched release refusal.
+It also covers adopting `result.startupTerminal` (titled once, no second terminal, `result.terminal` preferred, a create fallback for an unspawned or handle-less startup terminal, and cleanup of a pathless result) and the `--force --delete-branch` release argument.
+Those two behaviors are proven against the fake only.
+A live Orca run must still show one live terminal per task after spawn, and the Orca-made branch gone after a landed ship and kept after an unlanded one.
 
 ### Linux, headless runtime 1.4.261
 
