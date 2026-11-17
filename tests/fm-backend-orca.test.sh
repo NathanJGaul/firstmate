@@ -1489,6 +1489,19 @@ test_spawn_creates_a_terminal_for_an_unusable_startup_terminal() {
   pass "fm-spawn.sh --backend orca: creates a terminal when the startup terminal was not spawned or has no handle"
 }
 
+test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything() {
+  local id=orcapathlessst1
+  SPAWN_OMIT_PATH=1 run_orca_spawn spawn-pathless-startup "$id" startup
+  [ "$SPAWN_RC" -ne 0 ] || fail "spawn should fail when Orca omits the worktree path"
+  assert_contains "$SPAWN_OUT" "orca worktree create did not return a path" "spawn should explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--json' \
+    "spawn should close the startup terminal of a pathless worktree"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-spawn-pathless-startup::/orca/wt-spawn-pathless-startup' \
+    "spawn should release the pathless worktree"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a worktree being released must not have its terminal titled"
+  pass "fm-spawn.sh --backend orca: a pathless startup-terminal worktree is closed and released"
+}
+
 test_worktree_create_titles_the_adopted_startup_terminal() {
   run_orca_worktree_create create-rename-startup startup /tmp/orca-wt
   expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
@@ -1516,6 +1529,19 @@ test_worktree_create_issues_no_rename_without_a_terminal() {
   [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print only id and path with no terminal, got '$CREATE_OUT'"
   [ "$(orca_log_count terminal rename)" = 0 ] || fail "there is no terminal to title, so no rename should be issued"
   pass "fm_backend_orca_worktree_create: issues no rename when Orca returns no terminal"
+}
+
+test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal() {
+  run_orca_worktree_create create-pathless-startup startup ''
+  [ "$CREATE_RC" -ne 0 ] || fail "worktree create should fail when Orca omits the path"
+  assert_contains "$CREATE_OUT" "orca worktree create did not return a path for fm-task" \
+    "worktree create did not explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--json' \
+    "worktree create did not close the startup terminal when the path was missing"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-create-pathless-startup::/orca/wt-create-pathless-startup' \
+    "worktree create did not release the pathless worktree"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a worktree that is being released must not have its terminal titled"
+  pass "fm_backend_orca_worktree_create: closes the startup terminal and releases the worktree when the path is missing"
 }
 
 test_spawn_adopts_startup_terminal_without_creating_another() {
@@ -1588,9 +1614,11 @@ test_spawn_adopts_startup_terminal_without_creating_another
 test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
 test_spawn_creates_one_titled_terminal_when_orca_reports_none
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal
+test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything
 test_worktree_create_titles_the_adopted_startup_terminal
 test_worktree_create_prints_the_startup_terminal_as_the_third_field
 test_worktree_create_issues_no_rename_without_a_terminal
+test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal
 test_json_get_adopts_startup_terminal_handle
 test_json_get_ignores_startup_terminal_that_was_not_spawned
 test_json_get_adopts_startup_terminal_without_spawned_flag

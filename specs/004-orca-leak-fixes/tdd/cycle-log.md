@@ -78,3 +78,12 @@ Method notes (strict redo, at the captain's direction):
   - the regression subset also breaks under this step (3 of 8 tests ran ok before the first failure).
 - green, step 3: the rename runs only when a terminal exists and, for now, only for a terminal that did not come from `result.terminal`. All four tests and the 8-test regression subset pass.
 - refactor: none.
+
+## Cycle 8: U12 and A5 a worktree result with no path is closed and released, never titled
+
+- tests (new): `test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal` (U12), `test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything` (A5, through `fm-spawn.sh`)
+- red against the cycle 7 adapter, which titled the terminal before the path was checked:
+  - U12 `not ok - a worktree that is being released must not have its terminal titled`
+  - A5 `not ok - a worktree being released must not have its terminal titled`
+- green: the rename moves after the path check, so the existing close-and-release cleanup runs first. Both tests, U8, A1, and the regression subset pass.
+- refactor: none.
