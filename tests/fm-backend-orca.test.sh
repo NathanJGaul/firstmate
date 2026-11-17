@@ -1476,6 +1476,13 @@ test_json_get_ignores_startup_terminal_that_was_not_spawned() {
   pass "fm_backend_orca_json_get: worktree-terminal-handle ignores a startup terminal Orca did not spawn"
 }
 
+test_json_get_adopts_startup_terminal_without_spawned_flag() {
+  local out
+  out=$(orca_json_get worktree-terminal-handle startup-nospawned)
+  [ "$out" = term-startup ] || fail "a startup terminal with no spawned flag is not 'spawned: false' and should be adopted, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle adopts a startup terminal whose spawned flag is absent"
+}
+
 test_json_get_terminal_handle_field_ignores_startup_terminal() {
   local out status
   out=$(orca_json_get terminal-handle startup)
@@ -1488,6 +1495,7 @@ test_json_get_terminal_handle_field_ignores_startup_terminal() {
 test_worktree_create_prints_the_startup_terminal_as_the_third_field
 test_json_get_adopts_startup_terminal_handle
 test_json_get_ignores_startup_terminal_that_was_not_spawned
+test_json_get_adopts_startup_terminal_without_spawned_flag
 test_json_get_terminal_handle_field_ignores_startup_terminal
 test_capture_reads_terminal_tail_json
 test_capture_falls_back_to_text_fields

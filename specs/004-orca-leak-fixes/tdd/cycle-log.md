@@ -42,3 +42,10 @@ Method notes (strict redo, at the captain's direction):
 - red against the cycle 2 adapter: `not ok - worktree-terminal-handle should find no terminal when spawned is false, got 'term-startup'`
 - green: the startup terminal is read only when `spawned === true` (again naive: the next cycle tests the absent flag). U1 and U3 and the regression subset pass.
 - refactor: none.
+
+## Cycle 4: U2 a startup terminal with no spawned flag is adopted
+
+- test (new): `test_json_get_adopts_startup_terminal_without_spawned_flag` (U2)
+- red against the cycle 3 adapter: `not ok - a startup terminal with no spawned flag is not 'spawned: false' and should be adopted, got ''`
+- green: the guard becomes `spawned !== false`. U1, U2, U3 and the regression subset pass.
+- refactor: none.
