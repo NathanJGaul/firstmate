@@ -1,0 +1,25 @@
+ok - a creation-valid task id names its own browser session unchanged
+ok - the id default names no per-task session
+ok - dots, underscores, and hyphens inside a task id still name a session
+ok - a task id of exactly 64 characters names a session
+ok - a task id of 65 characters names no session
+ok - an id that merely contains the word default still names its own session
+ok - an empty task id names no session
+ok - a task id with a leading dot names no session
+ok - a task id with a character outside the tool's session-name set names no session
+ok - a ship launch gives its agent its own browser session named by the task id
+ok - a scout launch gives its agent its own browser session named by the task id
+ok - a local secondmate launch gives its agent a browser session named by its id
+ok - the task-id session overrides a browser session the pane already carried
+ok - two workers with different task ids launch with different browser sessions
+ok - a launch under an empty allowlist still gives its agent the task-id browser session
+ok - the launch command sets the task-id browser session on its own in both allowlist postures
+ok - a task whose id is the default session name exports no browser session of its own
+ok - ship launch with no allowlist starts its agent with the compact-adviser switch on
+ok - ship launch under an enabled allowlist keeps the compact-adviser switch through the cleared environment
+ok - the launch command sets the switch on its own, whichever allowlist posture is in force
+ok - a secondmate launch carries the compact-adviser switch in both allowlist postures
+ok - ship and secondmate launches export their absolute steering inbox as FM_TASK_INBOX
+ok - relaunch rebuilds the compact-adviser switch for the replacement agent in both allowlist postures
+ok - a relaunch gives the replacement agent the same task-id browser session in both allowlist postures
+ok - a compound raw launch-command still starts its agent with the compact-adviser switch on

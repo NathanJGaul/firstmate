@@ -1,0 +1,20 @@
+ok - herdr projection teardown surfaces failed focus restoration without turning confirmed cleanup into a hard failure
+ok - gh lookup error with content not in default refuses (fail-safe)
+ok - a record predating spawn_gen refuses teardown until --legacy-record is passed
+ok - a windowless leftover with no spawn_gen also tears down when --legacy-record is passed
+ok - --legacy-record teardown rolls its stamp back when the close marker write fails
+ok - a legacy stamp a failed rollback left behind still faces the endpoint gate
+ok - lock mtime read failures leave worktree index.lock in place and refuse teardown
+ok - transient index.lock cleared after first failed return is retried successfully without force-remove
+ok - a run that lands on passed-with-override after abort is still recognized as terminal
+ok - a run that lands on passed-with-skips after abort is still recognized as terminal
+ok - a process spawned during grace is reaped on a later pass
+ok - teardown stops the task's own chrome-devtools-axi session exactly once
+ok - the browser session stop runs only after the leaked-process reap
+ok - a chrome-devtools-axi stop that fails warns and leaves teardown's outcome unchanged
+ok - a non-numeric browser stop bound falls back to the default instead of aborting teardown
+ok - teardown on a host without chrome-devtools-axi completes with no browser warning
+ok - a teardown refused for unlanded work leaves the task's browser session running
+ok - teardown of a task whose id is the default session name stops no browser session
+ok - the stop always names the task's own session whatever session the caller's environment carries
+ok - teardown of a legacy task id too long to name a session stops no browser session
