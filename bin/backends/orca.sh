@@ -156,7 +156,7 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
     return 2
   }
   legacy=$(printf '%s' "$out" | fm_backend_orca_json_get terminal-handle 2>/dev/null || true)
-  [ -z "$terminal" ] || [ -n "$legacy" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || return 1
+  [ -z "$terminal" ] || [ -n "$legacy" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || true
   printf '%s\t%s' "$wt_id" "$wt_path"
   [ -z "$terminal" ] || printf '\t%s' "$terminal"
 }

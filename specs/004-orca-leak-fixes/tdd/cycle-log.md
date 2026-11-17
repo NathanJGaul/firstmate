@@ -87,3 +87,14 @@ Method notes (strict redo, at the captain's direction):
   - A5 `not ok - a worktree being released must not have its terminal titled`
 - green: the rename moves after the path check, so the existing close-and-release cleanup runs first. Both tests, U8, A1, and the regression subset pass.
 - refactor: none.
+
+## Cycle 9: U9, U10, A6 a failed title never fails the spawn
+
+- tests (new): `test_worktree_create_survives_a_rename_that_exits_non_zero` (U9), `test_worktree_create_survives_a_rename_that_reports_an_error` (U10), `test_spawn_succeeds_when_titling_the_adopted_terminal_fails` (A6, through `fm-spawn.sh`)
+  One cause fails all three, so they share one cycle and one commit; each was red on its own before the change.
+- red against the cycle 8 adapter, where a failed rename returned 1:
+  - U9 `not ok - a rename that exits non-zero must not fail worktree create`
+  - U10 `not ok - a rename that reports ok:false must not fail worktree create`
+  - A6 `not ok - a failed title must not fail the spawn`
+- green: a failed rename is ignored (`|| true`), with a comment saying why. All three pass with the regression subset.
+- refactor: none.

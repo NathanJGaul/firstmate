@@ -1502,6 +1502,16 @@ test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything() {
   pass "fm-spawn.sh --backend orca: a pathless startup-terminal worktree is closed and released"
 }
 
+test_spawn_succeeds_when_titling_the_adopted_terminal_fails() {
+  local id=orcarenamefailz1
+  run_orca_spawn spawn-rename-fails "$id" startup 4=exit:1
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$SPAWN_RC" "a failed title must not fail the spawn"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-startup" "$SPAWN_STATE/$id.meta" "meta should still record the adopted terminal"
+  [ "$(orca_log_count terminal create)" = 0 ] || fail "a failed title must not trigger a second terminal"
+  pass "fm-spawn.sh --backend orca: a failed terminal title does not fail the spawn"
+}
+
 test_worktree_create_titles_the_adopted_startup_terminal() {
   run_orca_worktree_create create-rename-startup startup /tmp/orca-wt
   expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
@@ -1519,6 +1529,27 @@ test_worktree_create_prints_the_startup_terminal_as_the_third_field() {
   expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
   [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print id, path, and the startup handle, got '$CREATE_OUT'"
   pass "fm_backend_orca_worktree_create: prints the startup terminal handle after the id and path"
+}
+
+test_worktree_create_survives_a_rename_that_exits_non_zero() {
+  local expect
+  run_orca_worktree_create create-rename-exit startup /tmp/orca-wt 4=exit:1
+  expect=$'wt-create-rename-exit::/orca/wt-create-rename-exit\t/tmp/orca-wt\tterm-startup'
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$CREATE_RC" "a rename that exits non-zero must not fail worktree create"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should still adopt the terminal after a failed rename, got '$CREATE_OUT'"
+  pass "fm_backend_orca_worktree_create: a rename that exits non-zero does not fail the create"
+}
+
+test_worktree_create_survives_a_rename_that_reports_an_error() {
+  local expect
+  run_orca_worktree_create create-rename-error startup /tmp/orca-wt \
+    '4={"ok":false,"error":{"code":"terminal_not_found","message":"terminal not found"}}'
+  expect=$'wt-create-rename-error::/orca/wt-create-rename-error\t/tmp/orca-wt\tterm-startup'
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$CREATE_RC" "a rename that reports ok:false must not fail worktree create"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should still adopt the terminal after a rename error, got '$CREATE_OUT'"
+  pass "fm_backend_orca_worktree_create: a rename that reports ok:false does not fail the create"
 }
 
 test_worktree_create_issues_no_rename_without_a_terminal() {
@@ -1615,8 +1646,11 @@ test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
 test_spawn_creates_one_titled_terminal_when_orca_reports_none
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal
 test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything
+test_spawn_succeeds_when_titling_the_adopted_terminal_fails
 test_worktree_create_titles_the_adopted_startup_terminal
 test_worktree_create_prints_the_startup_terminal_as_the_third_field
+test_worktree_create_survives_a_rename_that_exits_non_zero
+test_worktree_create_survives_a_rename_that_reports_an_error
 test_worktree_create_issues_no_rename_without_a_terminal
 test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal
 test_json_get_adopts_startup_terminal_handle
