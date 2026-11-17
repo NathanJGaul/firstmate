@@ -170,11 +170,11 @@ stale_trust() {
   not_line S9 "$CT no longer says Orca was not installed where it was written" "$CT" '(?i)not installed'
 }
 u29() {
-  yes_line U29 "$CT says Orca's CLI-created worktrees are linked" "$CT" '(?i)orca' '(?i)linked' '(?i)(verified|observed)'
+  yes_line U29 "$CT says Orca's worktrees are linked on Linux" "$CT" '(?i)orca' '(?i)linked' 'Linux'
   yes_line U29 "$CT points at the verification record" "$CT" 'runtime-backends\.md'
 }
 u30() { yes_line U30 "$CT says a folder-registered project has no git worktree for the structural test" "$CT" '(?i)folder' '(?i)worktree'; }
-u31() { yes_line U31 "$CT keeps the structural-not-path-prefix rationale" "$CT" '(?i)structural' '(?i)path prefix'; }
+u31() { yes_line U31 "$CT keeps the structural-not-path-prefix rationale" "$CT" '(?i)deliberately NOT a treehouse or orca path prefix'; }
 trust_comment_only() { [ -z "$(git diff "$BASE" -- "$CT" | grep -E '^[+-][^+-]' | grep -Ev '^[+-][[:space:]]*(#|$)')" ]; }
 u32() { ok U32 "$CT changed comment lines only" trust_comment_only; }
 

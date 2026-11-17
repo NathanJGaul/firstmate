@@ -1,19 +1,24 @@
 # Orca runtime backend
 
-Orca is an experimental macOS backend in which the Orca app owns both the task worktree and terminal endpoint.
+Orca is an experimental backend in which Orca owns both the task worktree and terminal endpoint.
+It runs on macOS through the Orca app and on Linux through Orca's headless runtime.
 The crewmate harness remains the agent process launched inside that endpoint.
 Firstmate agents load [`firstmate-orca`](../.agents/skills/firstmate-orca/SKILL.md) before operating or recovering this backend.
 
 ## Setup
 
-Pick Orca when you already use the Orca macOS app and want Orca-managed worktrees and terminals instead of Treehouse plus a session multiplexer.
-Orca is macOS-only, explicit-only, and does not support secondmate spawns.
+Pick Orca when you already use Orca and want Orca-managed worktrees and terminals instead of Treehouse plus a session multiplexer.
+Orca is explicit-only and does not support secondmate spawns.
 
 Prerequisites:
 
-- `/Applications/Orca.app` installed, running, and ready.
-- The `orca` CLI, installed with `brew install orca`.
 - The universal harness and toolchain requirements in [`configuration.md`](configuration.md#toolchain).
+- On macOS: `/Applications/Orca.app` installed, running, and ready.
+- On macOS: the `orca` CLI, installed with `brew install orca`.
+- On Linux: Orca's headless runtime, which Firstmate requires to report ready and which needs no desktop app.
+- The `orca` CLI on the `PATH` of the shell that runs Firstmate.
+  Orca's own terminals export `ORCA_CLI_BIN_DIR` and prepend it to `PATH`, so any other shell, including a primary restarted outside Orca, needs that directory added.
+  On the Linux headless runtime the shim directory is `~/.orca/cli/bin`.
 
 Select Orca with local `config/backend` containing `orca`, `FM_BACKEND=orca` for one launch, or an explicit request to Firstmate.
 It is never auto-detected.
@@ -22,13 +27,15 @@ Before any spawn mutates repository state, Firstmate requires `orca status --jso
 The first task for a project registers that repository with `orca repo add --path` when needed.
 No manual repository registration is required.
 
-Open the Orca app to watch a task's terminal.
+On macOS the Orca app can show a task's terminal, and the headless runtime on Linux has no window, so headless operators read it with `bin/fm-peek.sh <id>`.
 Routine supervision uses the recorded endpoint through `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'`.
-Enter and Ctrl-C are supported; Escape is not.
+The adapter delivers Enter and Ctrl+C and does not deliver Escape or Ctrl+U today.
+That is an adapter gap and not an Orca limit, because Orca's help says text sent without `--enter` is written to the terminal verbatim, so control bytes pass through.
+That passthrough has not been exercised live.
 
 ## Task shape and metadata
 
-Each task has one Orca-managed git worktree and one Orca terminal.
+Each task has one Orca-managed git worktree and one recorded Orca terminal.
 `fm-spawn.sh` does not call Treehouse for Orca tasks.
 The normal isolation and unlanded-work refusal rules still apply.
 
@@ -46,15 +53,20 @@ Orca returns `orca_worktree_id=` as that composite of the Orca repo id and the w
 
 ## Current lifecycle and safety
 
-Spawn registers the repository, creates an independent worktree, reuses only the verified `result.terminal.handle` returned by Orca or creates a terminal explicitly, installs harness hooks, records metadata, and launches the selected harness.
+Spawn registers the repository, creates an independent worktree, reuses a terminal only when Orca returns it as `result.terminal` and otherwise creates one, installs harness hooks, records metadata, and launches the selected harness.
 Exact command flags and response parsing are owned by `bin/backends/orca.sh` and script help.
+
+Orca 1.4.261 returns the worktree's first terminal as `result.startupTerminal` and returns no `result.terminal`.
+The adapter accepts a terminal handle only from `result.terminal`, so it does not adopt `startupTerminal` and creates its own terminal.
+Each task therefore has one spare Orca terminal besides the recorded one, which cleanup removes together with the worktree.
 
 `fm-peek.sh` reads with `orca terminal read`.
 An ordinary metadata-routed `fm-send.sh` text steer becomes a durable steering-inbox record, and only its best-effort constant doorbell passes through Orca's submit machinery.
 On the typed plane, `fm-send.sh` verifies composer clearance through the fleet-wide classifier in `bin/fm-composer-lib.sh`, retrying Enter without retyping when a slash popup first fills an argument placeholder.
 The composer read is one bounded tail of the live terminal and never pages backward into scrollback, so a stale startup banner cannot compete with the bottom-anchored composer.
 A bare shell row is `unknown`, not an empty agent composer, and plain-text captures degrade a glyph row carrying trailing text to `unknown` rather than a false `pending`.
-The watcher has no native Orca busy signal, so each harness adapter's semantic lifecycle supplies worker state.
+Orca exposes native agent state through `orca worktree ps`, `orca terminal show`, and `orca terminal wait --for tui-idle`, and Firstmate does not use it today.
+Each harness adapter's semantic lifecycle supplies worker state instead, and for Claude that is the hooks Firstmate installs.
 Grok alone retains its isolated rendered-tail fallback.
 
 Cleanup keeps all shared Firstmate safety checks.
@@ -69,13 +81,27 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 
 ## Active limits
 
-- Orca is macOS-only and explicit-only.
-- The app must be running and report ready.
+- Orca is explicit-only.
+- A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
-- Escape is unsupported.
-- Orca exposes no stable CLI version or protocol marker, so readiness is the compatibility gate rather than a version floor.
-- Only the verified terminal-handle and worktree result fields are accepted; speculative response shapes are rejected.
-- Orca's worktree shape is unverified against the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh`, which refuses any path that is not a linked git worktree sharing the project's git common dir, so a claude spawn on Orca fails loudly at that check rather than launching if Orca clones instead of linking.
+- Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
+- The adapter reads only the verified worktree fields and the `result.terminal` handle, and rejects other response shapes.
+- The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
+  That check refuses any path that is not a linked git worktree, so it could never accept a project Orca registered as a folder.
+
+## Operating posture
+
+These are the captain's current calls, and each holds until the capability it names lands.
+
+- Long-running or high-value ships belong on Herdr until Orca interrupt and relaunch land.
+  Orca suits scouts and short ships that are cheap to redo.
+- Orca refuses `interrupt`, `exit`, and `relaunch` today, so a wedged or dead Orca worker cannot be recovered through `bin/fm-control.sh` or `bin/fm-spawn.sh --relaunch`.
+  Interrupt is refused for every harness except Grok, whose Ctrl+C interrupt the adapter can send.
+  [`agent-control.md`](agent-control.md) owns the reasons.
+- A project Orca registered as a folder, including the firstmate repository itself, cannot host Orca work, because Orca treats a folder as a different object from a git worktree.
+  The spawn path does not check the repository kind today, so spawn that task with the per-task `--backend` override, for example `--backend herdr`.
+- Away mode and quiet mode are refused when the primary runs in an Orca terminal, because the away supervisor drives only Herdr and tmux.
+  Run the primary in Herdr or tmux to use either.
 
 ## Regression entry points
 
