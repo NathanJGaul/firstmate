@@ -1050,6 +1050,19 @@ This applies only to agents Firstmate launches; the captain's own primary Firstm
 
 [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the delivery mechanics, with focused regression coverage in [`tests/fm-spawn-compact-adviser-disable.test.sh`](../tests/fm-spawn-compact-adviser-disable.test.sh) and [`tests/fm-spawn-compact-adviser-disable-remote.test.sh`](../tests/fm-spawn-compact-adviser-disable-remote.test.sh).
 
+### Per-worker browser session
+
+Every crewmate, scout, and local secondmate Firstmate launches starts with `CHROME_DEVTOOLS_AXI_SESSION` set to its task id, on a fresh spawn and on a relaunch alike.
+Each worker therefore gets its own chrome-devtools-axi bridge, port, and state instead of sharing the machine-wide default session, so one worker's browser failure no longer stalls the others.
+The export overrides any session already in the pane and survives `config/launch-env-allowlist`, so the allowlist neither needs nor carries the name.
+A task id that cannot name a session, including the id `default`, gets no export, and cleanup never stops the default session.
+
+Task cleanup stops the task's own session after the leaked-process cleanup, best effort and bounded by `FM_TEARDOWN_BROWSER_STOP_TIMEOUT`.
+A missing chrome-devtools-axi, a failed stop, or a stop that hits its bound only warns and never changes cleanup's outcome.
+Two Firstmate homes that use the same task id name the same session, and chrome-devtools-axi may derive the same port for two different names.
+
+[`fm-spawn.sh --help`](../bin/fm-spawn.sh) and [`fm-teardown.sh --help`](../bin/fm-teardown.sh) own the mechanics, with regression coverage in [`tests/fm-spawn-compact-adviser-disable.test.sh`](../tests/fm-spawn-compact-adviser-disable.test.sh) and [`tests/fm-teardown.test.sh`](../tests/fm-teardown.test.sh).
+
 ### Commit attribution
 
 The optional local, gitignored `config/keep-ai-trailers` presence flag opts this home into keeping AI co-author trailers on its launched workers.
@@ -2359,6 +2372,7 @@ FM_BACKEND=             # optional runtime backend override for new spawns; tmux
 FM_TRACE_CONTEXT=       # optional trace-context override; see "Trace context propagation"
 FM_TASK_ID=             # internal task-worker marker fm-spawn.sh exports into ship and scout panes, never set by hand; bin/fm-test-run.sh refuses to execute in the repository primary checkout while it is set
 FM_TASK_INBOX=          # internal: absolute path of the task's steering inbox (state/<id>.inbox) that fm-spawn.sh exports into every ship, scout, and secondmate launch, never set by hand; the steering doorbell names "$FM_TASK_INBOX"
+CHROME_DEVTOOLS_AXI_SESSION=   # internal: the task id, which fm-spawn.sh exports into every local ship, scout, and secondmate launch so each worker has its own chrome-devtools-axi browser session, never set by hand; a task id that cannot name a session (including "default") gets no export
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across each Enter attempt's budget when confirming a submit (docs/herdr-backend.md "Current transport behavior")
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
@@ -2412,6 +2426,7 @@ FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in C
 FM_CODEX_WATCH_CHECKPOINT_AWAY=3600  # requested away checkpoint bound on a home that runs the supervision host; longer of this and attended bound, capped at 27000
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh, and per state-database run-inventory read behind a capped AXI overview
 FM_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside fm-teardown.sh
+FM_TEARDOWN_BROWSER_STOP_TIMEOUT=15    # seconds allowed for the best-effort chrome-devtools-axi stop of the task's own browser session inside fm-teardown.sh; non-numeric or zero values use 15
 FM_CREW_STATE_RUNS_LIMIT=200  # plain runs-ledger rows scanned for fallback attribution; does not change the CLI's AXI overview window (selection owner: bin/fm-nm-run-lib.sh)
 FM_TEARDOWN_NM_RUNS_LIMIT=200  # recent no-mistakes run rows scanned to prove an unresolved-head parked run belongs to teardown's task
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by watcher triage: the working/paused classification, and the wedge timer's parked-gate wait evidence
