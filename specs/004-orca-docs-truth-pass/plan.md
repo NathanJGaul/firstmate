@@ -90,7 +90,7 @@ The capability matrix row, the exit and relaunch refusal paragraph, and the rela
 **D4 - `bin/fm-claude-trust.sh`**: Replace the "UNVERIFIED" Orca sentences of the structural-test comment with the verified finding, keep the rationale for a structural test, and keep the retained unknown about folder-registered projects.
 Edit comment lines only.
 
-**D5 - `.agents/skills/stuck-crewmate-recovery/SKILL.md`**: Add one line directly after the sentence that tells the agent to use the recorded Orca identity for inventory, saying interrupt, exit, and relaunch refuse on Orca today and pointing at the Orca backend document.
+**D5 - `.agents/skills/stuck-crewmate-recovery/SKILL.md`**: Add one line directly after the reclaim sentence that closes the tmux and Herdr refusal guidance, saying interrupt, exit, and relaunch refuse on Orca today and pointing at the Orca backend document.
 
 ## Verification Design
 

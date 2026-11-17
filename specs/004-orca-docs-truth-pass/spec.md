@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-17
 
-**Status**: Draft
+**Status**: Implemented
 
 **Input**: User description: "Correct the stale Orca statements in firstmate's documentation (slice P1-D of the Orca compatibility plan). On this Linux host Orca 1.4.261 runs as a headless runtime. Rewrite the Orca backend document, the Orca trust-check comment in the Claude trust script, the Orca text in the agent-control document, and the Orca section of the runtime-backends verification record (adding a Linux headless 1.4.261 entry), and add one line to the stuck-crewmate-recovery skill saying interrupt, exit and relaunch refuse on Orca today. Qualify the macOS facts rather than deleting them. State the captain's decisions: long or high-value ships belong on Herdr until Orca interrupt and relaunch land, folder-registered projects such as the firstmate repo itself cannot host Orca work and use the per-task backend override, and away and quiet modes are refused with an Orca-hosted primary and need the primary in Herdr or tmux. No code behavior changes."
 
@@ -123,7 +123,7 @@ It now misleads anyone deciding whether an Orca spawn can pass this check.
 - **FR-014**: The Claude trust script comment MUST replace the unverified-shape paragraph with the verified linked-worktree finding, the platform and version it was observed on, and a pointer to the verification record, while keeping the reason the test is structural and not path-based.
 - **FR-015**: The runtime-backends verification record MUST retain the macOS 1.4.116 evidence, labeled as macOS, and MUST add a Linux headless 1.4.261 entry giving the date, the commands, and the observed fields for runtime readiness, install mode, version, capability list, linked-worktree shape, worktree-creation response shape, native agent-state surfaces, and folder-registered repositories.
 - **FR-016**: The new verification entry MUST mark every behavior established only from help text or a server bundle as not exercised live, and MUST name the regression suite that covers the fake-Orca side and the absence of a live Orca lane.
-- **FR-017**: The stuck-crewmate-recovery skill MUST gain exactly one line saying that interrupt, exit and relaunch refuse on Orca today, placed where the Orca inventory guidance already sits.
+- **FR-017**: The stuck-crewmate-recovery skill MUST gain exactly one line saying that interrupt, exit and relaunch refuse on Orca today, placed in the relaunch and reclaim guidance beside the other backends' refusals.
 - **FR-018**: No script, test, fixture, configuration schema, or runtime path MAY change behavior, and every edit to a script file MUST be to comment text only.
   The one permitted non-prose edit is the documentation audience inventory, which MUST gain a classification entry for each new tracked Spec-Kit document and no other change.
 - **FR-019**: Every changed Markdown line MUST follow the repository style of one sentence per line and a plain dash, with no em dash.

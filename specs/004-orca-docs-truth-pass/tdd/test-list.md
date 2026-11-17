@@ -4,7 +4,7 @@ loop: outside-in
 profile: .specify/memory/tdd-profile.md
 spec_criteria: 18
 planned_at: af20b2c9
-updated_at: af20b2c9
+updated_at: 72375980
 suite_baseline: unknown
 ---
 
@@ -36,7 +36,7 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 | A11 | The verification record keeps the macOS 1.4.116 Orca evidence and labels it as macOS                                                                    | US3.1, FR-015                   | example         | `claim-audit.sh A11`        | DONE    | `claim-audit.sh A11` |
 | A12 | The verification record gains a dated Linux headless 1.4.261 entry with commands, observed fields, an explicit not-exercised list, and the regression suites | US3.2, US3.3, US3.4, FR-015, FR-016 | example | `claim-audit.sh A12`  | DONE    | `claim-audit.sh A12` |
 | A13 | The trust script comment states the verified linked-worktree finding and the folder-registered residual and no longer calls Orca unverified or macOS-only | US4.1, US4.2, FR-014        | example         | `claim-audit.sh A13`        | DONE    | `claim-audit.sh A13` |
-| A14 | Every changed line of the trust script is a comment or blank, and its suite, shell syntax, and lint results are unchanged                               | US4.3, FR-018                   | example         | `claim-audit.sh A14` and `bin/fm-test-run.sh tests/fm-claude-trust.test.sh` | DONE    | `claim-audit.sh A14` |
+| A14 | Every changed line of the trust script is a comment or blank, and its suite, shell syntax, and lint results are unchanged                               | US4.3, FR-018                   | characterization         | `claim-audit.sh A14` and `bin/fm-test-run.sh tests/fm-claude-trust.test.sh` | BASELINE| `claim-audit.sh A14` |
 | A15 | The change touches only the five named files, the Spec-Kit artifacts, and the audience inventory entries that classify them, and no test file or other script | FR-018, FR-021        | characterization | `claim-audit.sh A15`       | BASELINE | `claim-audit.sh A15` (invariant, green before the edits, re-run at the end) |
 | A16 | Every changed Markdown line follows one sentence per line and contains no em dash                                                                       | FR-019                          | characterization | `claim-audit.sh A16`       | BASELINE | `claim-audit.sh A16` (invariant, green before the edits, re-run at the end) |
 
@@ -97,7 +97,7 @@ Traces use `US<story>.<scenario>` for acceptance scenarios and `FR-nnn` for func
 | U29 | States that Orca's CLI-created worktrees are linked worktrees sharing the project's common dir and points at the verification record | FR-014, A13 | example   | DONE     | `claim-audit.sh U29`    |
 | U30 | Says a folder-registered project has no git worktree for the structural test and cannot host Orca work           | FR-014, A13   | example          | DONE     | `claim-audit.sh U30`    |
 | U31 | Keeps the reason the test is structural and not a path prefix                                                    | FR-014, A13   | characterization | BASELINE | `claim-audit.sh U31`    |
-| U32 | Has no changed line that is not a comment or blank                                                               | FR-018, A14   | example          | DONE     | `claim-audit.sh U32`    |
+| U32 | Has no changed line that is not a comment or blank                                                               | FR-018, A14   | characterization          | BASELINE | `claim-audit.sh U32`    |
 
 ## Invariants and edge cases still to place
 

@@ -64,11 +64,11 @@ The four stories touch disjoint files, so they can proceed in any order, and `do
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T022 [A15] [A16] Test and verify: the audit's file-set behavior `A15` and style behavior `A16` pass over the complete branch diff.
-- [ ] T023 Mutation check: reinstate one stale sentence in a scratch copy of `docs/orca-backend.md` and one in a scratch copy of `docs/agent-control.md`, confirm the audit goes red for each, and record both in `tdd/cycle-log.md` and `tdd/verification.md`.
-- [ ] T024 Re-read every changed claim against the evaluation report's appendix and the code it describes, walking each row of `data-model.md`, and soften or drop any claim the evidence does not support.
-- [ ] T025 Run `bin/fm-doc-audience-check.sh`, `tests/fm-documentation-audiences.test.sh`, `tests/fm-claude-trust.test.sh`, `tests/fm-backend-orca.test.sh`, `tests/fm-control.test.sh`, `tests/fm-backend.test.sh`, and `bin/fm-lint.sh`, and confirm no test file changed.
-- [ ] T026 Review the complete branch diff again against the documentation change review criteria in `firstmate-coding-guidelines`, then write `checklist.md`, `analyze.md`, and `converge.md` in `specs/004-orca-docs-truth-pass/`.
+- [X] T022 [A15] [A16] Test and verify: the audit's file-set behavior `A15` and style behavior `A16` pass over the complete branch diff.
+- [X] T023 Mutation check: reinstate one stale sentence in a scratch copy of `docs/orca-backend.md` and one in a scratch copy of `docs/agent-control.md`, confirm the audit goes red for each, and record both in `tdd/cycle-log.md` and `tdd/verification.md`.
+- [X] T024 Re-read every changed claim against the evaluation report's appendix and the code it describes, walking each row of `data-model.md`, and soften or drop any claim the evidence does not support.
+- [X] T025 Run `bin/fm-doc-audience-check.sh`, `tests/fm-documentation-audiences.test.sh`, `tests/fm-claude-trust.test.sh`, `tests/fm-backend-orca.test.sh`, `tests/fm-control.test.sh`, `tests/fm-backend.test.sh`, and `bin/fm-lint.sh`, and confirm no test file changed.
+- [X] T026 Review the complete branch diff again against the documentation change review criteria in `firstmate-coding-guidelines`, then write `checklist.md`, `analyze.md`, and `converge.md` in `specs/004-orca-docs-truth-pass/`.
 
 ## Dependencies
 

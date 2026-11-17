@@ -148,3 +148,45 @@ exit=1
 - green: the Orca sentences of the structural-test comment in `bin/fm-claude-trust.sh` replaced; `claim-audit.sh A13 A14` -> `claim-audit: 8 checks, 0 failed`; `bash -n bin/fm-claude-trust.sh` ok; `git diff` shows 10 added and 11 removed lines, all comments
 - refactor: none needed
 - commit: `docs(orca): correct the Orca worktree-shape comment in the trust script`
+
+## Refactor on green: terminal-shape wording tightened against the adapter
+
+- trigger: a re-read of the new Orca backend text against `fm_backend_orca_json_get` in `bin/backends/orca.sh` showed two sentences were looser than the code: the adapter takes a worktree's terminal handle only from `result.terminal`, and takes a terminal handle from `result.terminal` or the root terminal object for a terminal create; and the closing pointer still described only the macOS smoke
+- change: three lines of `docs/orca-backend.md` reworded; no behavior added, so no new list item
+- green: `claim-audit.sh all` -> `claim-audit: 68 checks, 0 failed`; `bin/fm-doc-audience-check.sh` -> `ok surfaces=221 local_links=760`
+- note: this refactor was committed before it was logged; it is logged here, after cycle 6, rather than by editing an earlier entry
+- commit: `docs(orca): tighten the terminal-shape and verification-pointer wording`
+
+## Deliberate mutants against the claim audit
+
+Each mutant was applied to a committed file, the audit run for the behavior it targets, and the file restored with `git checkout -- <file>`; `git status --short` was empty and `claim-audit.sh all` was `68 checks, 0 failed` after each batch.
+
+| mutant | file | target | audit result |
+| --- | --- | --- | --- |
+| M1 reinstate "Orca is macOS-only" and the no-version-marker limit | `docs/orca-backend.md` | A1, A2 | caught: `S1`, `U6` x2, `S3` fail |
+| M2 reinstate "Orca's terminal API exposes only an interrupt and an Enter" | `docs/agent-control.md` | A8 | caught: `U18`, `U19` x2 fail |
+| M3 add an em dash and a second sentence on one line | `docs/orca-backend.md` | A16 | caught: both reported |
+| M4 append a second line to the recovery skill | `.agents/skills/stuck-crewmate-recovery/SKILL.md` | A10 | caught: `U22` fails |
+| M5 replace the dated Linux entry sentence | `docs/verification/runtime-backends.md` | A12 | caught: `U25` fails |
+| M6 change the Orca capability matrix row | `docs/agent-control.md` | U21 | caught |
+| M7 delete the secondmate-unsupported limit | `docs/orca-backend.md` | U17 | caught |
+| M8 replace the recovery-grade classifier phrase | `docs/agent-control.md` | U20 | caught |
+| M9 delete the macOS label from one retained sentence | `docs/verification/runtime-backends.md` | U24 | survived: the subsection heading carries the same label, so the mutant is equivalent |
+| M9b delete the macOS label from the heading and the sentence | `docs/verification/runtime-backends.md` | U24 | caught |
+| M10 add an unexpected file `docs/stray.md` | working tree | A15 | caught |
+
+## Deliberate mutants against the trust script checks
+
+- M11 added a non-comment line (`: noop`) to `bin/fm-claude-trust.sh` -> `claim-audit.sh U32` -> `FAIL U32 ... changed comment lines only`; restored with `git checkout -- bin/fm-claude-trust.sh`
+- M12 replaced "The test is deliberately NOT a treehouse or orca path prefix." with "The test is a path check." -> `claim-audit.sh U31` -> `FAIL U31 ... keeps the structural-not-path-prefix rationale`; restored the same way
+- after both: `git status --short` showed no change to the script and `claim-audit.sh all` -> `claim-audit: 68 checks, 0 failed`
+- these ran after the existing suites had finished, because `tests/fm-backend.test.sh` spawns through this script
+
+## Final state
+
+- audit: `claim-audit.sh all` -> `claim-audit: 68 checks, 0 failed (base af20b2c9)`
+- existing suites on the edited tree: `bin/fm-test-run.sh tests/fm-documentation-audiences.test.sh tests/fm-claude-trust.test.sh tests/fm-backend-orca.test.sh tests/fm-backend.test.sh tests/fm-control.test.sh` -> `FM_TEST_SUMMARY total=5 failed=0 skipped_gate=0 duration_ms=808583`
+- final re-run after the last document and record edits: `bin/fm-test-run.sh tests/fm-documentation-audiences.test.sh tests/fm-claude-trust.test.sh` -> `FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=98092`
+- structure: `bin/fm-doc-audience-check.sh` -> `ok surfaces=224 local_links=761`
+- lint: `bin/fm-lint.sh` and `bin/fm-lint.sh bin/fm-claude-trust.sh` -> exit 0 with ShellCheck 0.11.0 and actionlint 1.7.12 installed into a scratch directory outside the worktree
+- no test file changed: `git diff af20b2c9 --stat -- tests` is empty
