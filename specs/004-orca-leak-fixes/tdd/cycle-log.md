@@ -98,3 +98,10 @@ Method notes (strict redo, at the captain's direction):
   - A6 `not ok - a failed title must not fail the spawn`
 - green: a failed rename is ignored (`|| true`), with a comment saying why. All three pass with the regression subset.
 - refactor: none.
+
+## Cycle 10: A11 a terminal reported in the result.terminal shape is titled too
+
+- test (new): `test_spawn_titles_a_terminal_reported_in_the_terminal_shape` (A11, through `fm-spawn.sh`)
+- red against the cycle 9 adapter, which titled only startup-shaped terminals: `not ok - spawn should title an adopted result.terminal terminal exactly once`
+- green: the shape condition is dropped, so whichever terminal worktree creation hands back is titled with the task name (FR-003, plan decision D4). A11, A2, and the regression subset pass.
+- refactor: none.

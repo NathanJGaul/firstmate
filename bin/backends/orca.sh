@@ -134,7 +134,7 @@ fm_backend_orca_repo_ensure() {  # <project-path>
 }
 
 fm_backend_orca_worktree_create() {  # <project-path> <name>
-  local project=$1 name=$2 repo_id out wt_id wt_path terminal legacy
+  local project=$1 name=$2 repo_id out wt_id wt_path terminal
   repo_id=$(fm_backend_orca_repo_ensure "$project") || return 1
   out=$(orca worktree create --repo "id:$repo_id" --name "$name" --no-parent --setup skip --json) || return 1
   wt_id=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-id) || {
@@ -155,8 +155,11 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
     fi
     return 2
   }
-  legacy=$(printf '%s' "$out" | fm_backend_orca_json_get terminal-handle 2>/dev/null || true)
-  [ -z "$terminal" ] || [ -n "$legacy" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || true
+  # The terminal Orca started with the worktree is the task's one terminal, so
+  # title it the way `terminal create --title` would have. The title is
+  # cosmetic and the terminal is already adopted, so a failed rename never
+  # fails the spawn.
+  [ -z "$terminal" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || true
   printf '%s\t%s' "$wt_id" "$wt_path"
   [ -z "$terminal" ] || printf '\t%s' "$terminal"
 }

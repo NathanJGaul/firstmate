@@ -1464,6 +1464,17 @@ test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal() {
   pass "fm-spawn.sh --backend orca: adopts result.terminal, and prefers it when a startup terminal is also reported"
 }
 
+test_spawn_titles_a_terminal_reported_in_the_terminal_shape() {
+  local id=orcatitleshapez1
+  run_orca_spawn spawn-title-terminal-shape "$id" terminal
+  expect_code 0 "$SPAWN_RC" "spawn should succeed with the terminal result"$'\n'"$SPAWN_OUT"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "spawn should title an adopted result.terminal terminal exactly once"$'\n'"$(tr '\037' ' ' < "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-legacy'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the adopted result.terminal terminal should be titled with the task name"
+  pass "fm-spawn.sh --backend orca: titles a terminal reported in the result.terminal shape"
+}
+
 test_spawn_creates_one_titled_terminal_when_orca_reports_none() {
   local id=orcanoneterm1
   run_orca_spawn spawn-no-terminal "$id" none "4=$ORCA_TERMINAL_CREATE_RESPONSE"
@@ -1643,6 +1654,7 @@ test_json_get_terminal_handle_field_ignores_startup_terminal() {
 
 test_spawn_adopts_startup_terminal_without_creating_another
 test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
+test_spawn_titles_a_terminal_reported_in_the_terminal_shape
 test_spawn_creates_one_titled_terminal_when_orca_reports_none
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal
 test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything
