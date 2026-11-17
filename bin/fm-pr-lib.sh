@@ -115,6 +115,19 @@ fm_task_id_creation_valid() {
   [ "${#id}" -le 64 ]
 }
 
+# The per-task chrome-devtools-axi session name for task <id>, or status 1 and no
+# output when the id cannot name one. This is the single owner of that rule:
+# bin/fm-spawn.sh exports the name into every launch and bin/fm-teardown.sh stops
+# it at cleanup, so the two can never disagree. The id "default" is refused
+# because that is chrome-devtools-axi's own machine-wide session, which no task
+# owns and no launch or cleanup may claim.
+fm_browser_session_name() {
+  local id=${1-}
+  fm_task_id_creation_valid "$id" || return 1
+  [ "$id" != default ] || return 1
+  printf '%s\n' "$id"
+}
+
 # GitLab and Gerrit both serve self-hosted instances, so the host is part of the
 # identity rather than a constant. It is accepted only as a lowercase DNS name
 # with no userinfo, port, or trailing dot, which keeps one canonical spelling per

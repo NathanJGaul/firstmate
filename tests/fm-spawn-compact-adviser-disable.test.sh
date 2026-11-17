@@ -382,6 +382,94 @@ SH
   pass "a compound raw launch-command still starts its agent with the compact-adviser switch on"
 }
 
+# --- browser session name ---------------------------------------------------
+#
+# fm_browser_session_name is the one rule that says whether a task id names its
+# own chrome-devtools-axi session. Launch and cleanup both call it, so these
+# cases pin the rule directly: it prints the id and succeeds, or prints nothing
+# and fails.
+PR_LIB="$ROOT/bin/fm-pr-lib.sh"
+
+# session_name_of <id>: sets SESSION_NAME_OUT and SESSION_NAME_STATUS.
+session_name_of() {
+  SESSION_NAME_OUT=$(bash -c '. "$1"; fm_browser_session_name "$2"' _ "$PR_LIB" "$1" 2>/dev/null)
+  SESSION_NAME_STATUS=$?
+}
+
+assert_names_a_session() {  # <id> <label>
+  session_name_of "$1"
+  assert_equals "$1" "$SESSION_NAME_OUT" "$2: the id itself should be the session name"
+  expect_code 0 "$SESSION_NAME_STATUS" "$2: the helper should accept the id"
+}
+
+assert_names_no_session() {  # <id> <label>
+  session_name_of "$1"
+  assert_equals "" "$SESSION_NAME_OUT" "$2: a refused id must print nothing"
+  expect_code 1 "$SESSION_NAME_STATUS" "$2: the helper should refuse the id"
+}
+
+test_session_name_accepts_a_task_id() {  # U1
+  assert_names_a_session fix-a1 "an ordinary task id"
+  pass "a creation-valid task id names its own browser session unchanged"
+}
+
+test_session_name_refuses_the_default_session() {  # U5
+  assert_names_no_session default "the default session name"
+  pass "the id default names no per-task session"
+}
+
+test_session_name_accepts_dots_underscores_and_hyphens() {  # U2
+  assert_names_a_session a.b_c-9 "an id with dot, underscore, and hyphen"
+  pass "dots, underscores, and hyphens inside a task id still name a session"
+}
+
+test_session_name_accepts_a_64_character_id() {  # U3
+  local id
+  id=$(printf 'a%.0s' $(seq 1 64))
+  assert_names_a_session "$id" "a 64-character id"
+  pass "a task id of exactly 64 characters names a session"
+}
+
+test_session_name_refuses_a_65_character_id() {  # U4
+  local id
+  id=$(printf 'a%.0s' $(seq 1 65))
+  assert_names_no_session "$id" "a 65-character id"
+  pass "a task id of 65 characters names no session"
+}
+
+test_session_name_accepts_ids_that_extend_default() {  # U6
+  assert_names_a_session default-2 "an id extending default"
+  assert_names_a_session my-default "an id ending in default"
+  pass "an id that merely contains the word default still names its own session"
+}
+
+test_session_name_refuses_an_empty_id() {  # U7
+  assert_names_no_session "" "an empty id"
+  pass "an empty task id names no session"
+}
+
+test_session_name_refuses_a_leading_dot() {  # U8
+  assert_names_no_session .hidden "a leading-dot id"
+  assert_names_no_session .. "an all-dots id"
+  pass "a task id with a leading dot names no session"
+}
+
+test_session_name_refuses_characters_the_tool_rejects() {  # U9
+  assert_names_no_session "has space" "an id with a space"
+  assert_names_no_session 'a/b' "an id with a slash"
+  assert_names_no_session 'a;b' "an id with a shell metacharacter"
+  pass "a task id with a character outside the tool's session-name set names no session"
+}
+
+test_session_name_accepts_a_task_id
+test_session_name_refuses_the_default_session
+test_session_name_accepts_dots_underscores_and_hyphens
+test_session_name_accepts_a_64_character_id
+test_session_name_refuses_a_65_character_id
+test_session_name_accepts_ids_that_extend_default
+test_session_name_refuses_an_empty_id
+test_session_name_refuses_a_leading_dot
+test_session_name_refuses_characters_the_tool_rejects
 test_ship_allowlist_absent
 test_ship_allowlist_enabled
 test_launch_command_carries_the_switch_without_the_pane_export
