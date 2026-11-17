@@ -65,7 +65,8 @@ if (data.ok === false) {
 }
 const r = data.result || {};
 const wt = r.worktree || r.item || r;
-const explicitTerm = r.terminal || null;
+const st = r.startupTerminal || null;
+const explicitTerm = st ? { handle: String(st.handle) } : (r.terminal || null);
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";

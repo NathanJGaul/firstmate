@@ -94,6 +94,76 @@ SH
   chmod +x "$fb/tmux"
 }
 
+# orca_worktree_response: an Orca `worktree create` JSON result. <shape> picks
+# which first-terminal shape the runtime reports: none, terminal (the verified
+# result.terminal), startup (Orca 1.4.261's result.startupTerminal), both,
+# startup-nospawned (no spawned flag), startup-unspawned (spawned false),
+# startup-emptyhandle, or startup-nohandle. A blank <path> omits the path.
+orca_worktree_response() {  # <worktree-id> <path-or-empty> <shape>
+  local id=$1 path=$2 shape=$3 wt term=
+  if [ -n "$path" ]; then
+    wt=$(printf '{"id":"%s","path":"%s"}' "$id" "$path")
+  else
+    wt=$(printf '{"id":"%s"}' "$id")
+  fi
+  case "$shape" in
+    none) ;;
+    terminal) term=',"terminal":{"handle":"term-legacy"}' ;;
+    startup) term=',"startupTerminal":{"spawned":true,"handle":"term-startup","tabId":"tab-1","paneKey":"pane-1","ptyId":"pty-1","surface":"background"}' ;;
+    both) term=',"terminal":{"handle":"term-legacy"},"startupTerminal":{"spawned":true,"handle":"term-startup"}' ;;
+    startup-nospawned) term=',"startupTerminal":{"handle":"term-startup"}' ;;
+    startup-unspawned) term=',"startupTerminal":{"spawned":false,"handle":"term-startup"}' ;;
+    startup-emptyhandle) term=',"startupTerminal":{"spawned":true,"handle":""}' ;;
+    startup-nohandle) term=',"startupTerminal":{"spawned":true}' ;;
+    *) fail "unknown worktree response shape '$shape'" ;;
+  esac
+  printf '{"ok":true,"result":{"worktree":%s%s}}\n' "$wt" "$term"
+}
+
+# orca_log_count: how many logged Orca calls start with <noun> <verb>.
+orca_log_count() {  # <noun> <verb> [log]
+  grep -c -F "orca"$'\x1f'"$1"$'\x1f'"$2" "${3:-$LOG}" || true
+}
+
+# run_orca_spawn: spawn <id> through fm-spawn --backend orca against a fake
+# Orca whose worktree creation reports <shape>. Sets SPAWN_OUT, SPAWN_RC,
+# SPAWN_STATE, SPAWN_WT and the case's LOG and RESP. Extra
+# arguments are numbered responses, "<n>=<json>" or "<n>=exit:<code>", written
+# before the run. SPAWN_OMIT_PATH=1 leaves the path out of the worktree result.
+run_orca_spawn() {  # <case> <id> <shape> [<n>=<json>...]
+  local case_name=$1 id=$2 shape=$3 proj data config arg staged result_path
+  shift 3
+  proj="$TMP_ROOT/$case_name-project"
+  SPAWN_WT="$TMP_ROOT/$case_name-wt"
+  data="$TMP_ROOT/$case_name-data"
+  SPAWN_STATE="$TMP_ROOT/$case_name-state"
+  config="$TMP_ROOT/$case_name-config"
+  fm_git_worktree "$proj" "$SPAWN_WT" "fm/$id"
+  mkdir -p "$data/$id" "$SPAWN_STATE" "$config"
+  write_spawn_brief "$data" "$id"
+  touch "$SPAWN_STATE/.last-watcher-beat"
+  orca_case "$case_name"
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-%s"}}}\n' "$case_name" > "$RESP/2.out"
+  result_path=$SPAWN_WT
+  [ "${SPAWN_OMIT_PATH:-0}" != 1 ] || result_path=
+  orca_worktree_response "wt-$case_name::/orca/wt-$case_name" "$result_path" "$shape" > "$RESP/3.out"
+  for arg in "$@"; do
+    case "${arg#*=}" in
+      exit:*) printf '%s\n' "${arg#*=exit:}" > "$RESP/${arg%%=*}.exit" ;;
+      *) printf '%s\n' "${arg#*=}" > "$RESP/${arg%%=*}.out" ;;
+    esac
+  done
+  SPAWN_OUT=$( HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SPAWN_STATE" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend orca 2>&1 )
+  SPAWN_RC=$?
+  staged=$(tr '\037' '\n' < "$LOG" | sed -n "s/^\. '\([^']*\)'$/\1/p" | tail -1)
+  [ -z "$staged" ] || rm -rf "$(dirname "$staged")"
+  rm -rf "/tmp/fm-$id"
+}
+
 test_capture_reads_terminal_tail_json() {
   local out
   orca_case capture-tail
@@ -1349,6 +1419,56 @@ test_dispatcher_sources_orca_and_routes_primitives() {
   pass "fm-backend dispatcher: accepts orca and routes capture through bin/backends/orca.sh"
 }
 
+# orca_json_get: run fm_backend_orca_json_get <field> over a worktree create
+# result of <shape>; prints the field and returns the parser's status.
+orca_json_get() {  # <field> <shape>
+  orca_worktree_response wt-json /tmp/orca-wt "$2" | \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_json_get "$1"' "$ROOT" "$1"
+}
+
+# run_orca_worktree_create: call fm_backend_orca_worktree_create /repo/path
+# fm-task against a fake Orca whose worktree creation reports <shape> with
+# <path> (blank omits it). Sets CREATE_OUT (stdout and stderr), CREATE_RC and
+# the case's LOG. Extra arguments are numbered responses: "<n>=<json>" writes
+# call <n>'s output and "<n>=exit:<code>" makes call <n> exit with that code.
+run_orca_worktree_create() {  # <case> <shape> <path-or-empty> [<n>=<json>|<n>=exit:<code>...]
+  local case_name=$1 shape=$2 path=$3 arg
+  shift 3
+  orca_case "$case_name"
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-%s"}}}\n' "$case_name" > "$RESP/2.out"
+  orca_worktree_response "wt-$case_name::/orca/wt-$case_name" "$path" "$shape" > "$RESP/3.out"
+  for arg in "$@"; do
+    case "${arg#*=}" in
+      exit:*) printf '%s\n' "${arg#*=exit:}" > "$RESP/${arg%%=*}.exit" ;;
+      *) printf '%s\n' "${arg#*=}" > "$RESP/${arg%%=*}.out" ;;
+    esac
+  done
+  CREATE_OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+  CREATE_RC=$?
+}
+
+ORCA_TERMINAL_CREATE_RESPONSE='{"ok":true,"result":{"terminal":{"handle":"term-created"}}}'
+
+test_worktree_create_prints_the_startup_terminal_as_the_third_field() {
+  local expect
+  run_orca_worktree_create create-print-startup startup /tmp/orca-wt
+  expect=$'wt-create-print-startup::/orca/wt-create-print-startup\t/tmp/orca-wt\tterm-startup'
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print id, path, and the startup handle, got '$CREATE_OUT'"
+  pass "fm_backend_orca_worktree_create: prints the startup terminal handle after the id and path"
+}
+
+test_json_get_adopts_startup_terminal_handle() {
+  local out
+  out=$(orca_json_get worktree-terminal-handle startup)
+  [ "$out" = term-startup ] || fail "worktree-terminal-handle should read result.startupTerminal.handle, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle adopts result.startupTerminal.handle"
+}
+
+test_worktree_create_prints_the_startup_terminal_as_the_third_field
+test_json_get_adopts_startup_terminal_handle
 test_capture_reads_terminal_tail_json
 test_capture_falls_back_to_text_fields
 test_capture_fails_on_orca_error_json
