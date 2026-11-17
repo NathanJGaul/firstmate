@@ -954,6 +954,59 @@
     },
     {
       "path": "specs/004-pin-ci-runner-image/tdd/verification.md",
+      "path": "specs/004-worker-browser-session/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/contracts/launch-and-cleanup.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/data-model.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-worker-browser-session/tdd/verification.md",
       "audience": "maintainer-verification"
     },
     {
