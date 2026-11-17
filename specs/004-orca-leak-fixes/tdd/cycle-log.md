@@ -58,3 +58,12 @@ Method notes (strict redo, at the captain's direction):
   - A4 `not ok - spawn should create exactly one terminal for startup-nohandle` (the handle-less terminal was adopted as the string `undefined`)
 - green: the startup terminal is passed through the shared handle reader, which accepts only a non-empty string or number. Both tests, U2, and the regression subset pass; the not-spawned and empty-handle shapes of A4 were already satisfied by earlier cycles.
 - refactor: none.
+
+## Cycle 6: U5 and A2 the terminal shape wins when both shapes are reported
+
+- tests (new): `test_json_get_prefers_terminal_over_startup_terminal` (U5), `test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal` (A2, through `fm-spawn.sh`; shapes `terminal` and both)
+- red against the cycle 5 adapter, where the startup terminal was tried first:
+  - U5 `not ok - result.terminal should win when both shapes are present, got 'term-startup'`
+  - A2 `not ok - meta should record the result.terminal handle for both`
+- green: `result.terminal` is tried first and the startup terminal second, which is the final `worktree-terminal-handle` rule and header comment. Both tests, U4, and the regression subset pass.
+- refactor: none.

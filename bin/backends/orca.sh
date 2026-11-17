@@ -49,10 +49,14 @@ process.exit(1);
 }
 
 fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id
-  # Terminal handles are accepted only from verified terminal result shapes:
-  # result.terminal or a root terminal object with .handle. Undocumented
-  # result.id and result.worktree.terminal shapes are ignored until a real Orca
-  # smoke run proves them.
+  # Terminal handles are accepted only from known terminal result shapes:
+  # result.terminal or a root terminal object with .handle, plus, for
+  # worktree-terminal-handle only, the result.startupTerminal that Orca 1.4.261
+  # returns from worktree create (read from the runtime's response builder, so
+  # proven against the fake only), taken after result.terminal and only when
+  # Orca does not report it spawned:false. Undocumented result.id and
+  # result.worktree.terminal shapes are ignored until a real Orca smoke run
+  # proves them.
   local field=$1
   node -e '
 const fs = require("fs");
@@ -66,8 +70,7 @@ if (data.ok === false) {
 const r = data.result || {};
 const wt = r.worktree || r.item || r;
 const explicitTerm = r.terminal || null;
-const st = r.startupTerminal || null;
-const startupTerm = (st && st.spawned !== false) ? st : null;
+const startupTerm = (r.startupTerminal && r.startupTerminal.spawned !== false) ? r.startupTerminal : null;
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";
@@ -81,7 +84,7 @@ let v = "";
 if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
 if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
-if (field === "worktree-terminal-handle") v = handle(startupTerm) || handle(explicitTerm) || "";
+if (field === "worktree-terminal-handle") v = handle(explicitTerm) || handle(startupTerm) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));

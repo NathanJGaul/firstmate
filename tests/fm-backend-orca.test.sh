@@ -1451,6 +1451,19 @@ run_orca_worktree_create() {  # <case> <shape> <path-or-empty> [<n>=<json>|<n>=e
 
 ORCA_TERMINAL_CREATE_RESPONSE='{"ok":true,"result":{"terminal":{"handle":"term-created"}}}'
 
+test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal() {
+  local shape id n=0
+  for shape in terminal both; do
+    n=$((n + 1))
+    id="orcashapez$n"
+    run_orca_spawn "spawn-shape-$shape" "$id" "$shape"
+    expect_code 0 "$SPAWN_RC" "spawn should succeed with the $shape result"$'\n'"$SPAWN_OUT"
+    assert_grep "terminal=term-legacy" "$SPAWN_STATE/$id.meta" "meta should record the result.terminal handle for $shape"
+    [ "$(orca_log_count terminal create)" = 0 ] || fail "spawn must not create a second terminal for $shape"
+  done
+  pass "fm-spawn.sh --backend orca: adopts result.terminal, and prefers it when a startup terminal is also reported"
+}
+
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal() {
   local shape id n=0
   for shape in startup-unspawned startup-emptyhandle startup-nohandle; do
@@ -1507,6 +1520,13 @@ test_json_get_ignores_startup_terminal_without_a_handle() {
   pass "fm_backend_orca_json_get: worktree-terminal-handle ignores a startup terminal with an empty or missing handle"
 }
 
+test_json_get_prefers_terminal_over_startup_terminal() {
+  local out
+  out=$(orca_json_get worktree-terminal-handle both)
+  [ "$out" = term-legacy ] || fail "result.terminal should win when both shapes are present, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle prefers result.terminal over result.startupTerminal"
+}
+
 test_json_get_terminal_handle_field_ignores_startup_terminal() {
   local out status
   out=$(orca_json_get terminal-handle startup)
@@ -1516,12 +1536,14 @@ test_json_get_terminal_handle_field_ignores_startup_terminal() {
   pass "fm_backend_orca_json_get: terminal-handle (terminal create results) ignores result.startupTerminal"
 }
 
+test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal
 test_worktree_create_prints_the_startup_terminal_as_the_third_field
 test_json_get_adopts_startup_terminal_handle
 test_json_get_ignores_startup_terminal_that_was_not_spawned
 test_json_get_adopts_startup_terminal_without_spawned_flag
 test_json_get_ignores_startup_terminal_without_a_handle
+test_json_get_prefers_terminal_over_startup_terminal
 test_json_get_terminal_handle_field_ignores_startup_terminal
 test_capture_reads_terminal_tail_json
 test_capture_falls_back_to_text_fields
