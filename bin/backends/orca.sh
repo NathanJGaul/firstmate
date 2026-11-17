@@ -67,7 +67,7 @@ const r = data.result || {};
 const wt = r.worktree || r.item || r;
 const explicitTerm = r.terminal || null;
 const st = r.startupTerminal || null;
-const startupTerm = (st && st.spawned !== false) ? { handle: String(st.handle) } : null;
+const startupTerm = (st && st.spawned !== false) ? st : null;
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";

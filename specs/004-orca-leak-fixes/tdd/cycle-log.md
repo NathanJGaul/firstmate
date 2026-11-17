@@ -49,3 +49,12 @@ Method notes (strict redo, at the captain's direction):
 - red against the cycle 3 adapter: `not ok - a startup terminal with no spawned flag is not 'spawned: false' and should be adopted, got ''`
 - green: the guard becomes `spawned !== false`. U1, U2, U3 and the regression subset pass.
 - refactor: none.
+
+## Cycle 5: U4 and A4 an unusable startup terminal is not adopted and spawn creates one
+
+- tests (new): `test_json_get_ignores_startup_terminal_without_a_handle` (U4, adapter level), `test_spawn_creates_a_terminal_for_an_unusable_startup_terminal` (A4, through `fm-spawn.sh`; three shapes: not spawned, empty handle, no handle)
+- red against the cycle 4 adapter:
+  - U4 `not ok - worktree-terminal-handle should find no terminal for startup-nohandle, got 'undefined'`
+  - A4 `not ok - spawn should create exactly one terminal for startup-nohandle` (the handle-less terminal was adopted as the string `undefined`)
+- green: the startup terminal is passed through the shared handle reader, which accepts only a non-empty string or number. Both tests, U2, and the regression subset pass; the not-spawned and empty-handle shapes of A4 were already satisfied by earlier cycles.
+- refactor: none.
