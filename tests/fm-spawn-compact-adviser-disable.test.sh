@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # tests/fm-spawn-compact-adviser-disable.test.sh - every agent this fleet
-# launches must start with COMPACT_ADVISER_DISABLE=1 in its environment.
+# launches must start with COMPACT_ADVISER_DISABLE=1 in its environment, with its
+# steering inbox in FM_TASK_INBOX, and with CHROME_DEVTOOLS_AXI_SESSION set to its
+# task id so each worker has its own browser session (the "per-worker browser
+# session" section; fm_browser_session_name in bin/fm-pr-lib.sh owns which ids
+# name one).
 #
 # The assertions never read bin/fm-spawn.sh's source. They drive the real spawn
 # against a fake pane and a real isolated git worktree, then EXECUTE the launch
@@ -225,6 +229,149 @@ test_launch_exports_task_inbox() {
   pass "ship and secondmate launches export their absolute steering inbox as FM_TASK_INBOX"
 }
 
+# --- per-worker browser session ---------------------------------------------
+#
+# Every local launch must start its agent with CHROME_DEVTOOLS_AXI_SESSION set
+# to the task id, so one worker's browser bridge is never shared with another.
+# The probe prints what the agent would see; a contrary value in the synthetic
+# pane is where an ambient forward, rather than an explicit export, is caught.
+SESSION_VAR=CHROME_DEVTOOLS_AXI_SESSION
+
+# launched_session <fakebin> <launch-log> <pane-log> [pane-session] [replay]
+# Runs the emitted launch in a synthetic pane and prints the session the agent
+# sees. A non-empty pane-session is placed in the pane's own environment. With
+# replay=launch-only the pane-side exports are not replayed.
+launched_session() {
+  local fakebin=$1 launchlog=$2 panelog=$3 pane_session=${4:-} replay=${5:-} launch preamble=
+  launch=$(cat "$launchlog")
+  [ "$replay" = launch-only ] || preamble=$(grep '^export ' "$panelog")
+  install_env_probe "$fakebin" codex "$SESSION_VAR"
+  env -i HOME="$TMP_ROOT/pane-home" PATH="$fakebin:$PATH" TERM=xterm \
+    TMUX=synthetic-pane COMPACT_ADVISER_DISABLE="$CONTRARY" \
+    ${pane_session:+CHROME_DEVTOOLS_AXI_SESSION="$pane_session"} \
+    /bin/sh -c "$preamble
+$launch"
+}
+
+# spawn_session_case <name> <id> <kind> [allowlist]
+# Spawns <id> as ship, scout, or secondmate in a fresh case and leaves the case
+# variables set for launched_session. An allowlist of "enabled" opts the home in
+# with an empty file, the strictest posture.
+spawn_session_case() {
+  local name=$1 id=$2 kind=$3 allowlist=${4:-absent} rec sm out status
+  rec=$(make_case "$name" codex "$id")
+  read_case "$rec"
+  [ "$allowlist" = absent ] || : > "$HOME_DIR/config/launch-env-allowlist"
+  case "$kind" in
+    ship) out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off) ;;
+    scout) out=$(run_case_spawn "$id" "$PROJ_DIR" --scout) ;;
+    secondmate)
+      sm="$CASE_DIR/secondmate-home"
+      mkdir -p "$sm/bin" "$sm/data"
+      printf '# Firstmate\n' > "$sm/AGENTS.md"
+      printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
+      printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
+      printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$sm/.gitignore"
+      git -C "$sm" init -q -b main
+      out=$(run_case_spawn "$id" "$sm" --secondmate)
+      ;;
+  esac
+  status=$?
+  expect_code 0 "$status" "$kind spawn of $id should succeed: $out"
+}
+
+test_ship_launch_exports_its_task_id_as_the_session() {  # A1
+  local seen
+  spawn_session_case session-ship browser-ship-a1 ship
+  seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "ship: the emitted launch failed to run"
+  assert_equals browser-ship-a1 "$seen" \
+    "a ship worker must start with CHROME_DEVTOOLS_AXI_SESSION set to its task id"
+  pass "a ship launch gives its agent its own browser session named by the task id"
+}
+
+test_scout_launch_exports_its_task_id_as_the_session() {  # A2
+  local seen
+  spawn_session_case session-scout browser-scout-a1 scout
+  seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "scout: the emitted launch failed to run"
+  assert_equals browser-scout-a1 "$seen" \
+    "a scout worker must start with CHROME_DEVTOOLS_AXI_SESSION set to its task id"
+  pass "a scout launch gives its agent its own browser session named by the task id"
+}
+
+test_secondmate_launch_exports_its_id_as_the_session() {  # A3
+  local seen
+  spawn_session_case session-secondmate browser-sm-a1 secondmate
+  seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "secondmate: the emitted launch failed to run"
+  assert_equals browser-sm-a1 "$seen" \
+    "a local secondmate must start with CHROME_DEVTOOLS_AXI_SESSION set to its own id"
+  pass "a local secondmate launch gives its agent a browser session named by its id"
+}
+
+test_launch_overrides_a_session_already_in_the_pane() {  # A4
+  local seen
+  spawn_session_case session-contrary browser-contrary-a1 ship
+  seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" other-session) \
+    || fail "contrary pane: the emitted launch failed to run"
+  assert_equals browser-contrary-a1 "$seen" \
+    "a session already in the pane must lose to the task id"
+  pass "the task-id session overrides a browser session the pane already carried"
+}
+
+test_two_workers_get_different_sessions() {  # A6
+  local first second
+  spawn_session_case session-distinct-one browser-one-a1 ship
+  first=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "first worker: the emitted launch failed to run"
+  spawn_session_case session-distinct-two browser-two-a1 ship
+  second=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "second worker: the emitted launch failed to run"
+  assert_not_equals "$first" "$second" "two workers must not share a browser session"
+  assert_equals browser-one-a1 "$first" "the first worker keeps its own session"
+  assert_equals browser-two-a1 "$second" "the second worker keeps its own session"
+  pass "two workers with different task ids launch with different browser sessions"
+}
+
+test_session_survives_an_empty_allowlist() {  # A7
+  local seen launch
+  spawn_session_case session-allowlist browser-allow-a1 ship enabled
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" '/usr/bin/env -i' \
+    "an enabled allowlist should launch under a cleared environment"
+  seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" other-session) \
+    || fail "allowlisted ship: the emitted launch failed to run"
+  assert_equals browser-allow-a1 "$seen" \
+    "the cleared allowlisted environment must still give the agent its task-id session"
+  pass "a launch under an empty allowlist still gives its agent the task-id browser session"
+}
+
+test_session_does_not_depend_on_the_pane_exports() {  # A8
+  local setting seen
+  for setting in absent enabled; do
+    spawn_session_case "session-nopane-$setting" "browser-nopane-$setting-a1" ship "$setting"
+    seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" other-session launch-only) \
+      || fail "allowlist=$setting: the emitted launch failed to run without the pane exports"
+    assert_equals "browser-nopane-$setting-a1" "$seen" \
+      "allowlist=$setting: the launch command alone must set the task-id session"
+  done
+  pass "the launch command sets the task-id browser session on its own in both allowlist postures"
+}
+
+test_default_named_task_exports_no_session() {  # A14
+  local seen launch
+  spawn_session_case session-default default ship
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" 'CHROME_DEVTOOLS_AXI_SESSION' \
+    "a task named default must not claim the machine-wide default session in its launch"
+  seen=$(launched_session "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "default-named task: the emitted launch failed to run"
+  assert_equals unset "$seen" \
+    "a task named default must start with no Firstmate-exported browser session"
+  pass "a task whose id is the default session name exports no browser session of its own"
+}
+
 # --- relaunch ---------------------------------------------------------------
 #
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
@@ -290,62 +437,87 @@ SH
   chmod +x "$fb/sleep"
 }
 
+# relaunch_case <allowlist-setting> <tag>: builds a recorded ship task, drives
+# `fm-control.sh relaunch` against the stub above, and leaves the replacement
+# launch in RELAUNCH_LAUNCH, the pane-side exports in RELAUNCH_KEYS, and the
+# case's directories in RELAUNCH_DIR and RELAUNCH_HOME_DIR.
+relaunch_case() {
+  local setting=$1 tag=$2 dir home proj wt id out status
+  id="relaunch-$setting-a1"
+  dir="$TMP_ROOT/relaunch-$tag-$setting"
+  home="$dir/home"
+  proj="$dir/proj"
+  wt="$dir/wt"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$dir/fake"
+  touch "$home/state/.last-watcher-beat"
+  [ "$setting" = absent ] || : > "$home/config/launch-env-allowlist"
+  make_relaunch_stub "$dir"
+  fm_git_worktree "$proj" "$wt" "wt-relaunch-$tag-$setting"
+  fm_test_spawn_brief "$home" "$id"
+  : > "$dir/fake/literal"
+  : > "$dir/fake/keys"
+  printf 'codex' > "$dir/fake/command"
+  printf '%s\n' "fm-$id" > "$dir/fake/windows"
+  printf '%s' "$wt" > "$dir/fake/cwd"
+  {
+    echo "window=fmses:fm-$id"
+    echo "endpoint_task_id=$id"
+    echo "worktree=$wt"
+    echo "project=$proj"
+    echo "harness=codex"
+    echo "kind=ship"
+    echo "mode=no-mistakes"
+    echo "yolo=off"
+    echo "tasktmp=$dir/tasktmp"
+    echo "model=default"
+    echo "effort=default"
+  } > "$home/state/$id.meta"
+
+  mkdir -p "$dir/user-home"
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$home" FM_FAKE_DIR="$dir/fake" \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
+    "$CONTROL" "$id" relaunch --note 'replacement continues the same task' 2>&1)
+  status=$?
+  expect_code 0 "$status" "relaunch with allowlist=$setting should succeed: $out"
+  RELAUNCH_DIR=$dir
+  RELAUNCH_KEYS=$(grep '^export ' "$dir/fake/keys")
+  RELAUNCH_LAUNCH=$(grep 'encode launch-brief' "$dir/fake/literal" | tail -1)
+  [ -n "$RELAUNCH_LAUNCH" ] || fail "relaunch with allowlist=$setting sent no replacement launch command"
+}
+
 test_relaunch_rebuilds_the_switch() {
-  local setting dir home proj wt id out status seen launch preamble
+  local setting seen
   for setting in absent enabled; do
-    id="relaunch-$setting-a1"
-    dir="$TMP_ROOT/relaunch-$setting"
-    home="$dir/home"
-    proj="$dir/proj"
-    wt="$dir/wt"
-    mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$dir/fake"
-    touch "$home/state/.last-watcher-beat"
-    [ "$setting" = absent ] || : > "$home/config/launch-env-allowlist"
-    make_relaunch_stub "$dir"
-    fm_git_worktree "$proj" "$wt" "wt-relaunch-$setting"
-    fm_test_spawn_brief "$home" "$id"
-    : > "$dir/fake/literal"
-    : > "$dir/fake/keys"
-    printf 'codex' > "$dir/fake/command"
-    printf '%s\n' "fm-$id" > "$dir/fake/windows"
-    printf '%s' "$wt" > "$dir/fake/cwd"
-    {
-      echo "window=fmses:fm-$id"
-      echo "endpoint_task_id=$id"
-      echo "worktree=$wt"
-      echo "project=$proj"
-      echo "harness=codex"
-      echo "kind=ship"
-      echo "mode=no-mistakes"
-      echo "yolo=off"
-      echo "tasktmp=$dir/tasktmp"
-      echo "model=default"
-      echo "effort=default"
-    } > "$home/state/$id.meta"
-
-    mkdir -p "$dir/user-home"
-    out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$home" FM_FAKE_DIR="$dir/fake" \
-      HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
-      FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
-      "$CONTROL" "$id" relaunch --note 'replacement continues the same task' 2>&1)
-    status=$?
-    expect_code 0 "$status" "relaunch with allowlist=$setting should succeed: $out"
-
-    grep -qx 'export COMPACT_ADVISER_DISABLE=1' "$dir/fake/keys" \
+    relaunch_case "$setting" switch
+    grep -qx 'export COMPACT_ADVISER_DISABLE=1' "$RELAUNCH_DIR/fake/keys" \
       || fail "relaunch with allowlist=$setting did not re-export the compact-adviser switch into the pane"
-    launch=$(grep 'encode launch-brief' "$dir/fake/literal" | tail -1)
-    [ -n "$launch" ] || fail "relaunch with allowlist=$setting sent no replacement launch command"
-    install_env_probe "$dir/fakebin" codex
-    preamble=$(grep '^export ' "$dir/fake/keys")
-    seen=$(env -i HOME="$dir/user-home" PATH="$dir/fakebin:$PATH" TERM=xterm \
+    install_env_probe "$RELAUNCH_DIR/fakebin" codex
+    seen=$(env -i HOME="$RELAUNCH_DIR/user-home" PATH="$RELAUNCH_DIR/fakebin:$PATH" TERM=xterm \
       TMUX=synthetic-pane COMPACT_ADVISER_DISABLE="$CONTRARY" \
-      /bin/sh -c "$preamble
-$launch") \
+      /bin/sh -c "$RELAUNCH_KEYS
+$RELAUNCH_LAUNCH") \
       || fail "relaunch with allowlist=$setting: the replacement launch failed to run"
     assert_equals 1 "$seen" \
       "a relaunched agent with allowlist=$setting must start with the compact adviser disabled, exactly as a fresh spawn does"
   done
   pass "relaunch rebuilds the compact-adviser switch for the replacement agent in both allowlist postures"
+}
+
+test_relaunch_keeps_the_task_id_session() {  # A5
+  local setting seen
+  for setting in absent enabled; do
+    relaunch_case "$setting" session
+    install_env_probe "$RELAUNCH_DIR/fakebin" codex "$SESSION_VAR"
+    seen=$(env -i HOME="$RELAUNCH_DIR/user-home" PATH="$RELAUNCH_DIR/fakebin:$PATH" TERM=xterm \
+      TMUX=synthetic-pane CHROME_DEVTOOLS_AXI_SESSION=other-session \
+      /bin/sh -c "$RELAUNCH_KEYS
+$RELAUNCH_LAUNCH") \
+      || fail "relaunch with allowlist=$setting: the replacement launch failed to run"
+    assert_equals "relaunch-$setting-a1" "$seen" \
+      "a relaunched agent with allowlist=$setting must start with the same task-id browser session"
+  done
+  pass "a relaunch gives the replacement agent the same task-id browser session in both allowlist postures"
 }
 
 # A command-prefix assignment only covers the first simple command. A raw
@@ -470,10 +642,19 @@ test_session_name_accepts_ids_that_extend_default
 test_session_name_refuses_an_empty_id
 test_session_name_refuses_a_leading_dot
 test_session_name_refuses_characters_the_tool_rejects
+test_ship_launch_exports_its_task_id_as_the_session
+test_scout_launch_exports_its_task_id_as_the_session
+test_secondmate_launch_exports_its_id_as_the_session
+test_launch_overrides_a_session_already_in_the_pane
+test_two_workers_get_different_sessions
+test_session_survives_an_empty_allowlist
+test_session_does_not_depend_on_the_pane_exports
+test_default_named_task_exports_no_session
 test_ship_allowlist_absent
 test_ship_allowlist_enabled
 test_launch_command_carries_the_switch_without_the_pane_export
 test_secondmate_launch
 test_launch_exports_task_inbox
 test_relaunch_rebuilds_the_switch
+test_relaunch_keeps_the_task_id_session
 test_raw_compound_launch_command_carries_the_switch
