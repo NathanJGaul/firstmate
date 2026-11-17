@@ -57,7 +57,7 @@ Spawn registers the repository, creates an independent worktree, reuses a termin
 Exact command flags and response parsing are owned by `bin/backends/orca.sh` and script help.
 
 Orca 1.4.261 returns the worktree's first terminal as `result.startupTerminal` and returns no `result.terminal`.
-The adapter accepts a terminal handle only from `result.terminal`, so it does not adopt `startupTerminal` and creates its own terminal.
+The adapter takes a worktree's terminal handle only from `result.terminal`, so it does not adopt `startupTerminal` and creates its own terminal.
 Each task therefore has one spare Orca terminal besides the recorded one, which cleanup removes together with the worktree.
 
 `fm-peek.sh` reads with `orca terminal read`.
@@ -85,7 +85,7 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
 - Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
-- The adapter reads only the verified worktree fields and the `result.terminal` handle, and rejects other response shapes.
+- The adapter reads only verified response fields, the worktree id and path and a terminal handle from `result.terminal` or the root terminal object, and rejects other response shapes.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
   That check refuses any path that is not a linked git worktree, so it could never accept a project Orca registered as a folder.
 
@@ -112,4 +112,4 @@ tests/fm-bootstrap.test.sh
 tests/fm-teardown-endpoint-safety.test.sh
 ```
 
-[`verification/runtime-backends.md`](verification/runtime-backends.md#orca) records the real readiness and response-shape smoke.
+[`verification/runtime-backends.md`](verification/runtime-backends.md#orca) records the macOS readiness and response-shape smoke and the Linux headless 1.4.261 observations.
