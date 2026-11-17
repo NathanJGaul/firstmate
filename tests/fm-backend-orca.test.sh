@@ -1467,8 +1467,18 @@ test_json_get_adopts_startup_terminal_handle() {
   pass "fm_backend_orca_json_get: worktree-terminal-handle adopts result.startupTerminal.handle"
 }
 
+test_json_get_terminal_handle_field_ignores_startup_terminal() {
+  local out status
+  out=$(orca_json_get terminal-handle startup)
+  status=$?
+  [ "$status" -ne 0 ] || fail "terminal-handle parses a terminal create result and must not read startupTerminal, got '$out'"
+  [ -z "$out" ] || fail "terminal-handle should print nothing for a startupTerminal-only result, got '$out'"
+  pass "fm_backend_orca_json_get: terminal-handle (terminal create results) ignores result.startupTerminal"
+}
+
 test_worktree_create_prints_the_startup_terminal_as_the_third_field
 test_json_get_adopts_startup_terminal_handle
+test_json_get_terminal_handle_field_ignores_startup_terminal
 test_capture_reads_terminal_tail_json
 test_capture_falls_back_to_text_fields
 test_capture_fails_on_orca_error_json

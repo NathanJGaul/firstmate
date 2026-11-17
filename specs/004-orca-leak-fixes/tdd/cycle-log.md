@@ -28,3 +28,10 @@ Method notes (strict redo, at the captain's direction):
   - U7 `not ok - worktree create should print id, path, and the startup handle, got 'wt-create-print-startup::/orca/wt-create-print-startup	/tmp/orca-wt'`
 - green: `fm_backend_orca_json_get` reads `r.startupTerminal` first and unconditionally, as the one terminal object both handle fields use (deliberately naive; later cycles refine it). Both tests and the 8-test regression subset pass.
 - refactor: none.
+
+## Cycle 2: U6 terminal create parsing ignores the startup terminal
+
+- test (new): `test_json_get_terminal_handle_field_ignores_startup_terminal` (U6)
+- red against the cycle 1 adapter: `not ok - terminal-handle parses a terminal create result and must not read startupTerminal, got 'term-startup'` (the shared terminal object leaked into the `terminal create` parser)
+- green: the startup terminal gets its own variable used only by `worktree-terminal-handle`, tried before `result.terminal` for now. U1, U6, U7 and the regression subset pass.
+- refactor: none.

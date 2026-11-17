@@ -65,8 +65,9 @@ if (data.ok === false) {
 }
 const r = data.result || {};
 const wt = r.worktree || r.item || r;
+const explicitTerm = r.terminal || null;
 const st = r.startupTerminal || null;
-const explicitTerm = st ? { handle: String(st.handle) } : (r.terminal || null);
+const startupTerm = st ? { handle: String(st.handle) } : null;
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";
@@ -80,7 +81,7 @@ let v = "";
 if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
 if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
-if (field === "worktree-terminal-handle") v = handle(explicitTerm) || "";
+if (field === "worktree-terminal-handle") v = handle(startupTerm) || handle(explicitTerm) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));
