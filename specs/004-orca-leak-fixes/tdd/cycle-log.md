@@ -67,3 +67,14 @@ Method notes (strict redo, at the captain's direction):
   - A2 `not ok - meta should record the result.terminal handle for both`
 - green: `result.terminal` is tried first and the startup terminal second, which is the final `worktree-terminal-handle` rule and header comment. Both tests, U4, and the regression subset pass.
 - refactor: none.
+
+## Cycle 7: U8, A1, U11, A3 the adopted terminal is titled once, and only when there is one
+
+- tests (new): `test_worktree_create_titles_the_adopted_startup_terminal` (U8), `test_spawn_adopts_startup_terminal_without_creating_another` (A1, the outer test), `test_worktree_create_issues_no_rename_without_a_terminal` (U11), `test_spawn_creates_one_titled_terminal_when_orca_reports_none` (A3)
+- red, step 1, against the cycle 6 adapter (no rename exists): U8 `not ok - worktree create should title the adopted terminal exactly once`; A1 `not ok - spawn should title the adopted startup terminal exactly once`. U11 and A3 pass here because nothing renames yet.
+- step 2, the obvious implementation: a new `fm_backend_orca_terminal_rename` helper called unconditionally and strictly (`|| return 1`) right after the terminal is read. U8 and A1 go green, and the same step turns the other two red:
+  - U11 `not ok - there is no terminal to title, so no rename should be issued`
+  - A3 `not ok - spawn should fall back to creating a terminal` (a rename with no terminal consumed the create response)
+  - the regression subset also breaks under this step (3 of 8 tests ran ok before the first failure).
+- green, step 3: the rename runs only when a terminal exists and, for now, only for a terminal that did not come from `result.terminal`. All four tests and the 8-test regression subset pass.
+- refactor: none.

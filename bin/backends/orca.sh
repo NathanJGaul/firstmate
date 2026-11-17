@@ -134,7 +134,7 @@ fm_backend_orca_repo_ensure() {  # <project-path>
 }
 
 fm_backend_orca_worktree_create() {  # <project-path> <name>
-  local project=$1 name=$2 repo_id out wt_id wt_path terminal
+  local project=$1 name=$2 repo_id out wt_id wt_path terminal legacy
   repo_id=$(fm_backend_orca_repo_ensure "$project") || return 1
   out=$(orca worktree create --repo "id:$repo_id" --name "$name" --no-parent --setup skip --json) || return 1
   wt_id=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-id) || {
@@ -142,6 +142,8 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
     return 1
   }
   terminal=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-terminal-handle 2>/dev/null || true)
+  legacy=$(printf '%s' "$out" | fm_backend_orca_json_get terminal-handle 2>/dev/null || true)
+  [ -z "$terminal" ] || [ -n "$legacy" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || return 1
   wt_path=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-path) || {
     echo "error: orca worktree create did not return a path for $name" >&2
     [ -z "$terminal" ] || fm_backend_orca_kill "$terminal" >/dev/null 2>&1 || true
@@ -157,6 +159,12 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
   }
   printf '%s\t%s' "$wt_id" "$wt_path"
   [ -z "$terminal" ] || printf '\t%s' "$terminal"
+}
+
+fm_backend_orca_terminal_rename() {  # <terminal-id> <title>
+  local terminal=$1 title=$2
+  fm_backend_orca_tool_check || return 1
+  fm_backend_orca_run_json orca terminal rename --terminal "$terminal" --title "$title" --json
 }
 
 fm_backend_orca_terminal_create() {  # <worktree-id> <title>

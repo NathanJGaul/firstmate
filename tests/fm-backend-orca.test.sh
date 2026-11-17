@@ -1464,6 +1464,18 @@ test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal() {
   pass "fm-spawn.sh --backend orca: adopts result.terminal, and prefers it when a startup terminal is also reported"
 }
 
+test_spawn_creates_one_titled_terminal_when_orca_reports_none() {
+  local id=orcanoneterm1
+  run_orca_spawn spawn-no-terminal "$id" none "4=$ORCA_TERMINAL_CREATE_RESPONSE"
+  expect_code 0 "$SPAWN_RC" "spawn should fall back to creating a terminal"$'\n'"$SPAWN_OUT"
+  [ "$(orca_log_count terminal create)" = 1 ] || fail "spawn should create exactly one terminal when Orca reports none"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create'$'\x1f''--worktree'$'\x1f''id:wt-spawn-no-terminal::/orca/wt-spawn-no-terminal'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the created terminal should be titled with the task name"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a terminal created with its title needs no rename"
+  assert_grep "terminal=term-created" "$SPAWN_STATE/$id.meta" "meta should record the created terminal"
+  pass "fm-spawn.sh --backend orca: creates exactly one titled terminal when Orca reports none"
+}
+
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal() {
   local shape id n=0
   for shape in startup-unspawned startup-emptyhandle startup-nohandle; do
@@ -1477,6 +1489,16 @@ test_spawn_creates_a_terminal_for_an_unusable_startup_terminal() {
   pass "fm-spawn.sh --backend orca: creates a terminal when the startup terminal was not spawned or has no handle"
 }
 
+test_worktree_create_titles_the_adopted_startup_terminal() {
+  run_orca_worktree_create create-rename-startup startup /tmp/orca-wt
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "worktree create should title the adopted terminal exactly once"$'\n'"$(cat "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--title'$'\x1f''fm-task'$'\x1f''--json' \
+    "worktree create should title the adopted terminal with the task name"
+  pass "fm_backend_orca_worktree_create: titles the adopted startup terminal with the task name"
+}
+
 test_worktree_create_prints_the_startup_terminal_as_the_third_field() {
   local expect
   run_orca_worktree_create create-print-startup startup /tmp/orca-wt
@@ -1484,6 +1506,32 @@ test_worktree_create_prints_the_startup_terminal_as_the_third_field() {
   expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
   [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print id, path, and the startup handle, got '$CREATE_OUT'"
   pass "fm_backend_orca_worktree_create: prints the startup terminal handle after the id and path"
+}
+
+test_worktree_create_issues_no_rename_without_a_terminal() {
+  local expect
+  run_orca_worktree_create create-no-terminal none /tmp/orca-wt
+  expect=$'wt-create-no-terminal::/orca/wt-create-no-terminal\t/tmp/orca-wt'
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with no terminal"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print only id and path with no terminal, got '$CREATE_OUT'"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "there is no terminal to title, so no rename should be issued"
+  pass "fm_backend_orca_worktree_create: issues no rename when Orca returns no terminal"
+}
+
+test_spawn_adopts_startup_terminal_without_creating_another() {
+  local id=orcastartz1
+  run_orca_spawn startup-adopt "$id" startup
+  expect_code 0 "$SPAWN_RC" "spawn should succeed when Orca reports a startup terminal"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-startup" "$SPAWN_STATE/$id.meta" "meta should record the startup terminal"
+  [ "$(orca_log_count terminal create)" = 0 ] \
+    || fail "spawn must not create a second terminal when Orca reports a startup terminal"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "spawn should title the adopted startup terminal exactly once"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the adopted startup terminal should be titled with the task name"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--text'$'\x1f''export GOTMPDIR=/tmp/fm-'"$id"'/gotmp' \
+    "the launch should reach the harness through the adopted terminal"
+  pass "fm-spawn.sh --backend orca: adopts the startup terminal and creates no second terminal"
 }
 
 test_json_get_adopts_startup_terminal_handle() {
@@ -1536,9 +1584,13 @@ test_json_get_terminal_handle_field_ignores_startup_terminal() {
   pass "fm_backend_orca_json_get: terminal-handle (terminal create results) ignores result.startupTerminal"
 }
 
+test_spawn_adopts_startup_terminal_without_creating_another
 test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
+test_spawn_creates_one_titled_terminal_when_orca_reports_none
 test_spawn_creates_a_terminal_for_an_unusable_startup_terminal
+test_worktree_create_titles_the_adopted_startup_terminal
 test_worktree_create_prints_the_startup_terminal_as_the_third_field
+test_worktree_create_issues_no_rename_without_a_terminal
 test_json_get_adopts_startup_terminal_handle
 test_json_get_ignores_startup_terminal_that_was_not_spawned
 test_json_get_adopts_startup_terminal_without_spawned_flag
