@@ -53,7 +53,22 @@
 # required source or producer read. Both are
 # refused while the away-posture record exists, and neither
 # applies on GitLab, where a merge already requires the head pipeline to have
-# succeeded. After gh returns success, GitHub's live state is read back and
+# succeeded. A third attended waiver, --local-ci-result <path>, takes a local CI
+# runner's result file instead of a hosted check: the file records the run's
+# full head commit plus one job name and numeric exit code per job, and the flag
+# treats a check the forge reports as not green, or a required check that has
+# not reported, as waived only when the file records a passing job with exactly
+# that name. It waives nothing unless the file's head equals the live pull
+# request head read at merge time, and a mismatch refuses the merge. Any job the
+# file records with a nonzero exit refuses the merge before the forge is read,
+# and an unreadable, malformed, or wrongly shaped file refuses before any state
+# is recorded. It writes no commit status, check run, comment, or other artifact
+# to the forge, so no check there claims a proof this machine produced: its only
+# forge write is the merge itself. It is refused while the away-posture record
+# exists like the other two waivers, does not apply on GitLab, and grants no
+# merge authority by itself - a merge on local evidence still needs the captain's
+# explicit word for that pull request.
+# After gh returns success, GitHub's live state is read back and
 # accepted only when the pull request is merged or in the merge queue. gh's
 # GraphQL API supplies that queue-aware read; when that read fails, gh-axi's
 # own view still proves a landed merge, and every outcome it cannot prove
@@ -135,7 +150,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--local-ci-result <path>] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -196,6 +211,7 @@ shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
+LOCAL_CI_RESULT=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -226,6 +242,16 @@ while [ "$#" -gt 0 ]; do
       echo "error: --allow-missing requires a separate check name argument" >&2
       exit 2
       ;;
+    --local-ci-result)
+      [ -n "${2:-}" ] || { echo "error: --local-ci-result requires a file path" >&2; exit 2; }
+      [ -z "$LOCAL_CI_RESULT" ] || { echo "error: --local-ci-result may be specified only once" >&2; exit 2; }
+      LOCAL_CI_RESULT=$2
+      shift 2
+      ;;
+    --local-ci-result=*)
+      echo "error: --local-ci-result requires a separate file path argument" >&2
+      exit 2
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
@@ -236,6 +262,10 @@ if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
 fi
 if [ "${#ALLOW_MISSING[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-missing does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
+  exit 2
+fi
+if [ -n "$LOCAL_CI_RESULT" ] && [ "$PROVIDER" = gitlab ]; then
+  echo "error: --local-ci-result does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
   exit 2
 fi
 
@@ -438,6 +468,96 @@ if [ "$PROVIDER" = github ]; then
     echo "error: merging a GitHub pull request requires $GITHUB_MISSING on PATH" >&2
     exit 1
   fi
+fi
+
+# The armed local CI result file: its proven head and the newline-delimited set
+# of job names it records as passing. Empty means no local evidence was
+# requested, so nothing below can waive anything.
+FM_PR_NEWLINE=$'\n'
+LOCAL_CI_EVIDENCE_HEAD=
+LOCAL_CI_EVIDENCE_JOBS=
+LOCAL_CI_EVIDENCE_ACTIVE=false
+LOCAL_CI_EVIDENCE_WAIVED=0
+
+# Load, validate, and read an attended --local-ci-result file. Exits 2 when the
+# file is not usable evidence at all (absent, unreadable, malformed, or the
+# wrong shape) and 1 when the file is usable but records a failed job. Both
+# refuse before any task state is recorded or any forge call is made, because a
+# proof this machine cannot read is not a proof a merge may rest on.
+local_ci_evidence_load() {  # <path>
+  local file=$1 fields kind first second head='' passing='' failed=''
+  if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
+    printf 'error: --local-ci-result %s is not a readable result file\n' "$file" >&2
+    return 2
+  fi
+  if ! fields=$(jq -r '
+      def name_ok:
+        if type == "string"
+        then (length > 0) and ((test("[\\t\\n\\r]") | not))
+        else false end;
+      def code_ok:
+        if type == "number" then (. == (. | floor)) else false end;
+      if type != "object" then error("result file is not an object") else . end
+      | if .version != 1 then error("unsupported result file version") else . end
+      | if (.head_sha | type) != "string" then error("no head commit") else . end
+      | if (.head_sha | test("^[0-9a-f]{40}$") | not)
+        then error("head commit is not a full 40-character lowercase commit") else . end
+      | if (.jobs | type) != "array" then error("jobs is not an array") else . end
+      | if (.jobs | length) == 0 then error("jobs is empty") else . end
+      | [ .jobs[]
+          | if type != "object" then error("job record is not an object")
+            elif (.name | name_ok | not) then error("job name is not usable evidence")
+            elif (.exit_code | code_ok | not) then error("job exit code is not an integer")
+            else . end ] as $jobs
+      | "head\t" + .head_sha,
+        ( $jobs[] | "job\t" + .name + "\t" + (.exit_code | tostring) )
+    ' "$file" 2>/dev/null); then
+    printf 'error: --local-ci-result %s is not a usable local CI result file\n' "$file" >&2
+    return 2
+  fi
+  while IFS=$'\t' read -r kind first second; do
+    case "$kind" in
+      head) head=$first ;;
+      job)
+        if [ "$second" = 0 ]; then
+          passing="${passing:+$passing$FM_PR_NEWLINE}$first"
+        else
+          failed="${failed:+$failed, }$first"
+        fi
+        ;;
+    esac
+  done <<FIELDS
+$fields
+FIELDS
+  if [ -z "$head" ] || [ -z "$passing$failed" ]; then
+    printf 'error: --local-ci-result %s is not a usable local CI result file\n' "$file" >&2
+    return 2
+  fi
+  if [ -n "$failed" ]; then
+    printf 'error: refusing to merge %s: the local CI result file records failed jobs: %s\n' \
+      "$URL" "$failed" >&2
+    return 1
+  fi
+  LOCAL_CI_EVIDENCE_HEAD=$head
+  LOCAL_CI_EVIDENCE_JOBS=$passing
+}
+
+# Whether the armed local CI result file records a passing job with exactly this
+# check name, which is the only way local evidence waives a check. The name is
+# matched between newline sentinels, so one name can never match as a prefix of
+# another; a name carrying a newline is refused when the file is loaded.
+local_ci_evidence_covers() {  # <check-name>
+  [ "$LOCAL_CI_EVIDENCE_ACTIVE" = true ] || return 1
+  case "$FM_PR_NEWLINE$LOCAL_CI_EVIDENCE_JOBS$FM_PR_NEWLINE" in
+    *"$FM_PR_NEWLINE$1$FM_PR_NEWLINE"*) return 0 ;;
+  esac
+  return 1
+}
+
+if [ -n "$LOCAL_CI_RESULT" ]; then
+  local_ci_status=0
+  local_ci_evidence_load "$LOCAL_CI_RESULT" || local_ci_status=$?
+  [ "$local_ci_status" -eq 0 ] || exit "$local_ci_status"
 fi
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
@@ -722,6 +842,7 @@ github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals='' mergeable_refusal=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  local unproven=''
 
   if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
@@ -770,6 +891,20 @@ FIELDS
     return 1
   fi
 
+  # Local evidence binds to one commit. It becomes active only when the file's
+  # proven head is this exact live head; a proof for any other commit refuses
+  # the merge rather than silently degrading to the hosted checks, because a
+  # caller who passed the flag asked for a locally proven merge.
+  LOCAL_CI_EVIDENCE_ACTIVE=false
+  if [ -n "$LOCAL_CI_EVIDENCE_HEAD" ]; then
+    if [ "$LOCAL_CI_EVIDENCE_HEAD" = "$live_head" ]; then
+      LOCAL_CI_EVIDENCE_ACTIVE=true
+    else
+      refusals="$refusals  - the local CI result file proves head $LOCAL_CI_EVIDENCE_HEAD, not the current head $live_head
+"
+    fi
+  fi
+
   case "$state" in
     [oO][pP][eE][nN]) ;;
     *)
@@ -797,9 +932,16 @@ FIELDS
       done
     fi
     [ "$covered" -eq 1 ] || {
-      refusals="$refusals  - check '$name' is not green
+      if local_ci_evidence_covers "$name"; then
+        LOCAL_CI_EVIDENCE_WAIVED=$((LOCAL_CI_EVIDENCE_WAIVED + 1))
+      else
+        refusals="$refusals  - check '$name' is not green
 "
-      uncovered="${uncovered:+$uncovered, }$name"
+        uncovered="${uncovered:+$uncovered, }$name"
+        if [ "$LOCAL_CI_EVIDENCE_ACTIVE" = true ]; then
+          unproven="${unproven:+$unproven, }$name"
+        fi
+      fi
     }
   done <<EOF
 $red
@@ -834,9 +976,16 @@ EOF
     while IFS= read -r name; do
       [ -n "$name" ] || continue
       [ "${#ALLOW_MISSING[@]}" -gt 0 ] && [ "${ALLOW_MISSING[0]}" = "$name" ] && continue
+      if local_ci_evidence_covers "$name"; then
+        LOCAL_CI_EVIDENCE_WAIVED=$((LOCAL_CI_EVIDENCE_WAIVED + 1))
+        continue
+      fi
       refusals="$refusals  - required check '$name' has not reported at head $live_head
 "
       unreported="${unreported:+$unreported, }$name"
+      if [ "$LOCAL_CI_EVIDENCE_ACTIVE" = true ]; then
+        unproven="${unproven:+$unproven, }$name"
+      fi
     done <<EOF
 $missing
 EOF
@@ -854,10 +1003,15 @@ EOF
     printf '%s' "$refusals" >&2
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
     [ -z "$unreported" ] || printf 'error: these required checks have not reported: %s\n' "$unreported" >&2
+    [ -z "$unproven" ] || printf 'error: the local CI result file does not record a passing job for: %s\n' "$unproven" >&2
     return 1
   fi
   printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s\n' \
     "$URL" "$live_head" >&2
+  if [ "$LOCAL_CI_EVIDENCE_WAIVED" -gt 0 ]; then
+    printf 'verified: the local CI result file proves head %s and waived %s check names the forge did not prove\n' \
+      "$live_head" "$LOCAL_CI_EVIDENCE_WAIVED" >&2
+  fi
   FM_PR_MERGE_HEAD=$live_head
   FM_PR_GITHUB_BASE=$base
 }
@@ -1139,6 +1293,10 @@ require_current_away_authority() {
   fi
   if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then
     echo "error: --allow-missing is attended-only; while the away-posture record exists every required check must report" >&2
+    return 2
+  fi
+  if [ "$FM_PR_AWAY_POSTURE" = true ] && [ -n "$LOCAL_CI_RESULT" ]; then
+    echo "error: --local-ci-result is attended-only; while the away-posture record exists only checks the forge itself reports green may be merged" >&2
     return 2
   fi
 }
