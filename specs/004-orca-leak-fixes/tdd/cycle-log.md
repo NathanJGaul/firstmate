@@ -35,3 +35,10 @@ Method notes (strict redo, at the captain's direction):
 - red against the cycle 1 adapter: `not ok - terminal-handle parses a terminal create result and must not read startupTerminal, got 'term-startup'` (the shared terminal object leaked into the `terminal create` parser)
 - green: the startup terminal gets its own variable used only by `worktree-terminal-handle`, tried before `result.terminal` for now. U1, U6, U7 and the regression subset pass.
 - refactor: none.
+
+## Cycle 3: U3 a startup terminal Orca did not spawn is ignored
+
+- test (new): `test_json_get_ignores_startup_terminal_that_was_not_spawned` (U3)
+- red against the cycle 2 adapter: `not ok - worktree-terminal-handle should find no terminal when spawned is false, got 'term-startup'`
+- green: the startup terminal is read only when `spawned === true` (again naive: the next cycle tests the absent flag). U1 and U3 and the regression subset pass.
+- refactor: none.
