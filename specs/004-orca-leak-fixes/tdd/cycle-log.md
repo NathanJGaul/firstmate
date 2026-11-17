@@ -105,3 +105,14 @@ Method notes (strict redo, at the captain's direction):
 - red against the cycle 9 adapter, which titled only startup-shaped terminals: `not ok - spawn should title an adopted result.terminal terminal exactly once`
 - green: the shape condition is dropped, so whichever terminal worktree creation hands back is titled with the task name (FR-003, plan decision D4). A11, A2, and the regression subset pass.
 - refactor: none.
+
+## Cycle 11: A8, U13, A7, A9 the release asks Orca for safe branch deletion
+
+- tests: `test_ship_teardown_completes_when_orca_keeps_the_branch` (A8, the outer test, new), `test_remove_worktree_asks_orca_to_delete_the_branch_safely` (U13, new), and the ten existing `worktree rm` assertions, changed from `--force --json` to `--force --delete-branch --json` (this includes A7, `test_ship_teardown_removes_orca_worktree_when_id_path_matches`, and A9, `test_spawn_removes_orca_worktree_when_terminal_create_fails`).
+  The assertion change is the behavior change itself and was made before the implementation: the old assertions encoded the old argument list. No assertion was weakened, skipped, or removed.
+- red against the cycle 10 adapter (all twelve exit 1), for example:
+  - A8 `not ok - teardown should ask Orca to delete the branch safely (missing: ...--force--delete-branch--json)`
+  - U13 `not ok - remove_worktree should make exactly one Orca call: worktree rm --force --delete-branch ...`
+  - A7 `not ok - teardown did not remove the matched Orca worktree (missing: ...)`; A9 `not ok - Orca spawn should remove the worktree when terminal creation fails (missing: ...)`
+- green: `fm_backend_orca_remove_worktree` passes `--force --delete-branch --json`, with a header comment on why that is safe. All twelve exit 0.
+- refactor: none.

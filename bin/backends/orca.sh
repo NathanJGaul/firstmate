@@ -193,11 +193,17 @@ fm_backend_orca_send_literal() {  # <terminal-id> <text>
   fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "$text" --json
 }
 
+# fm_backend_orca_remove_worktree: release one Orca worktree. --force is the
+# existing dirty-worktree removal; Orca documents that it never forces branch
+# deletion. --delete-branch asks Orca to also delete the branch it named for
+# the worktree, and Orca keeps any branch whose changes it cannot prove
+# merged, so an unlanded branch is never lost. The adapter never deletes a
+# branch itself and never passes a forced branch option.
 fm_backend_orca_remove_worktree() {  # <worktree-id>
   local worktree_id=${1:-}
   [ -n "$worktree_id" ] || { echo "error: missing Orca worktree id; cannot remove worktree" >&2; return 1; }
   fm_backend_orca_tool_check || return 1
-  fm_backend_orca_run_json orca worktree rm --worktree "id:$worktree_id" --force --json
+  fm_backend_orca_run_json orca worktree rm --worktree "id:$worktree_id" --force --delete-branch --json
 }
 
 fm_backend_orca_worktree_path() {
