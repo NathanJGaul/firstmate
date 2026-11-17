@@ -119,3 +119,32 @@ exit=1
 - green: new "Operating posture" section in `docs/orca-backend.md` before "Regression entry points"; `claim-audit.sh A1 A2 A3 A4 A5 A6 A7 U16 U17` -> `claim-audit: 39 checks, 0 failed`; `bin/fm-doc-audience-check.sh` -> `ok surfaces=221 local_links=758`
 - refactor: none needed
 - commit: `docs(orca): correct the Orca backend document`
+
+## Baseline (continued): fm-control suite on the base commit
+
+- suite: `bin/fm-test-run.sh tests/fm-control.test.sh` on `af20b2c9` -> `FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0`
+- recorded: after the four-suite baseline above, because the file takes about three minutes alone
+
+## Cycle 4: U18 U19 (A8) and U22 (A10) agent-control reason and the recovery skill line
+
+- test: `claim-audit.sh A8 A9 A10` (written in the baseline commit; `U20` and `U21` are retention checks that pass on the untouched file)
+- red: `claim-audit.sh A8 A9 A10` -> `claim-audit: 7 checks, 4 failed` (`U18`, `U19` x2, `U22`); `U20` x2 and `U21` ok
+- green: one sentence in `docs/agent-control.md` replaced (the adapter delivers only Enter and Ctrl+C today, with a pointer to `orca-backend.md`), one line added to `.agents/skills/stuck-crewmate-recovery/SKILL.md` after the reclaim sentence; `claim-audit.sh A8 A9 A10` -> `claim-audit: 7 checks, 0 failed`; `bin/fm-doc-audience-check.sh` -> `ok surfaces=221 local_links=760`
+- refactor: none needed; the capability matrix row and the exit and relaunch refusal paragraph are untouched, which `U20` and `U21` verify
+- commit: `docs(orca): state what refuses on Orca in agent control and the recovery skill`
+
+## Cycle 5: U24 U25 U26 U27 U28 (A11, A12) Linux headless 1.4.261 verification entry
+
+- test: `claim-audit.sh A11 A12` (written in the baseline commit)
+- red: `claim-audit.sh A11 A12` -> `claim-audit: 12 checks, 10 failed` (`U24` label, `U25` x3, `U26` x4, `U27`, `U28` no-live-lane); `U24` response-shape and `U28` suite name ok
+- green: the Orca section of `docs/verification/runtime-backends.md` split into a macOS 1.4.116 subsection (existing evidence retained, labeled) and a new Linux headless 1.4.261 subsection; first re-run -> `12 checks, 1 failed` (`U27`: the Escape bullet did not say "not exercised"), bullet reworded to "Escape and Ctrl+U passthrough is not exercised live", re-run `claim-audit.sh A8 A9 A10 A11 A12` -> `claim-audit: 19 checks, 0 failed`
+- refactor: none needed
+- commit: `docs(orca): record Linux headless 1.4.261 evidence beside the macOS entry`
+
+## Cycle 6: U29 U30 U31 U32 (A13, A14) trust-check comment
+
+- test: `claim-audit.sh A13 A14` (written in the baseline commit, `U29` and `U31` corrected before the first edit)
+- red: `claim-audit.sh A13 A14` -> `claim-audit: 8 checks, 5 failed` (`U29`, `U30`, `S9` x3); `U31` and `U32` ok
+- green: the Orca sentences of the structural-test comment in `bin/fm-claude-trust.sh` replaced; `claim-audit.sh A13 A14` -> `claim-audit: 8 checks, 0 failed`; `bash -n bin/fm-claude-trust.sh` ok; `git diff` shows 10 added and 11 removed lines, all comments
+- refactor: none needed
+- commit: `docs(orca): correct the Orca worktree-shape comment in the trust script`
