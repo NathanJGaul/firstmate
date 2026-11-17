@@ -249,7 +249,32 @@ RUBY
   pass "CI matrices cover every executable serial lane and canonical lint root exactly once"
 }
 
+# A floating Ubuntu label moves to a new operating system without any change to
+# this repository, and that userland (Ubuntu 26.04 ships Rust uutils coreutils)
+# broke the portable lanes while every pinned job stayed green. Every Linux job
+# therefore names one pinned image. The guard reads the parsed `runs-on` values,
+# fails naming each job that floats, and refuses to pass vacuously when the
+# workflow carries no Linux job at all.
+test_linux_jobs_pin_a_runner_image() {
+  local reported
+  reported=$(ruby -ryaml -e '
+jobs = YAML.load_file(ARGV[0]).fetch("jobs")
+linux = jobs.select { |_, job| job["runs-on"].to_s.start_with?("ubuntu") }
+if linux.empty?
+  puts "no Linux job found, so the pin guard would pass vacuously"
+  exit
+end
+linux.each do |name, job|
+  label = job["runs-on"].to_s
+  puts "#{name}: #{label}" unless label.match?(/\Aubuntu-[0-9]{2}\.[0-9]{2}\z/)
+end
+' "$CI_WORKFLOW") || fail "could not read job runner labels from ci.yml"
+  [ -z "$reported" ] || fail "these CI Linux jobs do not pin a runner image:"$'\n'"$reported"
+  pass "every ci.yml Linux job pins its runner image"
+}
+
 test_ci_matrices_match_executable_partitions
+test_linux_jobs_pin_a_runner_image
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled
