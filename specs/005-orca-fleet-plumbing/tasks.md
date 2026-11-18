@@ -14,7 +14,7 @@ Tests extend `tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh
 
 ## Phase 1: Setup
 
-- [ ] T001 Run the baseline `bin/fm-test-run.sh tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh`, `tests/fm-watch-triage.test.sh`, and `tests/fm-daemon.test.sh`, and record that each is green before any edit (recorded in `tdd/cycle-log.md`).
+- [X] T001 Run the baseline `bin/fm-test-run.sh tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh`, `tests/fm-watch-triage.test.sh`, and `tests/fm-daemon.test.sh`, and record that each is green before any edit (recorded in `tdd/cycle-log.md`).
 
 ## Phase 2: User Story 1 - Bootstrap follows recorded backends (Priority: P1)
 
@@ -24,14 +24,14 @@ Tests extend `tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh
 
 ### Tests for User Story 1 (write first, see them fail)
 
-- [ ] T002 [P] [A1,A2,U1] [US1] Add the mixed-fleet cases to `tests/fm-bootstrap.test.sh`: an Orca task in a tmux home reports `orca` missing and is silent once `orca` is present, and the union function prints the default's tools first.
-- [ ] T003 [P] [A3,A5] [US1] Add the legacy-record case: an orca home with a meta carrying no backend field reports `tmux` and `treehouse`, and a home with no records is unchanged.
-- [ ] T004 [P] [A4,A6,A7] [US1] Add the dedupe, unknown-backend, and treehouse-lease cases.
+- [X] T002 [P] [A1,A2,U1] [US1] Add the mixed-fleet cases to `tests/fm-bootstrap.test.sh`: an Orca task in a tmux home reports `orca` missing and is silent once `orca` is present, and the union function prints the default's tools first.
+- [X] T003 [P] [A3,A5] [US1] Add the legacy-record case: an orca home with a meta carrying no backend field reports `tmux` and `treehouse`, and a home with no records is unchanged.
+- [X] T004 [P] [A4,A6,A7] [US1] Add the dedupe, unknown-backend, and treehouse-lease cases.
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] Add `fm_backend_fleet_required_tools` to `bin/fm-backend.sh`.
-- [ ] T006 [US1] Make `bin/fm-bootstrap.sh` check that union and update its header and `docs/configuration.md` "Backend requirements".
+- [X] T005 [US1] Add `fm_backend_fleet_required_tools` to `bin/fm-backend.sh`.
+- [X] T006 [US1] Make `bin/fm-bootstrap.sh` check that union and update its header and `docs/configuration.md` "Backend requirements".
 
 ## Phase 3: User Story 2 - An allowlisted Orca launch keeps Orca's variables (Priority: P1)
 
