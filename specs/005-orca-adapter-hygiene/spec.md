@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-18
 
-**Status**: Draft
+**Status**: Implemented
 
 **Input**: Reject folder-kind repositories on Orca early with a message naming the per-task `--backend` escape hatch (slice 5, P1-C, CC-4 option a), and resolve the `orca` CLI from `PATH`, then `$ORCA_CLI_BIN_DIR`, then `~/.orca/cli/bin`, with an actionable refusal and a corrected Linux install hint (slice 7, P1-E).
 These are slices from section 5.2 of the Orca evaluation plan.

@@ -799,7 +799,15 @@ secondmate_handoff_detect() {
 
 install_cmd() {
   case "$1" in
-    tmux|node|git|gh|curl|jq|orca|zellij) echo "brew install $1  # or the platform's package manager" ;;
+    tmux|node|git|gh|curl|jq|zellij) echo "brew install $1  # or the platform's package manager" ;;
+    # Orca is an app that writes its own CLI shim; only macOS has a Homebrew package for it.
+    orca)
+      if [ "$(uname)" = Darwin ]; then
+        echo "brew install orca  # or the platform's package manager"
+      else
+        echo "install Orca and start it once, then add ~/.orca/cli/bin to PATH or export ORCA_CLI_BIN_DIR to the directory holding its orca shim"
+      fi
+      ;;
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;

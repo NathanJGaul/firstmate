@@ -1117,6 +1117,42 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/005-orca-adapter-hygiene/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-adapter-hygiene/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     },

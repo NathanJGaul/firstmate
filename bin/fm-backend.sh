@@ -325,6 +325,11 @@ fm_backend_required_tool_available() {  # <backend> <tool>
       fm_backend_source cmux >/dev/null 2>&1 || return 1
       fm_backend_cmux_bin >/dev/null 2>&1
       ;;
+    orca:orca)
+      # The same PATH, ORCA_CLI_BIN_DIR, ~/.orca/cli/bin resolution the adapter uses.
+      fm_backend_source orca >/dev/null 2>&1 || return 1
+      fm_backend_orca_tool_check >/dev/null 2>&1
+      ;;
     *) command -v "$tool" >/dev/null 2>&1 ;;
   esac
 }
