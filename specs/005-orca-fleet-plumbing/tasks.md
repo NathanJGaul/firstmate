@@ -55,14 +55,14 @@ Tests extend `tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh
 
 ### Tests for User Story 3 (write first, see them fail)
 
-- [ ] T009 [P] [U2,U3,U4] [US3] Add `window_wake_name` cases to `tests/fm-watch-triage.test.sh`: Herdr handle to label, no record keeps handle, tmux handle unchanged, Orca terminal handle to label.
-- [ ] T010 [A12,A13] [US3] Add the watcher cases: an Orca task's stale wake reads `fm-<id>` with the terminal handle as the queue key, and a detail-suffixed reason keeps its suffix.
-- [ ] T011 [P] [A14] [US3] Add the daemon case to `tests/fm-daemon.test.sh`: a label-form stale reason resolves the same task and markers as the handle form.
+- [X] T009 [P] [U2,U3,U4] [US3] Add `window_wake_name` cases to `tests/fm-watch-triage.test.sh`: Herdr handle to label, no record keeps handle, tmux handle unchanged, Orca terminal handle to label.
+- [X] T010 [A12,A13] [US3] Add the watcher cases: an Orca task's stale wake reads `fm-<id>` with the terminal handle as the queue key, and a detail-suffixed reason keeps its suffix.
+- [X] T011 [P] [A14] [US3] Add the daemon case to `tests/fm-daemon.test.sh`: a label-form stale reason resolves the same task and markers as the handle form.
 
 ### Implementation for User Story 3
 
-- [ ] T012 [US3] Split `window_to_task` and add `window_wake_name` in `bin/fm-classify-lib.sh`.
-- [ ] T013 [US3] Render every stale reason in `bin/fm-watch.sh` and `bin/fm-push-transition-lib.sh` through it, keeping the handle as the queue key, and update the header reason list.
+- [X] T012 [US3] Split `window_to_task` and add `window_wake_name` in `bin/fm-classify-lib.sh`.
+- [X] T013 [US3] Render every stale reason in `bin/fm-watch.sh` and `bin/fm-push-transition-lib.sh` through it, keeping the handle as the queue key, and update the header reason list.
 
 ## Phase 5: Polish
 

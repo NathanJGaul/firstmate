@@ -2285,6 +2285,115 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+# --- wake labels for opaque backend handles (specs/005-orca-fleet-plumbing) ---
+# A wake's REASON names the task as fm-<id> when the backend's handle does not
+# name it itself, while the queue's routing KEY stays the recorded handle.
+
+test_window_wake_name_labels_opaque_handles() {
+  local dir state
+  dir=$(make_case wake-name-opaque); state="$dir/state"
+  fm_write_meta "$state/herd-task.meta" "window=default:w5X:p2" "backend=herdr" "kind=ship"
+  fm_write_meta "$state/orc-task.meta" "window=fm-orc-task" "terminal=term_341449f2-4dc2-4214-9870-403ac50fbf2d" "backend=orca" "kind=ship"
+  [ "$(window_wake_name "default:w5X:p2" "$state")" = "fm-herd-task" ] \
+    || fail "a Herdr handle should be named by its task, got: $(window_wake_name "default:w5X:p2" "$state")"
+  [ "$(window_wake_name "term_341449f2-4dc2-4214-9870-403ac50fbf2d" "$state")" = "fm-orc-task" ] \
+    || fail "an Orca terminal handle should be named by its task, got: $(window_wake_name "term_341449f2-4dc2-4214-9870-403ac50fbf2d" "$state")"
+  pass "window_wake_name names an opaque Herdr or Orca handle by its task"
+}
+
+test_window_wake_name_keeps_unresolved_handles() {
+  local dir state
+  dir=$(make_case wake-name-unresolved); state="$dir/state"
+  fm_write_meta "$state/herd-task.meta" "window=default:w5X:p2" "backend=herdr" "kind=ship"
+  [ "$(window_wake_name "term_no-such-task" "$state")" = "term_no-such-task" ] \
+    || fail "a handle no task record resolves should be returned unchanged"
+  [ "$(window_wake_name "default:w9Z:p9" "$state")" = "default:w9Z:p9" ] \
+    || fail "an unknown Herdr-shaped handle should be returned unchanged"
+  [ "$(window_wake_name "term_no-such-task" "$dir/no-state")" = "term_no-such-task" ] \
+    || fail "with no state directory the handle should be returned unchanged"
+  pass "window_wake_name keeps a handle that no task record resolves"
+}
+
+test_window_wake_name_keeps_readable_handles() {
+  local dir state
+  dir=$(make_case wake-name-readable); state="$dir/state"
+  fm_write_meta "$state/tmx-task.meta" "window=firstmate:fm-tmx-task" "kind=ship"
+  fm_write_meta "$state/bare-task.meta" "window=fm-bare-task" "kind=ship"
+  [ "$(window_wake_name "firstmate:fm-tmx-task" "$state")" = "firstmate:fm-tmx-task" ] \
+    || fail "a tmux window that already ends in fm-<id> should be returned unchanged"
+  [ "$(window_wake_name "fm-bare-task" "$state")" = "fm-bare-task" ] \
+    || fail "a handle that is already fm-<id> should be returned unchanged"
+  fm_write_meta "$state/other-task.meta" "window=firstmate:fm-other-window-name" "kind=ship"
+  [ "$(window_wake_name "firstmate:fm-other-window-name" "$state")" = "firstmate:fm-other-window-name" ] \
+    || fail "a tmux window whose fm- name differs from its task id should still be returned unchanged"
+  pass "window_wake_name leaves a handle that already names its task unchanged"
+}
+
+# make_orca_watch_case <name> <id> <terminal>: a case whose one task runs on Orca
+# (meta window=fm-<id>, terminal=<handle>, which is what the watcher keys it by)
+# with a fake `orca` whose terminal read returns $FM_FAKE_ORCA_TEXT. Echoes the dir.
+make_orca_watch_case() {
+  local dir
+  dir=$(make_case "$1")
+  printf 'window=fm-%s\nterminal=%s\nbackend=orca\nkind=ship\n' "$2" "$3" > "$dir/state/$2.meta"
+  cat > "$dir/fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-} ${2:-}" = "terminal read" ]; then
+  printf '{"ok":true,"result":{"terminal":{"tail":["%s"]}}}\n' "${FM_FAKE_ORCA_TEXT:-}"
+  exit 0
+fi
+printf '{"ok":false}\n'
+exit 1
+SH
+  chmod +x "$dir/fakebin/orca"
+  printf '%s\n' "$dir"
+}
+
+test_orca_stale_wake_names_the_task_and_routes_by_handle() {
+  local dir state fakebin out terminal pid pane_hash sig queued key
+  terminal=term_341449f2-4dc2-4214-9870-403ac50fbf2d
+  dir=$(make_orca_watch_case orca-stale-label orcdone "$terminal"); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  printf 'done: PR https://example.test/pr/3\n' > "$state/orcdone.status"
+  sig=$(seen_sig "$state/orcdone.status"); printf '%s' "$sig" > "$state/.seen-orcdone_status"
+  pane_hash=$(hash_text "finished, awaiting review")
+  key=$(printf '%s' "$terminal" | tr ':/.' '___')
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  FM_FAKE_ORCA_TEXT='finished, awaiting review' watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "watcher did not exit for a stale Orca terminal on a terminal status"; }
+  grep -Fx "stale: fm-orcdone" "$out" >/dev/null \
+    || fail "the stale wake for an Orca task should name it fm-orcdone, got: $(cat "$out")"
+  queued=$(awk -F '\t' -v k="$terminal" '$3 == "stale" && $4 == k && $5 == "stale: fm-orcdone" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$queued" = 1 ] || fail "the queued stale wake should keep the terminal handle as its key and carry the label as its reason: $(cat "$state/.wake-queue")"
+  pass "an Orca task's stale wake reads fm-<id> while the queue keeps the terminal handle as its routing key"
+}
+
+test_orca_wedge_wake_keeps_its_detail_after_the_label() {
+  local dir state fakebin out terminal pid pane_hash sig key
+  terminal=term_620f79dc-1e1c-447f-9b01-dc9edd1ebb07
+  dir=$(make_orca_watch_case orca-wedge-label orcquiet "$terminal"); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  printf 'working: still compiling\n' > "$state/orcquiet.status"
+  sig=$(seen_sig "$state/orcquiet.status"); printf '%s' "$sig" > "$state/.seen-orcquiet_status"
+  key=$(printf '%s' "$terminal" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle building output")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  FM_FAKE_ORCA_TEXT='idle building output' FM_FAKE_CREW_STATE='state: working · source: run-step · ci running' \
+    watch_bg "$state" "$fakebin" "$out" env FM_STALE_ESCALATE_SECS=240
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "watcher did not escalate an Orca wedge past the threshold"; }
+  grep -E '^stale: fm-orcquiet \(idle [0-9]+s, possible wedge, escalation 1' "$out" >/dev/null \
+    || fail "the wedge wake should read 'stale: fm-orcquiet (idle ..., possible wedge, ...)', got: $(cat "$out")"
+  awk -F '\t' -v k="$terminal" '$3 == "stale" && $4 == k && $5 ~ /^stale: fm-orcquiet \(idle / { n++ } END { exit !(n == 1) }' "$state/.wake-queue" \
+    || fail "the queued wedge wake should keep the terminal handle as its key: $(cat "$state/.wake-queue")"
+  pass "a detail-suffixed Orca stale wake keeps its detail after the task label and its handle as the key"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -6674,6 +6783,11 @@ test_routine_appends_after_a_classified_event_stay_absorbed
 test_unreadable_status_reports_once_per_file_state
 test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
+test_window_wake_name_labels_opaque_handles
+test_window_wake_name_keeps_unresolved_handles
+test_window_wake_name_keeps_readable_handles
+test_orca_stale_wake_names_the_task_and_routes_by_handle
+test_orca_wedge_wake_keeps_its_detail_after_the_label
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

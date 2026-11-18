@@ -30,16 +30,16 @@ Each runs through a real entry point: `bin/fm-bootstrap.sh`, `bin/fm-spawn.sh --
 | A9  | A floor name the terminal lacks stays unset in the harness | US2.2, FR-007 | example | DONE | `tests/fm-spawn-orca-worktree.test.sh::test_orca_allowlisted_launch_keeps_the_orca_floor` |
 | A10 | An `ORCA_` name outside the observed set, and an unrelated name, are removed | US2.3, FR-008 | example | DONE | `tests/fm-spawn-orca-worktree.test.sh::test_orca_allowlisted_launch_keeps_the_orca_floor` |
 | A11 | With no allowlist file the launch text names no floor variable | US2.4, FR-008 | example | DONE | `tests/fm-spawn-orca-worktree.test.sh::test_orca_launch_without_an_allowlist_is_unfiltered` |
-| A12 | The watcher's stale wake for an Orca task reads `stale: fm-<id>` and the queued key is the terminal handle | US3.1, US3.4, FR-010, FR-012 | example | TODO | `tests/fm-watch-triage.test.sh::test_orca_stale_wake_names_the_task_and_routes_by_handle` |
-| A13 | A detail-suffixed stale reason from the watcher keeps its suffix after the label | FR-013 | example | TODO | `tests/fm-watch-triage.test.sh::test_orca_wedge_wake_keeps_its_detail_after_the_label` |
-| A14 | The daemon classifies a label-form stale reason to the same task and markers as the handle form | US3.5, FR-014 | example | TODO | `tests/fm-daemon.test.sh::test_stale_label_form_resolves_the_same_task_and_markers` |
+| A12 | The watcher's stale wake for an Orca task reads `stale: fm-<id>` and the queued key is the terminal handle | US3.1, US3.4, FR-010, FR-012 | example | DONE | `tests/fm-watch-triage.test.sh::test_orca_stale_wake_names_the_task_and_routes_by_handle` |
+| A13 | A detail-suffixed stale reason from the watcher keeps its suffix after the label | FR-013 | example | DONE | `tests/fm-watch-triage.test.sh::test_orca_wedge_wake_keeps_its_detail_after_the_label` |
+| A14 | The daemon classifies a label-form stale reason to the same task and markers as the handle form | US3.5, FR-014 | example | DONE | `tests/fm-daemon.test.sh::test_stale_label_form_resolves_the_same_task_and_markers` |
 
 ## Inner loop: unit behaviors
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
 | U1  | `fm_backend_fleet_required_tools` prints the default's tools first, then each recorded backend's new tools, each once | FR-001, FR-004 | example | DONE | `tests/fm-bootstrap.test.sh::test_fleet_required_tools_orders_default_first` |
-| U2  | `window_wake_name` returns `fm-<id>` for a Herdr or Orca handle that a task record resolves | US3.1, US3.2, FR-010 | example | TODO | `tests/fm-watch-triage.test.sh::test_window_wake_name_labels_opaque_handles` |
-| U3  | `window_wake_name` returns the handle when no task record resolves it | US3.6, FR-011 | example | TODO | `tests/fm-watch-triage.test.sh::test_window_wake_name_keeps_unresolved_handles` |
-| U4  | `window_wake_name` returns a handle that already ends in `fm-<id>` unchanged | US3.3, FR-011 | example | TODO | `tests/fm-watch-triage.test.sh::test_window_wake_name_keeps_readable_handles` |
-| U5  | `window_to_task` is unchanged for matching, `terminal=` matching, and fallback | FR-014 | characterization | TODO | `tests/fm-watch-triage.test.sh::test_window_to_task_resolves_opaque_backend_target_through_metadata` |
+| U2  | `window_wake_name` returns `fm-<id>` for a Herdr or Orca handle that a task record resolves | US3.1, US3.2, FR-010 | example | DONE | `tests/fm-watch-triage.test.sh::test_window_wake_name_labels_opaque_handles` |
+| U3  | `window_wake_name` returns the handle when no task record resolves it | US3.6, FR-011 | example | DONE | `tests/fm-watch-triage.test.sh::test_window_wake_name_keeps_unresolved_handles` |
+| U4  | `window_wake_name` returns a handle that already ends in `fm-<id>` unchanged | US3.3, FR-011 | example | DONE | `tests/fm-watch-triage.test.sh::test_window_wake_name_keeps_readable_handles` |
+| U5  | `window_to_task` is unchanged for matching, `terminal=` matching, and fallback | FR-014 | characterization | DONE | `tests/fm-watch-triage.test.sh` (the existing `window_to_task` assertions in the classifier predicate test) |

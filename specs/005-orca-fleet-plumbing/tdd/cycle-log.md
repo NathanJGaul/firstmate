@@ -44,3 +44,18 @@ Method notes:
 - refactor: none.
 - docs: the `fm-spawn.sh` header contract and `docs/configuration.md` "Variables retained" name the Orca variables.
 
+## Cycle 3: US3 wakes name the task (A12-A14, U2-U5)
+
+- tests (new): `test_window_wake_name_labels_opaque_handles` (U2), `test_window_wake_name_keeps_unresolved_handles` (U3), `test_window_wake_name_keeps_readable_handles` (U4), `test_orca_stale_wake_names_the_task_and_routes_by_handle` (A12), `test_orca_wedge_wake_keeps_its_detail_after_the_label` (A13) in `tests/fm-watch-triage.test.sh`; `test_stale_label_form_resolves_the_same_task_and_markers` (A14) in `tests/fm-daemon.test.sh`. U5 is the existing `window_to_task` assertions, kept green through the refactor.
+- red against the unchanged scripts:
+  - U2, U3, U4 `window_wake_name: command not found` then `not ok - ...`
+  - A12 `not ok - the stale wake for an Orca task should name it fm-orcdone, got: stale: term_341449f2-4dc2-4214-9870-403ac50fbf2d`
+  - A13 `not ok - the wedge wake should read 'stale: fm-orcquiet (idle ..., possible wedge, ...)', got: stale: term_620f79dc-1e1c-447f-9b01-dc9edd1ebb07 (idle 501s, possible wedge, escalation 1)`
+  - A14 was green before the change: the daemon already resolves `fm-<id>` through `window_to_task`'s fallback and Orca's `window=fm-<id>`, so the guard pins that routing stays label-safe.
+  - A14's first draft compared the daemon's free-text decision detail, which echoes whichever window name it was given; it was corrected to compare the decision and the marker files before the first green run.
+- green: `bin/fm-classify-lib.sh` gains `window_wake_name` on top of a split `_window_meta_task_scan` (a refactor of `window_to_task` that sets a global and keeps its output and fallback byte-for-byte); every `stale:` reason in `bin/fm-watch.sh` and `bin/fm-push-transition-lib.sh` renders its window through it, and every queue key stays the handle.
+- regression finding: the full `tests/fm-watch-triage.test.sh` then failed one existing case, `the first-sight surface did not print a stale wake`, whose fixture names its tmux window `test:fm-chain-firstsight` for task `chain-first`. The first rule (handle must end in exactly `fm-<id>`) relabeled that tmux window, breaking the byte-identical tmux requirement. The rule became "the handle's last `:`-component starts with `fm-`", `spec.md` FR-010 and FR-011 and `plan.md` D4 were updated to match, and U4 gained a case for a tmux window whose `fm-` name differs from its task id.
+- final runs after the rule change: `tests/fm-watch-triage.test.sh` (1013 s), `tests/fm-daemon.test.sh` (62 s), `tests/fm-task-inbox.test.sh` (86 s) all pass; the earlier full runs of `fm-supervision-events`, `fm-wake-queue`, `fm-secondmate-safety`, `fm-branch-supervision`, `fm-bootstrap`, and `fm-spawn-orca-worktree` passed on the previous rule.
+- refactor: `window_to_task` split as above; no behavior change.
+- docs: the watcher header describes the reason naming.
+

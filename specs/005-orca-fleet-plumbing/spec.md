@@ -69,7 +69,7 @@ The operator reads a wake for a task on a backend whose terminal handle does not
 
 1. **Given** an Orca task whose terminal handle is `term_<uuid>`, **When** the watcher emits a stale wake, **Then** the reason reads `stale: fm-<id>`.
 2. **Given** a Herdr task whose handle is `<session>:<pane>`, **When** the watcher emits a stale wake, **Then** the reason reads `stale: fm-<id>`.
-3. **Given** a tmux task whose window name already ends in `fm-<id>`, **When** the watcher emits a stale wake, **Then** the reason is byte-identical to before.
+3. **Given** a tmux task whose window name already ends in a component starting `fm-`, **When** the watcher emits a stale wake, **Then** the reason is byte-identical to before.
 4. **Given** any backend, **When** a wake is queued, **Then** the queue record's routing key is still the recorded handle.
 5. **Given** a stale wake naming a task by label, **When** the away-mode daemon classifies it, **Then** it resolves the same task and keeps the same per-task markers as it does for the handle form.
 6. **Given** a window with no task record, **When** a wake is emitted, **Then** the reason keeps the handle, because there is no task to name.
@@ -95,8 +95,8 @@ The operator reads a wake for a task on a backend whose terminal handle does not
 - **FR-007**: The launch-env operational floor MUST retain every `ORCA_` variable an Orca 1.4.261 terminal exports (terminal identity, CLI routing, agent-hook, runtime-source, and per-agent configuration pointers), as names expanded in the destination terminal, with unset names left unset.
 - **FR-008**: The floor MUST NOT retain any other variable, and an absent allowlist MUST leave the launch unchanged.
 - **FR-009**: The header contract in `bin/fm-spawn.sh` and the "Variables retained" section of `docs/configuration.md` MUST list the Orca names.
-- **FR-010**: A stale wake reason MUST name the task as `fm-<id>` when its window handle does not already end in that label and a task record resolves the handle.
-- **FR-011**: A handle that already ends in `fm-<id>`, or that no task record resolves, MUST appear unchanged.
+- **FR-010**: A stale wake reason MUST name the task as `fm-<id>` when its window handle's last `:`-component does not already start with `fm-` and a task record resolves the handle.
+- **FR-011**: A handle whose last `:`-component already starts with `fm-`, or that no task record resolves, MUST appear unchanged.
 - **FR-012**: The wake queue's routing key MUST remain the recorded handle.
 - **FR-013**: Every `stale:` reason the watcher emits MUST use the same naming, whatever detail follows it.
 - **FR-014**: The away-mode daemon MUST classify a label-form stale reason to the same task and markers as the handle form.

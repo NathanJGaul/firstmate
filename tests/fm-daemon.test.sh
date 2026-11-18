@@ -800,6 +800,38 @@ test_stale_transient_self_records_marker() {
   pass "transient stale self-handles and records a persistence marker"
 }
 
+# A stale wake whose reason names the task as fm-<id> (an opaque backend handle
+# rendered by the watcher, specs/005-orca-fleet-plumbing) must classify to the same
+# task and keep the same per-task markers as the handle form, so the label is only
+# a rendering and never changes routing.
+test_stale_label_form_resolves_the_same_task_and_markers() {
+  local shape id handle metas status_line dir_h dir_l out_h out_l markers_h markers_l
+  while IFS='^' read -r shape id handle metas status_line; do
+    [ -n "$shape" ] || continue
+    dir_h=$(make_supercase "stale-label-$shape-handle"); dir_l=$(make_supercase "stale-label-$shape-label")
+    for dir in "$dir_h" "$dir_l"; do
+      # shellcheck disable=SC2086
+      fm_write_meta "$dir/state/$id.meta" $(printf '%s' "$metas" | tr '|' ' ') "kind=ship"
+      printf '%s\n' "$status_line" > "$dir/state/$id.status"
+    done
+    out_h=$(FM_STATE_OVERRIDE="$dir_h/state" classify_stale "$handle" "$dir_h/state")
+    out_l=$(FM_STATE_OVERRIDE="$dir_l/state" classify_stale "fm-$id" "$dir_l/state")
+    # The decision must match; the free text after it echoes whichever window name it was given.
+    [ "${out_h%%|*}" = "${out_l%%|*}" ] || fail "$shape: the label form decided differently from the handle form: '$out_l' vs '$out_h'"
+    LOG="$dir_h/daemon.log" FM_ESCALATE_BATCH_SECS=999 FM_STATE_OVERRIDE="$dir_h/state" handle_wake "stale: $handle" "$dir_h/state"
+    LOG="$dir_l/daemon.log" FM_ESCALATE_BATCH_SECS=999 FM_STATE_OVERRIDE="$dir_l/state" handle_wake "stale: fm-$id" "$dir_l/state"
+    markers_h=$(cd "$dir_h/state" && ls -A | grep '^\.subsuper-' | grep -v 'escalations' | sort)
+    markers_l=$(cd "$dir_l/state" && ls -A | grep '^\.subsuper-' | grep -v 'escalations' | sort)
+    [ "$markers_h" = "$markers_l" ] || fail "$shape: the label form kept different per-task markers: '$markers_l' vs '$markers_h'"
+  done <<'ROWS'
+orca-working^orc-w1^term_341449f2-4dc2-4214-9870-403ac50fbf2d^window=fm-orc-w1|terminal=term_341449f2-4dc2-4214-9870-403ac50fbf2d|backend=orca^working: building
+orca-done^orc-d1^term_620f79dc-1e1c-447f-9b01-dc9edd1ebb07^window=fm-orc-d1|terminal=term_620f79dc-1e1c-447f-9b01-dc9edd1ebb07|backend=orca^done: ready in branch fm/orc
+herdr-working^her-w1^default:w5X:p2^window=default:w5X:p2|backend=herdr^working: building
+herdr-done^her-d1^default:w5Y:p2^window=default:w5Y:p2|backend=herdr^done: ready in branch fm/her
+ROWS
+  pass "a label-form stale reason classifies to the same task and keeps the same markers as the handle form"
+}
+
 test_stale_diagnostic_wedge_survives_busy_housekeeping() {
   local case_name dir state fakebin key task win pane reason status_line action_log
   for case_name in working prior-terminal paused; do
@@ -3238,6 +3270,7 @@ test_classify_check_and_unknown_escalate
 test_unknown_wake_ack_suppresses_handled_identity
 test_unknown_wake_ack_failure_still_clears_delivered_digest
 test_stale_transient_self_records_marker
+test_stale_label_form_resolves_the_same_task_and_markers
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
 test_stale_terminal_escalates

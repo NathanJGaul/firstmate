@@ -61,10 +61,10 @@ The Orca names are therefore listed, taken from a live Orca 1.4.261 terminal.
 
 ### D4: The label is a rendering, never a key
 
-`window_wake_name` returns `fm-<id>` only when a task record resolves the handle and the handle does not already end in `fm-<id>`.
+`window_wake_name` returns `fm-<id>` only when a task record resolves the handle and the handle's last `:`-component does not already start with `fm-`.
 It is applied where the reason text is composed; `fm_wake_append stale "$w"` keeps the handle as the key, and `window_capture`, `window_key`, and every marker path keep using the handle.
 The daemon resolves a reason's window through `window_to_task`, whose existing fallback strips an `fm-` prefix, and Orca's `window=fm-<id>` field also matches directly, so label-form reasons resolve to the same task and the same per-task markers.
 
 ### D5: Structural opacity, not a backend list
 
-The test "the handle does not end in the task's label" covers Orca (`term_<uuid>`), Herdr (`default:w5X:p2`), Zellij, and cmux alike, and leaves tmux (`session:fm-<id>`) byte-identical, without a list that drifts when a backend is added.
+The test "the handle's last component does not start with `fm-`" covers Orca (`term_<uuid>`), Herdr (`default:w5X:p2`), Zellij, and cmux alike, and leaves tmux (`session:fm-<id>`) byte-identical, without a list that drifts when a backend is added.
