@@ -66,5 +66,5 @@ Tests extend `tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh
 
 ## Phase 5: Polish
 
-- [ ] T014 Run `bin/fm-lint.sh`, `bin/fm-doc-audience-check.sh`, `bin/fm-test-run.sh --check-coverage`, and the neighbouring suites named in `quickstart.md`.
-- [ ] T015 Classify the new feature records in `docs/documentation-audiences.json`.
+- [X] T014 Run `bin/fm-lint.sh`, `bin/fm-doc-audience-check.sh`, `bin/fm-test-run.sh --check-coverage`, and the neighbouring suites named in `quickstart.md`.
+- [X] T015 Classify the new feature records in `docs/documentation-audiences.json`.
