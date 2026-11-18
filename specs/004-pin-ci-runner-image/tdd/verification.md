@@ -61,7 +61,7 @@ The fixture commit is a one-field correction whose red run was observed on the u
 | `bin/fm-test-run.sh tests/fm-ci-workflow.test.sh` | exit 0, all nine cases |
 | `bin/fm-lint.sh` with ShellCheck 0.11.0 and actionlint 1.7.12 | clean |
 | full-mode ShellCheck on both changed tests (`CI=true bin/fm-lint.sh <paths>`) | clean |
-| `bin/fm-doc-audience-check.sh` | `ok surfaces=211 local_links=755` |
+| `bin/fm-doc-audience-check.sh` | `ok surfaces=220 local_links=764` after classifying the nine new spec files in `docs/documentation-audiences.json` |
 
 ## Ubuntu 24.04 container (the pinned image's userland)
 

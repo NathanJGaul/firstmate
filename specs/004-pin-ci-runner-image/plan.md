@@ -30,6 +30,7 @@ The fixture correction is driven by the existing red run of the Calm Pi test aga
   The macOS job and any non-Ubuntu label are ignored.
 - Change `docs/fm-test-portable-shards.md` line 8 to name `ubuntu-24.04`.
 - Leave `no-mistakes-required.yml` unchanged: its one job does not depend on the userland.
+- Classify the nine new spec files in `docs/documentation-audiences.json` the way the earlier features are, because `bin/fm-doc-audience-check.sh` refuses an unclassified tracked Markdown file.
 
 ### Fake Pi host (FR-005)
 
