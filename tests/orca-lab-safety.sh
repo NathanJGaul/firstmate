@@ -144,3 +144,95 @@ orca_lab_signal() {
   orca_lab_pid_owned "$pid" "$data" || { echo "orca lab: refusing to signal pid '${pid:-none}': not proven to belong to the lab" >&2; return 1; }
   kill "-$sig" "$pid"
 }
+
+# orca_lab_write_launcher <bin-dir> <data-dir> <node> <cli-entry>: write the
+# lab's `orca` command into <bin-dir>. Orca's own shim exports the operator's
+# data directory unconditionally, so the lab never uses it: this launcher runs
+# the same node and CLI entry on the lab data directory, after removing every
+# ORCA_* variable the caller carries (an inherited ORCA_ENVIRONMENT or
+# ORCA_PAIRING_CODE would send the command to another runtime) and NODE_OPTIONS.
+orca_lab_write_launcher() {
+  local bin=${1:-} data=${2:-} node=${3:-} entry=${4:-}
+  [ -n "$bin" ] && [ -n "$data" ] && [ -n "$node" ] && [ -n "$entry" ] || return 1
+  mkdir -p "$bin" || return 1
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'for v in $(env | sed -n "s/^\\(ORCA_[A-Za-z0-9_]*\\)=.*/\\1/p"); do unset "$v"; done\n'
+    printf 'unset NODE_OPTIONS NODE_REPL_EXTERNAL_MODULE ELECTRON_RUN_AS_NODE\n'
+    printf 'export ORCA_USER_DATA_PATH=%q\n' "$data"
+    printf 'exec %q %q "$@"\n' "$node" "$entry"
+  } > "$bin/orca" || return 1
+  chmod +x "$bin/orca"
+}
+
+# orca_lab_pid_running <pid>: live and not a zombie.
+orca_lab_pid_running() {
+  local pid=${1:-} state
+  kill -0 "$pid" 2>/dev/null || return 1
+  state=$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$pid/status" 2>/dev/null)
+  [ "$state" != Z ] && [ "$state" != X ]
+}
+
+# orca_lab_leftovers <lab-dir> <data-dir>: pids (one per line) of live
+# processes other than the caller whose environment sets ORCA_USER_DATA_PATH to
+# <data-dir> or whose command line names <lab-dir>. A process whose /proc
+# entries are unreadable is skipped, since it is not the same user's.
+orca_lab_leftovers() {
+  local lab=${1:-} data=${2:-} d pid
+  [ -n "$lab" ] && [ -n "$data" ] || return 1
+  for d in /proc/[0-9]*; do
+    pid=${d#/proc/}
+    [ "$pid" != "$$" ] && [ "$pid" != "${BASHPID:-$$}" ] || continue
+    orca_lab_pid_running "$pid" || continue
+    if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -Fxq -- "ORCA_USER_DATA_PATH=$data"; then
+      printf '%s\n' "$pid"
+    elif tr '\0' '\n' < "$d/cmdline" 2>/dev/null | grep -Fq -- "$lab"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+# orca_lab_wait_gone <pid> [seconds]: wait for <pid> to stop running.
+orca_lab_wait_gone() {
+  local pid=$1 n=$(( ${2:-20} * 5 ))
+  while [ "$n" -gt 0 ]; do
+    orca_lab_pid_running "$pid" || return 0
+    sleep 0.2
+    n=$((n - 1))
+  done
+  return 1
+}
+
+# orca_lab_stop <lab-dir> <data-dir> <child-pid> <launcher>: stop everything the
+# lab started, signalling only what is proven to be the lab's. In order: the
+# runtime child (after the own-runtime proof), the terminal host named by the
+# pid records under <data-dir>/daemon, then any remaining process the leftover
+# scan finds. A leftover that cannot be proven the lab's is reported and left
+# running, and the function fails. Returns 0 only when nothing is left.
+orca_lab_stop() {
+  local lab=${1:-} data=${2:-} child=${3:-} launcher=${4:-} rec pid left rc=0
+  if orca_lab_assert_own_runtime "$data" "$child" "$launcher" 2>/dev/null; then
+    orca_lab_signal TERM "$child" "$data" || true
+    orca_lab_wait_gone "$child" 20 || orca_lab_signal KILL "$child" "$data" || true
+  fi
+  for rec in "$data"/daemon/*.pid; do
+    [ -f "$rec" ] || continue
+    pid=$(jq -r '.pid // empty' "$rec" 2>/dev/null)
+    orca_lab_pid_owned "$pid" "$data" || continue
+    orca_lab_signal TERM "$pid" "$data" || true
+    orca_lab_wait_gone "$pid" 10 || orca_lab_signal KILL "$pid" "$data" || true
+  done
+  for pid in $(orca_lab_leftovers "$lab" "$data"); do
+    if orca_lab_pid_owned "$pid" "$data"; then
+      orca_lab_signal TERM "$pid" "$data" || true
+      orca_lab_wait_gone "$pid" 5 || orca_lab_signal KILL "$pid" "$data" || true
+    fi
+  done
+  sleep 0.2
+  left=$(orca_lab_leftovers "$lab" "$data")
+  if [ -n "$left" ]; then
+    echo "orca lab: processes still naming the lab after stop (left running, not provably the lab's): $(echo $left)" >&2
+    rc=1
+  fi
+  return $rc
+}

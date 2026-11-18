@@ -88,7 +88,7 @@ trap 'reap_sleepers; fm_test_cleanup' EXIT
 
 # start_sleeper <data-dir-in-env>: a process carrying a runtime's environment.
 start_sleeper() {
-  ORCA_USER_DATA_PATH=$1 sleep 300 &
+  ORCA_USER_DATA_PATH=$1 sleep 120 >/dev/null 2>&1 &
   SLEEPER_PID=$!
   SLEEPERS+=("$SLEEPER_PID")
 }
@@ -172,4 +172,63 @@ assert_contains "$self_out" "survived" "U9: a lab-environment shell must survive
 assert_not_contains "$self_out" "SIGNALLED-SELF" "U9: the self-signal must be refused"
 pass "U9: signals reach only processes proven to belong to the lab"
 
-echo "ok - guard (process cluster)"
+
+# --- A5 / U10: the launcher pins the data directory ------------------------------
+
+make_lab launch1 rt-l
+FAKE_NODE="$LAB/fake-node"
+cat > "$FAKE_NODE" <<'SH'
+#!/usr/bin/env bash
+env | grep '^ORCA_' | sort
+printf 'NODE_OPTIONS=%s\n' "${NODE_OPTIONS-unset}"
+printf 'ARGS:'; printf ' [%s]' "$@"; printf '\n'
+SH
+chmod +x "$FAKE_NODE"
+orca_lab_write_launcher "$LAB/bin" "$LAB_DATA" "$FAKE_NODE" "$LAB/cli entry/index.js" || fail "A5: writing the launcher must succeed"
+[ -x "$LAB/bin/orca" ] || fail "A5: the launcher must be executable"
+launched=$(ORCA_USER_DATA_PATH="$HOME/.orca" ORCA_ENVIRONMENT=operator-env ORCA_PAIRING_CODE=pair ORCA_TERMINAL_HANDLE=term_live \
+  ORCA_AGENT_HOOK_PORT=1 NODE_OPTIONS=--inspect "$LAB/bin/orca" worktree create --name 'fm-test x' 2>&1)
+orca_lines=$(printf '%s\n' "$launched" | grep '^ORCA_')
+assert_equals "ORCA_USER_DATA_PATH=$LAB_DATA" "$orca_lines" "U10: the only ORCA_ variable the CLI receives is the lab data directory"
+assert_contains "$launched" "NODE_OPTIONS=unset" "U10: NODE_OPTIONS is not passed on"
+assert_contains "$launched" "ARGS: [$LAB/cli entry/index.js] [worktree] [create] [--name] [fm-test x]" "A5: the CLI entry and the arguments pass through intact"
+pass "A5/U10: the launcher runs the CLI on the lab data directory with no other Orca variable"
+
+# --- A6 / U11: stop terminates the lab's processes and only those -------------------
+
+make_lab stop1 rt-stop
+mkdir -p "$LAB_DATA/daemon"
+start_sleeper "$LAB_DATA"; RT=$SLEEPER_PID
+write_record "$RT" rt-stop
+bash -c 'exec -a "daemon --socket $1" sleep 120' _ "$LAB_DATA/daemon/daemon-v1.sock" >/dev/null 2>&1 & DAEMON=$!; SLEEPERS+=("$DAEMON")
+printf '{"pid":%s}' "$DAEMON" > "$LAB_DATA/daemon/daemon-v1.pid"
+ORCA_USER_DATA_PATH=$LAB_DATA sleep 120 >/dev/null 2>&1 & PTYPROC=$!; SLEEPERS+=("$PTYPROC")
+start_sleeper "$TMP_ROOT/bystander-data"; BYSTANDER2=$SLEEPER_PID
+
+found=$(orca_lab_leftovers "$LAB" "$LAB_DATA")
+for p in "$RT" "$DAEMON" "$PTYPROC"; do
+  case " $(echo $found) " in *" $p "*) : ;; *) fail "U11: the leftover scan must list lab process $p (got: $found)" ;; esac
+done
+case " $(echo $found) " in *" $BYSTANDER2 "*) fail "U11: the leftover scan must not list a bystander" ;; esac
+
+orca_lab_stop "$LAB" "$LAB_DATA" "$RT" "$LAB/bin/orca" >/dev/null 2>&1 || fail "A6: stop must succeed when every lab process is provably the lab's"
+for p in "$RT" "$DAEMON" "$PTYPROC"; do
+  wait "$p" 2>/dev/null
+  alive "$p" && fail "A6: lab process $p must have stopped"
+done
+alive "$BYSTANDER2" || fail "A6: a bystander process must keep running"
+[ -z "$(orca_lab_leftovers "$LAB" "$LAB_DATA")" ] || fail "A6: the leftover scan must find nothing after stop"
+
+# A process that names the lab directory but is not provably the lab's own is
+# reported and left alone, and stop fails loudly rather than signalling it.
+make_lab stop2 rt-stop2
+start_sleeper "$LAB_DATA"; RT2=$SLEEPER_PID
+write_record "$RT2" rt-stop2
+bash -c 'exec -a "named $1" sleep 120' _ "$LAB/scratch/elsewhere" >/dev/null 2>&1 & NAMED=$!; SLEEPERS+=("$NAMED")
+if orca_lab_stop "$LAB" "$LAB_DATA" "$RT2" "$LAB/bin/orca" >/dev/null 2>&1; then
+  fail "A6: stop must fail when a lab-named process cannot be proven to be the lab's"
+fi
+alive "$NAMED" || fail "A6: an unproven lab-named process must not be signalled"
+pass "A6/U11: stop ends the lab's runtime, terminal host, and terminal processes, leaves bystanders, and refuses to signal what it cannot prove"
+
+echo "ok - guard (launcher and stop cluster)"

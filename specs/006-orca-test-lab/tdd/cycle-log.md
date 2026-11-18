@@ -34,3 +34,20 @@ Deviation: A4, U8, and U9 share one cycle (one proof, one signal helper); the re
 - deliberate mutants, all killed: dropping the `/proc` readability refusal (U8 other-environment case), dropping the runtime-id comparison (U8 id mismatch), dropping the record-pid comparison (U8 other pid).
   Dropping the self-pid exclusion survived because a plain shell never owns the lab directory; a case was added where a shell whose environment names the lab directory attempts a self-signal, and the mutant is then killed.
 - refactor: none needed
+
+## Cycle 3 - launcher, leftover scan, and stop (A5, A6, U10, U11)
+
+Deviation: A5, A6, U10, and U11 share one cycle; the red is the first failing assertion.
+
+- test: `tests/fm-backend-orca-lab-guard.test.sh` launcher and stop clusters
+  - U10 runs the generated launcher against a fake node under a caller environment carrying `ORCA_USER_DATA_PATH` (operator path), `ORCA_ENVIRONMENT`, `ORCA_PAIRING_CODE`, `ORCA_TERMINAL_HANDLE`, `ORCA_AGENT_HOOK_PORT`, and `NODE_OPTIONS`, and reads what the node received; it does not assert the launcher's source text.
+  - A6 stops fake runtime, terminal-host, and terminal processes, leaves a bystander, and checks a lab-named process that is not provably the lab's is left alone with stop failing.
+- red command: `bin/fm-test-run.sh tests/fm-backend-orca-lab-guard.test.sh`
+- red output: `orca_lab_write_launcher: command not found` then `not ok - A5: writing the launcher must succeed`
+- a first green attempt failed on a fixture defect, not an implementation one: `bash -c 'sleep N' _ --socket ...` is exec-optimized and drops the marker argument from the command line.
+  The fixture now uses `exec -a` to set a marker argv0 and no longer leaves orphaned children holding the runner's pipe.
+- green: `orca_lab_write_launcher`, `orca_lab_pid_running`, `orca_lab_leftovers`, `orca_lab_wait_gone`, `orca_lab_stop` in `tests/orca-lab-safety.sh`; all cases pass.
+- deliberate mutants killed: removing the `ORCA_*` unsetting loop (the runner's own shell carries live Orca variables, which then reach the CLI, so the case is not vacuous), removing the `NODE_OPTIONS` unset, and removing the leftover-kill ownership branch.
+  Skipping the terminal-host pid-record loop survives and is an equivalent mutant: the leftover pass terminates the same process, so the record loop only fixes the shutdown order.
+- unrelated observation: `sleep 120` processes owned by the operator's live Orca environment were running on the host during the runs; the leftover scan correctly ignored them.
+- refactor: none needed
