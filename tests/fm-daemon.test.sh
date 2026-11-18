@@ -810,7 +810,7 @@ test_stale_label_form_resolves_the_same_task_and_markers() {
     [ -n "$shape" ] || continue
     dir_h=$(make_supercase "stale-label-$shape-handle"); dir_l=$(make_supercase "stale-label-$shape-label")
     for dir in "$dir_h" "$dir_l"; do
-      # shellcheck disable=SC2086
+      # shellcheck disable=SC2046
       fm_write_meta "$dir/state/$id.meta" $(printf '%s' "$metas" | tr '|' ' ') "kind=ship"
       printf '%s\n' "$status_line" > "$dir/state/$id.status"
     done
@@ -820,8 +820,8 @@ test_stale_label_form_resolves_the_same_task_and_markers() {
     [ "${out_h%%|*}" = "${out_l%%|*}" ] || fail "$shape: the label form decided differently from the handle form: '$out_l' vs '$out_h'"
     LOG="$dir_h/daemon.log" FM_ESCALATE_BATCH_SECS=999 FM_STATE_OVERRIDE="$dir_h/state" handle_wake "stale: $handle" "$dir_h/state"
     LOG="$dir_l/daemon.log" FM_ESCALATE_BATCH_SECS=999 FM_STATE_OVERRIDE="$dir_l/state" handle_wake "stale: fm-$id" "$dir_l/state"
-    markers_h=$(cd "$dir_h/state" && ls -A | grep '^\.subsuper-' | grep -v 'escalations' | sort)
-    markers_l=$(cd "$dir_l/state" && ls -A | grep '^\.subsuper-' | grep -v 'escalations' | sort)
+    markers_h=$(cd "$dir_h/state" && find . -maxdepth 1 -name '.subsuper-*' ! -name '*escalations*' | sort)
+    markers_l=$(cd "$dir_l/state" && find . -maxdepth 1 -name '.subsuper-*' ! -name '*escalations*' | sort)
     [ "$markers_h" = "$markers_l" ] || fail "$shape: the label form kept different per-task markers: '$markers_l' vs '$markers_h'"
   done <<'ROWS'
 orca-working^orc-w1^term_341449f2-4dc2-4214-9870-403ac50fbf2d^window=fm-orc-w1|terminal=term_341449f2-4dc2-4214-9870-403ac50fbf2d|backend=orca^working: building
