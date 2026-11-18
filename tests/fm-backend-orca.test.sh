@@ -7,6 +7,9 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-backend-orca-tests)
+FM_TEST_REPO="$TMP_ROOT/repo-path"
+git init -q "$FM_TEST_REPO"
+export FM_TEST_REPO
 # A claude spawn writes workspace trust into the launching user's own store,
 # and the script resolves it as ${CLAUDE_CONFIG_DIR:-${HOME:-}}, so the value
 # is pinned EMPTY beside the throwaway HOME: an inherited one would beat that
@@ -228,6 +231,28 @@ test_repo_ensure_accepts_git_and_kindless_repos() {
   pass "fm_backend_orca_repo_ensure: a git or kindless registered repository is used as before"
 }
 
+test_repo_ensure_unregistered_path_probes_git_before_add() {
+  local out status plain="$TMP_ROOT/unreg-plain" repo="$TMP_ROOT/unreg-git"
+  mkdir -p "$plain"
+  git init -q "$repo"
+  orca_case repo-ensure-unreg-plain
+  printf '1\n' > "$RESP/1.exit"
+  status=0
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_repo_ensure "$1"' "$ROOT" "$plain" 2>&1 ) || status=$?
+  [ "$status" -ne 0 ] || fail "an unregistered non-git path should be refused, got '$out'"
+  assert_contains "$out" "--backend" "the refusal should name the per-task --backend escape hatch"
+  [ "$(orca_log_count repo add)" -eq 0 ] || fail "a non-git path must never reach repo add, log: $(cat "$LOG")"
+  orca_case repo-ensure-unreg-git
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-new","kind":"git"}}}\n' > "$RESP/2.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_repo_ensure "$1"' "$ROOT" "$repo" )
+  [ "$out" = repo-new ] || fail "an unregistered git path should be added, got '$out'"
+  [ "$(orca_log_count repo add)" -eq 1 ] || fail "a git path should be added once, log: $(cat "$LOG")"
+  pass "fm_backend_orca_repo_ensure: an unregistered non-git path is refused before repo add, a git path is added"
+}
+
 test_spawn_refuses_a_folder_kind_repo_before_any_mutation() {
   local id=orcafolderz9 log verb
   SPAWN_REPO_SHOW='{"ok":true,"result":{"repo":{"id":"repo-folder-spawn","kind":"folder"}}}' \
@@ -348,7 +373,7 @@ test_worktree_create_uses_a_cli_found_off_path() {
   printf '{"ok":true,"result":{"worktree":{"id":"wt-off::/orca/wt-off","path":"/tmp/orca-wt-off"}}}\n' > "$RESP/3.out"
   orca_free_path
   out=$( HOME="$home" ORCA_CLI_BIN_DIR="$FB" PATH="$ORCA_FREE_PATH_CACHE" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 ) \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" 2>&1 ) \
     || fail "worktree create should work with the CLI only under ORCA_CLI_BIN_DIR, got: $out"
   [ "$out" = $'wt-off::/orca/wt-off\t/tmp/orca-wt-off' ] || fail "worktree create printed '$out'"
   [ "$(orca_log_count worktree create)" -eq 1 ] || fail "worktree create should have reached the CLI found off PATH, log: $(cat "$LOG")"
@@ -721,7 +746,7 @@ test_json_get_ignores_undocumented_terminal_id_shapes() {
   printf '{"ok":true,"result":{"repo":{"id":"repo-123"}}}\n' > "$RESP/2.out"
   printf '{"ok":true,"result":{"worktree":{"id":"wt-123::/orca/wt-123","path":"/tmp/orca-wt","terminal":{"handle":"term-nested"}}}}\n' > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" )
   wt_id=${out%%$'\t'*}
   wt_path=${out#*$'\t'}
   term=${wt_path#*$'\t'}
@@ -740,7 +765,7 @@ test_worktree_and_terminal_helpers_parse_json() {
   printf '{"ok":true,"result":{"worktree":{"id":"wt-123::/orca/wt-123","path":"/tmp/orca-wt"}}}\n' > "$RESP/3.out"
   printf '{"ok":true,"result":{"terminal":{"handle":"term-123"}}}\n' > "$RESP/4.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" )
   wt_id=${out%%$'\t'*}
   wt_path=${out#*$'\t'}
   [ "$wt_id" = wt-123::/orca/wt-123 ] || fail "worktree helper should print worktree id, got '$wt_id'"
@@ -748,9 +773,9 @@ test_worktree_and_terminal_helpers_parse_json() {
   term=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_terminal_create wt-123::/orca/wt-123 fm-task' "$ROOT" )
   [ "$term" = term-123 ] || fail "terminal helper should print terminal handle, got '$term'"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''show'$'\x1f''--repo'$'\x1f''path:/repo/path'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''show'$'\x1f''--repo'$'\x1f'"path:$FM_TEST_REPO"$'\x1f''--json' \
     "worktree helper should first check repo registration"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''add'$'\x1f''--path'$'\x1f''/repo/path'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''add'$'\x1f''--path'$'\x1f'"$FM_TEST_REPO"$'\x1f''--json' \
     "worktree helper should register an absent repo"
   assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''create'$'\x1f''--repo'$'\x1f''id:repo-123'$'\x1f''--name'$'\x1f''fm-task'$'\x1f''--no-parent'$'\x1f''--setup'$'\x1f''skip'$'\x1f''--json' \
     "worktree helper did not create an independent no-hook worktree"
@@ -766,7 +791,7 @@ test_worktree_create_removes_worktree_when_path_missing() {
   printf '{"ok":true,"result":{"repo":{"id":"repo-no-path"}}}\n' > "$RESP/2.out"
   printf '{"ok":true,"result":{"worktree":{"id":"wt-no-path::/orca/wt-no-path"},"terminal":{"handle":"term-no-path"}}}\n' > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "worktree helper should fail when Orca omits the worktree path"
   assert_contains "$out" "orca worktree create did not return a path for fm-task" \
@@ -1697,7 +1722,7 @@ run_orca_worktree_create() {  # <case> <shape> <path-or-empty> [<n>=<json>|<n>=e
     esac
   done
   CREATE_OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" 2>&1 )
   CREATE_RC=$?
 }
 
@@ -1953,6 +1978,7 @@ test_worktree_and_terminal_helpers_parse_json
 test_json_get_reads_repo_kind
 test_repo_ensure_refuses_a_folder_repo
 test_repo_ensure_accepts_git_and_kindless_repos
+test_repo_ensure_unregistered_path_probes_git_before_add
 test_spawn_refuses_a_folder_kind_repo_before_any_mutation
 test_tool_check_resolution_order
 test_tool_check_skips_unusable_candidates

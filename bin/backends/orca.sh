@@ -151,6 +151,12 @@ fm_backend_orca_repo_ensure() {  # <project-path>
     printf '%s' "$repo_id"
     return 0
   fi
+  # Orca would hold a non-git path as a folder, and adding it would change the
+  # operator's registration, so refuse before the add.
+  if ! git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "error: backend=orca cannot host work for $project: it is not a git repository, so Orca would hold it as a folder. Run this task on another backend with the per-task option --backend <name>; Firstmate leaves the Orca registration unchanged" >&2
+    return 1
+  fi
   out=$(orca repo add --path "$project" --json) || return 1
   repo_id=$(printf '%s' "$out" | fm_backend_orca_json_get repo-id) || {
     echo "error: orca repo add did not return a repo id for $project" >&2
