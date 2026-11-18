@@ -53,12 +53,12 @@ Orca returns `orca_worktree_id=` as that composite of the Orca repo id and the w
 
 ## Current lifecycle and safety
 
-Spawn registers the repository, creates an independent worktree, reuses a terminal only when Orca returns it as `result.terminal` and otherwise creates one, installs harness hooks, records metadata, and launches the selected harness.
+Spawn registers the repository, creates an independent worktree, installs harness hooks, records metadata, and launches the selected harness.
+The task's one terminal is the terminal Orca starts with the worktree: `result.terminal.handle`, or `result.startupTerminal.handle` when Orca reports that terminal as spawned.
+Spawn titles the adopted terminal with the task name and creates no second terminal.
+A failed title does not fail the spawn.
+Only when Orca reports neither does spawn create one titled terminal explicitly.
 Exact command flags and response parsing are owned by `bin/backends/orca.sh` and script help.
-
-Orca 1.4.261 returns the worktree's first terminal as `result.startupTerminal` and returns no `result.terminal`.
-The adapter takes a worktree's terminal handle only from `result.terminal`, so it does not adopt `startupTerminal` and creates its own terminal.
-Each task therefore has one spare Orca terminal besides the recorded one, which cleanup removes together with the worktree.
 
 `fm-peek.sh` reads with `orca terminal read`.
 An ordinary metadata-routed `fm-send.sh` text steer becomes a durable steering-inbox record, and only its best-effort constant doorbell passes through Orca's submit machinery.
@@ -74,7 +74,8 @@ A scout still requires its report and completed decision inventory.
 A ship still refuses dirty or unlanded work.
 Before release, cleanup resolves the recorded Orca worktree id and verifies its path matches the recorded worktree path.
 A missing, unreadable, or mismatched identity preserves metadata and stops rather than deleting anything.
-After those checks, Firstmate closes the exact terminal and releases the exact worktree with Orca's worktree command.
+After those checks, Firstmate closes the exact terminal and releases the exact worktree with Orca's worktree command, asking it to delete the branch it named for the worktree.
+Orca keeps any branch whose changes it cannot prove merged, so an unlanded branch is never lost, and Firstmate never deletes that branch or forces its deletion itself.
 It never raw-deletes an Orca worktree.
 A close the CLI never attempted, because `orca` is not on the path, stops cleanup with the metadata intact even under `--force`: removing those records would leave nothing on disk naming a terminal that may still be live.
 Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/runtime-backends.md) "Endpoint close" owns what this arm can and cannot prove about its own close.
@@ -85,7 +86,8 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
 - Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
-- The adapter reads only verified response fields, the worktree id and path and a terminal handle from `result.terminal` or the root terminal object, and rejects other response shapes.
+- The adapter reads only verified response fields: the worktree id and path, and a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned. It rejects other response shapes.
+- The startup-terminal adoption and the branch-deleting release have been exercised against a fake Orca only; `verification/runtime-backends.md` lists what a live run must still prove.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
   That check refuses any path that is not a linked git worktree, so it could never accept a project Orca registered as a folder.
 

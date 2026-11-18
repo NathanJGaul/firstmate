@@ -49,10 +49,14 @@ process.exit(1);
 }
 
 fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id
-  # Terminal handles are accepted only from verified terminal result shapes:
-  # result.terminal or a root terminal object with .handle. Undocumented
-  # result.id and result.worktree.terminal shapes are ignored until a real Orca
-  # smoke run proves them.
+  # Terminal handles are accepted only from known terminal result shapes:
+  # result.terminal or a root terminal object with .handle, plus, for
+  # worktree-terminal-handle only, the result.startupTerminal that Orca 1.4.261
+  # returns from worktree create (read from the runtime's response builder, so
+  # proven against the fake only), taken after result.terminal and only when
+  # Orca does not report it spawned:false. Undocumented result.id and
+  # result.worktree.terminal shapes are ignored until a real Orca smoke run
+  # proves them.
   local field=$1
   node -e '
 const fs = require("fs");
@@ -66,6 +70,7 @@ if (data.ok === false) {
 const r = data.result || {};
 const wt = r.worktree || r.item || r;
 const explicitTerm = r.terminal || null;
+const startupTerm = (r.startupTerminal && r.startupTerminal.spawned !== false) ? r.startupTerminal : null;
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";
@@ -79,7 +84,7 @@ let v = "";
 if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
 if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
-if (field === "worktree-terminal-handle") v = handle(explicitTerm) || "";
+if (field === "worktree-terminal-handle") v = handle(explicitTerm) || handle(startupTerm) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));
@@ -150,8 +155,19 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
     fi
     return 2
   }
+  # The terminal Orca started with the worktree is the task's one terminal, so
+  # title it the way `terminal create --title` would have. The title is
+  # cosmetic and the terminal is already adopted, so a failed rename never
+  # fails the spawn.
+  [ -z "$terminal" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || true
   printf '%s\t%s' "$wt_id" "$wt_path"
   [ -z "$terminal" ] || printf '\t%s' "$terminal"
+}
+
+fm_backend_orca_terminal_rename() {  # <terminal-id> <title>
+  local terminal=$1 title=$2
+  fm_backend_orca_tool_check || return 1
+  fm_backend_orca_run_json orca terminal rename --terminal "$terminal" --title "$title" --json
 }
 
 fm_backend_orca_terminal_create() {  # <worktree-id> <title>
@@ -177,11 +193,17 @@ fm_backend_orca_send_literal() {  # <terminal-id> <text>
   fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "$text" --json
 }
 
+# fm_backend_orca_remove_worktree: release one Orca worktree. --force is the
+# existing dirty-worktree removal; Orca documents that it never forces branch
+# deletion. --delete-branch asks Orca to also delete the branch it named for
+# the worktree, and Orca keeps any branch whose changes it cannot prove
+# merged, so an unlanded branch is never lost. The adapter never deletes a
+# branch itself and never passes a forced branch option.
 fm_backend_orca_remove_worktree() {  # <worktree-id>
   local worktree_id=${1:-}
   [ -n "$worktree_id" ] || { echo "error: missing Orca worktree id; cannot remove worktree" >&2; return 1; }
   fm_backend_orca_tool_check || return 1
-  fm_backend_orca_run_json orca worktree rm --worktree "id:$worktree_id" --force --json
+  fm_backend_orca_run_json orca worktree rm --worktree "id:$worktree_id" --force --delete-branch --json
 }
 
 fm_backend_orca_worktree_path() {

@@ -94,6 +94,76 @@ SH
   chmod +x "$fb/tmux"
 }
 
+# orca_worktree_response: an Orca `worktree create` JSON result. <shape> picks
+# which first-terminal shape the runtime reports: none, terminal (the verified
+# result.terminal), startup (Orca 1.4.261's result.startupTerminal), both,
+# startup-nospawned (no spawned flag), startup-unspawned (spawned false),
+# startup-emptyhandle, or startup-nohandle. A blank <path> omits the path.
+orca_worktree_response() {  # <worktree-id> <path-or-empty> <shape>
+  local id=$1 path=$2 shape=$3 wt term=
+  if [ -n "$path" ]; then
+    wt=$(printf '{"id":"%s","path":"%s"}' "$id" "$path")
+  else
+    wt=$(printf '{"id":"%s"}' "$id")
+  fi
+  case "$shape" in
+    none) ;;
+    terminal) term=',"terminal":{"handle":"term-legacy"}' ;;
+    startup) term=',"startupTerminal":{"spawned":true,"handle":"term-startup","tabId":"tab-1","paneKey":"pane-1","ptyId":"pty-1","surface":"background"}' ;;
+    both) term=',"terminal":{"handle":"term-legacy"},"startupTerminal":{"spawned":true,"handle":"term-startup"}' ;;
+    startup-nospawned) term=',"startupTerminal":{"handle":"term-startup"}' ;;
+    startup-unspawned) term=',"startupTerminal":{"spawned":false,"handle":"term-startup"}' ;;
+    startup-emptyhandle) term=',"startupTerminal":{"spawned":true,"handle":""}' ;;
+    startup-nohandle) term=',"startupTerminal":{"spawned":true}' ;;
+    *) fail "unknown worktree response shape '$shape'" ;;
+  esac
+  printf '{"ok":true,"result":{"worktree":%s%s}}\n' "$wt" "$term"
+}
+
+# orca_log_count: how many logged Orca calls start with <noun> <verb>.
+orca_log_count() {  # <noun> <verb> [log]
+  grep -c -F "orca"$'\x1f'"$1"$'\x1f'"$2" "${3:-$LOG}" || true
+}
+
+# run_orca_spawn: spawn <id> through fm-spawn --backend orca against a fake
+# Orca whose worktree creation reports <shape>. Sets SPAWN_OUT, SPAWN_RC,
+# SPAWN_STATE, SPAWN_WT and the case's LOG and RESP. Extra
+# arguments are numbered responses, "<n>=<json>" or "<n>=exit:<code>", written
+# before the run. SPAWN_OMIT_PATH=1 leaves the path out of the worktree result.
+run_orca_spawn() {  # <case> <id> <shape> [<n>=<json>...]
+  local case_name=$1 id=$2 shape=$3 proj data config arg staged result_path
+  shift 3
+  proj="$TMP_ROOT/$case_name-project"
+  SPAWN_WT="$TMP_ROOT/$case_name-wt"
+  data="$TMP_ROOT/$case_name-data"
+  SPAWN_STATE="$TMP_ROOT/$case_name-state"
+  config="$TMP_ROOT/$case_name-config"
+  fm_git_worktree "$proj" "$SPAWN_WT" "fm/$id"
+  mkdir -p "$data/$id" "$SPAWN_STATE" "$config"
+  write_spawn_brief "$data" "$id"
+  touch "$SPAWN_STATE/.last-watcher-beat"
+  orca_case "$case_name"
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-%s"}}}\n' "$case_name" > "$RESP/2.out"
+  result_path=$SPAWN_WT
+  [ "${SPAWN_OMIT_PATH:-0}" != 1 ] || result_path=
+  orca_worktree_response "wt-$case_name::/orca/wt-$case_name" "$result_path" "$shape" > "$RESP/3.out"
+  for arg in "$@"; do
+    case "${arg#*=}" in
+      exit:*) printf '%s\n' "${arg#*=exit:}" > "$RESP/${arg%%=*}.exit" ;;
+      *) printf '%s\n' "${arg#*=}" > "$RESP/${arg%%=*}.out" ;;
+    esac
+  done
+  SPAWN_OUT=$( HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SPAWN_STATE" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend orca 2>&1 )
+  SPAWN_RC=$?
+  staged=$(tr '\037' '\n' < "$LOG" | sed -n "s/^\. '\([^']*\)'$/\1/p" | tail -1)
+  [ -z "$staged" ] || rm -rf "$(dirname "$staged")"
+  rm -rf "/tmp/fm-$id"
+}
+
 test_capture_reads_terminal_tail_json() {
   local out
   orca_case capture-tail
@@ -396,6 +466,19 @@ test_remove_worktree_refuses_empty_id() {
   pass "fm_backend_orca_remove_worktree: refuses empty worktree ids"
 }
 
+test_remove_worktree_asks_orca_to_delete_the_branch_safely() {
+  local expect
+  orca_case remove-delete-branch
+  printf '{"ok":true,"result":{"removed":true}}\n' > "$RESP/1.out"
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_remove_worktree wt-branch::/orca/wt-branch' "$ROOT" \
+    || fail "remove_worktree should succeed when Orca reports success"
+  expect="orca"$'\x1f'"worktree"$'\x1f'"rm"$'\x1f'"--worktree"$'\x1f'"id:wt-branch::/orca/wt-branch"$'\x1f'"--force"$'\x1f'"--delete-branch"$'\x1f'"--json"
+  [ "$(cat "$LOG")" = "$expect" ] \
+    || fail "remove_worktree should make exactly one Orca call: worktree rm --force --delete-branch, got: $(tr '\037' ' ' < "$LOG")"
+  pass "fm_backend_orca_remove_worktree: releases with --force and Orca's safe --delete-branch, nothing else"
+}
+
 test_remove_worktree_rejects_orca_error_json() {
   local out status
   orca_case remove-error-json
@@ -487,7 +570,7 @@ test_worktree_create_removes_worktree_when_path_missing() {
     "worktree helper did not explain the missing path"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-no-path'$'\x1f''--json' \
     "worktree helper did not close the implicit terminal when path parsing failed"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-no-path::/orca/wt-no-path'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-no-path::/orca/wt-no-path'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "worktree helper did not remove the pathless Orca worktree"
   pass "fm_backend_orca_worktree_create: removes created worktree when path is missing"
 }
@@ -517,7 +600,7 @@ test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails() {
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when path parsing and cleanup fail"
   assert_contains "$out" "orca worktree create did not return a path" \
     "pathless worktree failure should explain the missing path"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-pathless-cleanup::/orca/wt-pathless-cleanup'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-pathless-cleanup::/orca/wt-pathless-cleanup'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "pathless cleanup should attempt helper-backed worktree removal"
   assert_present "$state/$id.meta" "failed pathless cleanup should preserve metadata"
   assert_grep "window=fm-$id" "$state/$id.meta" "preserved pathless metadata missing stable window alias"
@@ -655,7 +738,7 @@ test_spawn_refuses_orca_nonisolated_worktree() {
     "Orca spawn should validate the worktree before creating a terminal"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-bad'$'\x1f''--json' \
     "Orca spawn should close the implicit terminal after validation aborts"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-bad::/orca/wt-bad'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-bad::/orca/wt-bad'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "Orca spawn should remove the worktree after validation aborts"
   pass "fm-spawn.sh --backend orca: refuses non-isolated worktrees and closes implicit terminals"
 }
@@ -686,7 +769,7 @@ test_spawn_removes_orca_worktree_when_terminal_create_fails() {
   assert_absent "$state/$id.meta" "terminal-create abort should not record metadata after successful cleanup"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create'$'\x1f''--worktree'$'\x1f''id:wt-terminal-fail::/orca/wt-terminal-fail'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
     "Orca spawn should attempt terminal creation before abort cleanup"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-terminal-fail::/orca/wt-terminal-fail'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-terminal-fail::/orca/wt-terminal-fail'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "Orca spawn should remove the worktree when terminal creation fails"
   assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close' \
     "Orca spawn should not close a terminal when no handle was recorded"
@@ -717,7 +800,7 @@ test_spawn_preserves_orca_metadata_when_abort_cleanup_fails() {
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend orca 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when terminal creation and abort cleanup fail"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-cleanup-fail::/orca/wt-cleanup-fail'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-cleanup-fail::/orca/wt-cleanup-fail'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "Orca spawn should attempt helper cleanup before preserving metadata"
   assert_present "$state/$id.meta" "failed Orca abort cleanup should preserve metadata"
   assert_grep "window=fm-$id" "$state/$id.meta" "preserved metadata missing stable window alias"
@@ -753,7 +836,7 @@ test_spawn_releases_orca_resources_when_metadata_write_fails() {
     "spawn should report metadata publication failure without relying on platform-specific mv output"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-meta-fail'$'\x1f''--json' \
     "Orca spawn should close the recorded terminal when a later abort occurs"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-meta-fail::/orca/wt-meta-fail'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-meta-fail::/orca/wt-meta-fail'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "Orca spawn should remove the recorded worktree when a later abort occurs"
   [ ! -f "$state/$id.meta" ] || fail "metadata-write abort should not publish a regular metadata file"
   pass "fm-spawn.sh --backend orca: releases terminal and worktree on later aborts"
@@ -871,7 +954,7 @@ test_scout_teardown_removes_orca_worktree_via_helper() {
   expect_code 0 "$rc" "Orca scout teardown should succeed once report exists"$'\n'"$out"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-teardown'$'\x1f''--json' \
     "teardown did not close the recorded Orca terminal"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-teardown::/orca/wt-teardown'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-teardown::/orca/wt-teardown'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "teardown did not remove the Orca worktree through orca worktree rm"
   assert_absent "$state/$id.meta" "teardown should remove task metadata"
   pass "fm-teardown.sh backend=orca: scout report gate then helper-backed worktree removal"
@@ -943,7 +1026,7 @@ test_teardown_removes_orca_worktree_when_path_missing() {
   expect_code 0 "$rc" "Orca teardown should release helpers even when the path is absent"$'\n'"$out"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-missing-path'$'\x1f''--json' \
     "teardown did not close the recorded Orca terminal when the path was absent"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-missing-path::/orca/wt-missing-path'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-missing-path::/orca/wt-missing-path'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "teardown did not remove the recorded Orca worktree when the path was absent"
   assert_absent "$state/$id.meta" "successful helper cleanup should remove task metadata"
   pass "fm-teardown.sh backend=orca: releases terminal/worktree when path is absent"
@@ -1070,10 +1153,46 @@ test_ship_teardown_removes_orca_worktree_when_id_path_matches() {
     "teardown did not resolve the Orca worktree id before removal"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-ship-match'$'\x1f''--json' \
     "teardown did not close the matched Orca terminal"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-ship-match::/orca/wt-ship-match'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-ship-match::/orca/wt-ship-match'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "teardown did not remove the matched Orca worktree"
   assert_absent "$state/$id.meta" "successful matched teardown should remove task metadata"
   pass "fm-teardown.sh backend=orca: ship teardown requires a matching Orca id path"
+}
+
+test_ship_teardown_completes_when_orca_keeps_the_branch() {
+  local proj wt data state config id out rc neutral n
+  id="orcakeepbranchz1"
+  proj="$TMP_ROOT/keep-branch-project"
+  wt="$TMP_ROOT/keep-branch-wt"
+  data="$TMP_ROOT/keep-branch-data"
+  state="$TMP_ROOT/keep-branch-state"
+  config="$TMP_ROOT/keep-branch-config"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  mkdir -p "$data/$id" "$state" "$config"
+  touch "$state/.last-watcher-beat"
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" "endpoint_task_id=$id" "terminal=term-keep-branch" "worktree=$wt" "project=$proj" \
+    "harness=claude" "kind=ship" "mode=local-only" "yolo=off" \
+    "backend=orca" "orca_worktree_id=wt-keep-branch::/orca/wt-keep-branch"
+  orca_case keep-branch
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-keep-branch::/orca/wt-keep-branch","path":"%s"}}}\n' "$wt" > "$RESP/1.out"
+  # Orca keeps a branch it cannot prove merged and then reports a removal with
+  # no branch-deletion evidence; that must not fail the release.
+  for n in 2 3 4 5 6; do
+    printf '{"ok":true,"result":{"removed":true}}\n' > "$RESP/$n.out"
+  done
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "teardown should complete when Orca reports a removal without branch evidence"$'\n'"$out"$'\n'"$(tr '\037' ' ' < "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-keep-branch::/orca/wt-keep-branch'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
+    "teardown should ask Orca to delete the branch safely"
+  assert_absent "$state/$id.meta" "teardown should remove task metadata once Orca released the worktree"
+  pass "fm-teardown.sh backend=orca: a release that reports no branch deletion still completes"
 }
 
 test_ship_teardown_refuses_orca_unresolvable_worktree_id() {
@@ -1251,7 +1370,7 @@ test_secondmate_force_teardown_removes_orca_child_via_orca() {
   expect_code 0 "$rc" "forced secondmate teardown should remove Orca child work through Orca"$'\n'"$out"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-child-cleanup'$'\x1f''--json' \
     "child cleanup did not close the recorded Orca terminal"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-child-cleanup::/orca/wt-child-cleanup'$'\x1f''--force'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-child-cleanup::/orca/wt-child-cleanup'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "child cleanup did not remove the Orca worktree through orca worktree rm"
   assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f'"fm-$child_id" \
     "child cleanup closed the stable alias instead of the Orca terminal"
@@ -1349,6 +1468,258 @@ test_dispatcher_sources_orca_and_routes_primitives() {
   pass "fm-backend dispatcher: accepts orca and routes capture through bin/backends/orca.sh"
 }
 
+# orca_json_get: run fm_backend_orca_json_get <field> over a worktree create
+# result of <shape>; prints the field and returns the parser's status.
+orca_json_get() {  # <field> <shape>
+  orca_worktree_response wt-json /tmp/orca-wt "$2" | \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_json_get "$1"' "$ROOT" "$1"
+}
+
+# run_orca_worktree_create: call fm_backend_orca_worktree_create /repo/path
+# fm-task against a fake Orca whose worktree creation reports <shape> with
+# <path> (blank omits it). Sets CREATE_OUT (stdout and stderr), CREATE_RC and
+# the case's LOG. Extra arguments are numbered responses: "<n>=<json>" writes
+# call <n>'s output and "<n>=exit:<code>" makes call <n> exit with that code.
+run_orca_worktree_create() {  # <case> <shape> <path-or-empty> [<n>=<json>|<n>=exit:<code>...]
+  local case_name=$1 shape=$2 path=$3 arg
+  shift 3
+  orca_case "$case_name"
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-%s"}}}\n' "$case_name" > "$RESP/2.out"
+  orca_worktree_response "wt-$case_name::/orca/wt-$case_name" "$path" "$shape" > "$RESP/3.out"
+  for arg in "$@"; do
+    case "${arg#*=}" in
+      exit:*) printf '%s\n' "${arg#*=exit:}" > "$RESP/${arg%%=*}.exit" ;;
+      *) printf '%s\n' "${arg#*=}" > "$RESP/${arg%%=*}.out" ;;
+    esac
+  done
+  CREATE_OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+  CREATE_RC=$?
+}
+
+ORCA_TERMINAL_CREATE_RESPONSE='{"ok":true,"result":{"terminal":{"handle":"term-created"}}}'
+
+test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal() {
+  local shape id n=0
+  for shape in terminal both; do
+    n=$((n + 1))
+    id="orcashapez$n"
+    run_orca_spawn "spawn-shape-$shape" "$id" "$shape"
+    expect_code 0 "$SPAWN_RC" "spawn should succeed with the $shape result"$'\n'"$SPAWN_OUT"
+    assert_grep "terminal=term-legacy" "$SPAWN_STATE/$id.meta" "meta should record the result.terminal handle for $shape"
+    [ "$(orca_log_count terminal create)" = 0 ] || fail "spawn must not create a second terminal for $shape"
+  done
+  pass "fm-spawn.sh --backend orca: adopts result.terminal, and prefers it when a startup terminal is also reported"
+}
+
+test_spawn_titles_a_terminal_reported_in_the_terminal_shape() {
+  local id=orcatitleshapez1
+  run_orca_spawn spawn-title-terminal-shape "$id" terminal
+  expect_code 0 "$SPAWN_RC" "spawn should succeed with the terminal result"$'\n'"$SPAWN_OUT"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "spawn should title an adopted result.terminal terminal exactly once"$'\n'"$(tr '\037' ' ' < "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-legacy'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the adopted result.terminal terminal should be titled with the task name"
+  pass "fm-spawn.sh --backend orca: titles a terminal reported in the result.terminal shape"
+}
+
+test_spawn_creates_one_titled_terminal_when_orca_reports_none() {
+  local id=orcanoneterm1
+  run_orca_spawn spawn-no-terminal "$id" none "4=$ORCA_TERMINAL_CREATE_RESPONSE"
+  expect_code 0 "$SPAWN_RC" "spawn should fall back to creating a terminal"$'\n'"$SPAWN_OUT"
+  [ "$(orca_log_count terminal create)" = 1 ] || fail "spawn should create exactly one terminal when Orca reports none"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create'$'\x1f''--worktree'$'\x1f''id:wt-spawn-no-terminal::/orca/wt-spawn-no-terminal'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the created terminal should be titled with the task name"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a terminal created with its title needs no rename"
+  assert_grep "terminal=term-created" "$SPAWN_STATE/$id.meta" "meta should record the created terminal"
+  pass "fm-spawn.sh --backend orca: creates exactly one titled terminal when Orca reports none"
+}
+
+test_spawn_creates_a_terminal_for_an_unusable_startup_terminal() {
+  local shape id n=0
+  for shape in startup-unspawned startup-emptyhandle startup-nohandle; do
+    n=$((n + 1))
+    id="orcaunusablez$n"
+    run_orca_spawn "spawn-unusable-$shape" "$id" "$shape" "4=$ORCA_TERMINAL_CREATE_RESPONSE"
+    expect_code 0 "$SPAWN_RC" "spawn should fall back to creating a terminal for $shape"$'\n'"$SPAWN_OUT"
+    [ "$(orca_log_count terminal create)" = 1 ] || fail "spawn should create exactly one terminal for $shape"
+    assert_grep "terminal=term-created" "$SPAWN_STATE/$id.meta" "meta should record the created terminal for $shape"
+  done
+  pass "fm-spawn.sh --backend orca: creates a terminal when the startup terminal was not spawned or has no handle"
+}
+
+test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything() {
+  local id=orcapathlessst1
+  SPAWN_OMIT_PATH=1 run_orca_spawn spawn-pathless-startup "$id" startup
+  [ "$SPAWN_RC" -ne 0 ] || fail "spawn should fail when Orca omits the worktree path"
+  assert_contains "$SPAWN_OUT" "orca worktree create did not return a path" "spawn should explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--json' \
+    "spawn should close the startup terminal of a pathless worktree"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-spawn-pathless-startup::/orca/wt-spawn-pathless-startup' \
+    "spawn should release the pathless worktree"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a worktree being released must not have its terminal titled"
+  pass "fm-spawn.sh --backend orca: a pathless startup-terminal worktree is closed and released"
+}
+
+test_spawn_succeeds_when_titling_the_adopted_terminal_fails() {
+  local id=orcarenamefailz1
+  run_orca_spawn spawn-rename-fails "$id" startup 4=exit:1
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$SPAWN_RC" "a failed title must not fail the spawn"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-startup" "$SPAWN_STATE/$id.meta" "meta should still record the adopted terminal"
+  [ "$(orca_log_count terminal create)" = 0 ] || fail "a failed title must not trigger a second terminal"
+  pass "fm-spawn.sh --backend orca: a failed terminal title does not fail the spawn"
+}
+
+test_worktree_create_titles_the_adopted_startup_terminal() {
+  run_orca_worktree_create create-rename-startup startup /tmp/orca-wt
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "worktree create should title the adopted terminal exactly once"$'\n'"$(cat "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--title'$'\x1f''fm-task'$'\x1f''--json' \
+    "worktree create should title the adopted terminal with the task name"
+  pass "fm_backend_orca_worktree_create: titles the adopted startup terminal with the task name"
+}
+
+test_worktree_create_prints_the_startup_terminal_as_the_third_field() {
+  local expect
+  run_orca_worktree_create create-print-startup startup /tmp/orca-wt
+  expect=$'wt-create-print-startup::/orca/wt-create-print-startup\t/tmp/orca-wt\tterm-startup'
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with a startup terminal"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print id, path, and the startup handle, got '$CREATE_OUT'"
+  pass "fm_backend_orca_worktree_create: prints the startup terminal handle after the id and path"
+}
+
+test_worktree_create_survives_a_rename_that_exits_non_zero() {
+  local expect
+  run_orca_worktree_create create-rename-exit startup /tmp/orca-wt 4=exit:1
+  expect=$'wt-create-rename-exit::/orca/wt-create-rename-exit\t/tmp/orca-wt\tterm-startup'
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$CREATE_RC" "a rename that exits non-zero must not fail worktree create"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should still adopt the terminal after a failed rename, got '$CREATE_OUT'"
+  pass "fm_backend_orca_worktree_create: a rename that exits non-zero does not fail the create"
+}
+
+test_worktree_create_survives_a_rename_that_reports_an_error() {
+  local expect
+  run_orca_worktree_create create-rename-error startup /tmp/orca-wt \
+    '4={"ok":false,"error":{"code":"terminal_not_found","message":"terminal not found"}}'
+  expect=$'wt-create-rename-error::/orca/wt-create-rename-error\t/tmp/orca-wt\tterm-startup'
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$CREATE_RC" "a rename that reports ok:false must not fail worktree create"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should still adopt the terminal after a rename error, got '$CREATE_OUT'"
+  pass "fm_backend_orca_worktree_create: a rename that reports ok:false does not fail the create"
+}
+
+test_worktree_create_issues_no_rename_without_a_terminal() {
+  local expect
+  run_orca_worktree_create create-no-terminal none /tmp/orca-wt
+  expect=$'wt-create-no-terminal::/orca/wt-create-no-terminal\t/tmp/orca-wt'
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with no terminal"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print only id and path with no terminal, got '$CREATE_OUT'"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "there is no terminal to title, so no rename should be issued"
+  pass "fm_backend_orca_worktree_create: issues no rename when Orca returns no terminal"
+}
+
+test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal() {
+  run_orca_worktree_create create-pathless-startup startup ''
+  [ "$CREATE_RC" -ne 0 ] || fail "worktree create should fail when Orca omits the path"
+  assert_contains "$CREATE_OUT" "orca worktree create did not return a path for fm-task" \
+    "worktree create did not explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--json' \
+    "worktree create did not close the startup terminal when the path was missing"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-create-pathless-startup::/orca/wt-create-pathless-startup' \
+    "worktree create did not release the pathless worktree"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a worktree that is being released must not have its terminal titled"
+  pass "fm_backend_orca_worktree_create: closes the startup terminal and releases the worktree when the path is missing"
+}
+
+test_spawn_adopts_startup_terminal_without_creating_another() {
+  local id=orcastartz1
+  run_orca_spawn startup-adopt "$id" startup
+  expect_code 0 "$SPAWN_RC" "spawn should succeed when Orca reports a startup terminal"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-startup" "$SPAWN_STATE/$id.meta" "meta should record the startup terminal"
+  [ "$(orca_log_count terminal create)" = 0 ] \
+    || fail "spawn must not create a second terminal when Orca reports a startup terminal"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "spawn should title the adopted startup terminal exactly once"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the adopted startup terminal should be titled with the task name"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-startup'$'\x1f''--text'$'\x1f''export GOTMPDIR=/tmp/fm-'"$id"'/gotmp' \
+    "the launch should reach the harness through the adopted terminal"
+  pass "fm-spawn.sh --backend orca: adopts the startup terminal and creates no second terminal"
+}
+
+test_json_get_adopts_startup_terminal_handle() {
+  local out
+  out=$(orca_json_get worktree-terminal-handle startup)
+  [ "$out" = term-startup ] || fail "worktree-terminal-handle should read result.startupTerminal.handle, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle adopts result.startupTerminal.handle"
+}
+
+test_json_get_ignores_startup_terminal_that_was_not_spawned() {
+  local out status
+  out=$(orca_json_get worktree-terminal-handle startup-unspawned)
+  status=$?
+  [ "$status" -ne 0 ] || fail "worktree-terminal-handle should find no terminal when spawned is false, got '$out'"
+  [ -z "$out" ] || fail "worktree-terminal-handle should print nothing when spawned is false, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle ignores a startup terminal Orca did not spawn"
+}
+
+test_json_get_adopts_startup_terminal_without_spawned_flag() {
+  local out
+  out=$(orca_json_get worktree-terminal-handle startup-nospawned)
+  [ "$out" = term-startup ] || fail "a startup terminal with no spawned flag is not 'spawned: false' and should be adopted, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle adopts a startup terminal whose spawned flag is absent"
+}
+
+test_json_get_ignores_startup_terminal_without_a_handle() {
+  local out status shape
+  for shape in startup-emptyhandle startup-nohandle; do
+    out=$(orca_json_get worktree-terminal-handle "$shape")
+    status=$?
+    [ "$status" -ne 0 ] || fail "worktree-terminal-handle should find no terminal for $shape, got '$out'"
+    [ -z "$out" ] || fail "worktree-terminal-handle should print nothing for $shape, got '$out'"
+  done
+  pass "fm_backend_orca_json_get: worktree-terminal-handle ignores a startup terminal with an empty or missing handle"
+}
+
+test_json_get_prefers_terminal_over_startup_terminal() {
+  local out
+  out=$(orca_json_get worktree-terminal-handle both)
+  [ "$out" = term-legacy ] || fail "result.terminal should win when both shapes are present, got '$out'"
+  pass "fm_backend_orca_json_get: worktree-terminal-handle prefers result.terminal over result.startupTerminal"
+}
+
+test_json_get_terminal_handle_field_ignores_startup_terminal() {
+  local out status
+  out=$(orca_json_get terminal-handle startup)
+  status=$?
+  [ "$status" -ne 0 ] || fail "terminal-handle parses a terminal create result and must not read startupTerminal, got '$out'"
+  [ -z "$out" ] || fail "terminal-handle should print nothing for a startupTerminal-only result, got '$out'"
+  pass "fm_backend_orca_json_get: terminal-handle (terminal create results) ignores result.startupTerminal"
+}
+
+test_spawn_adopts_startup_terminal_without_creating_another
+test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
+test_spawn_titles_a_terminal_reported_in_the_terminal_shape
+test_spawn_creates_one_titled_terminal_when_orca_reports_none
+test_spawn_creates_a_terminal_for_an_unusable_startup_terminal
+test_spawn_with_a_pathless_startup_terminal_closes_and_releases_everything
+test_spawn_succeeds_when_titling_the_adopted_terminal_fails
+test_worktree_create_titles_the_adopted_startup_terminal
+test_worktree_create_prints_the_startup_terminal_as_the_third_field
+test_worktree_create_survives_a_rename_that_exits_non_zero
+test_worktree_create_survives_a_rename_that_reports_an_error
+test_worktree_create_issues_no_rename_without_a_terminal
+test_worktree_create_releases_a_pathless_worktree_and_its_startup_terminal
+test_json_get_adopts_startup_terminal_handle
+test_json_get_ignores_startup_terminal_that_was_not_spawned
+test_json_get_adopts_startup_terminal_without_spawned_flag
+test_json_get_ignores_startup_terminal_without_a_handle
+test_json_get_prefers_terminal_over_startup_terminal
+test_json_get_terminal_handle_field_ignores_startup_terminal
 test_capture_reads_terminal_tail_json
 test_capture_falls_back_to_text_fields
 test_capture_fails_on_orca_error_json
@@ -1370,6 +1741,7 @@ test_send_key_refuses_escape_until_supported
 test_kill_is_best_effort_close
 test_kill_refuses_when_the_orca_cli_is_absent
 test_remove_worktree_refuses_empty_id
+test_remove_worktree_asks_orca_to_delete_the_branch_safely
 test_remove_worktree_rejects_orca_error_json
 test_worktree_path_resolves_id
 test_dispatcher_sources_orca_and_routes_primitives
@@ -1394,6 +1766,7 @@ test_teardown_preserves_metadata_when_orca_remove_error_json
 test_scout_teardown_refuses_orca_missing_report_when_path_missing
 test_ship_teardown_refuses_orca_missing_worktree_path
 test_ship_teardown_removes_orca_worktree_when_id_path_matches
+test_ship_teardown_completes_when_orca_keeps_the_branch
 test_ship_teardown_refuses_orca_unresolvable_worktree_id
 test_ship_teardown_refuses_orca_id_path_mismatch
 test_teardown_refuses_orca_missing_worktree_id
