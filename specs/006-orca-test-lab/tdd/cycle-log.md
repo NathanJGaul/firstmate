@@ -21,3 +21,16 @@ Deviation: A1-A3 and U1-U7 share one cycle because they are one function and one
   The first run exposed a real defect: `/` was refused only by the non-empty rule because the containment comparison built `//*`; fixed with `${real%/}` before the cycle was recorded green.
   Dropping the containment arm survives and is an equivalent mutant: a path that contains an existing protected path is always non-empty, so the non-empty rule refuses it too; the arm stays as defense in depth.
 - refactor: none needed
+
+## Cycle 2 - own-runtime proof and signal guard (A4, U8, U9)
+
+Deviation: A4, U8, and U9 share one cycle (one proof, one signal helper); the red is the first failing assertion.
+
+- test: `tests/fm-backend-orca-lab-guard.test.sh` process cluster, with fake runtimes that are plain `sleep` processes carrying `ORCA_USER_DATA_PATH` and a fake launcher answering `status --json`
+- red command: `bin/fm-test-run.sh tests/fm-backend-orca-lab-guard.test.sh`
+- red output: `orca_lab_assert_own_runtime: command not found` then `not ok - A4: the lab's own runtime must pass the proof`
+  The refusal-direction checks pass vacuously while the function is missing, so the green-path assertion is the decisive red.
+- green: `orca_lab_pid_owned`, `orca_lab_assert_own_runtime`, `orca_lab_signal` in `tests/orca-lab-safety.sh`
+- deliberate mutants, all killed: dropping the `/proc` readability refusal (U8 other-environment case), dropping the runtime-id comparison (U8 id mismatch), dropping the record-pid comparison (U8 other pid).
+  Dropping the self-pid exclusion survived because a plain shell never owns the lab directory; a case was added where a shell whose environment names the lab directory attempts a self-signal, and the mutant is then killed.
+- refactor: none needed

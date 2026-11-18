@@ -89,3 +89,58 @@ orca_lab_validate_data_dir() {
   fi
   return 0
 }
+
+# orca_lab_pid_owned <pid> <data-dir>: 0 only when <pid> is a live process other
+# than the calling shell whose environment sets ORCA_USER_DATA_PATH to exactly
+# <data-dir>, or whose command line names a path inside <data-dir> (the terminal
+# host takes its socket and pid record from there). Needs /proc, and refuses
+# when it is unreadable, since ownership then cannot be shown.
+orca_lab_pid_owned() {
+  local pid=${1:-} data=${2:-}
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  [ -n "$data" ] || return 1
+  [ "$pid" != "$$" ] && [ "$pid" != "${BASHPID:-$$}" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [ -r "/proc/$pid/environ" ] || return 1
+  if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -Fxq -- "ORCA_USER_DATA_PATH=$data"; then
+    return 0
+  fi
+  if [ -r "/proc/$pid/cmdline" ] && tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq -- "$data/"; then
+    return 0
+  fi
+  return 1
+}
+
+# orca_lab_assert_own_runtime <data-dir> <child-pid> <launcher>: 0 only when the
+# runtime answering for <data-dir> is the child the lab started: the runtime
+# record in <data-dir> names <child-pid>, that process is live and owned by the
+# lab (orca_lab_pid_owned), and `status --json` through the lab launcher reports
+# the runtime id the record holds. Every other outcome is a refusal.
+orca_lab_assert_own_runtime() {
+  local data=${1:-} child=${2:-} launcher=${3:-} record rec_pid rec_id live_id
+  record="$data/orca-runtime.json"
+  [ -n "$data" ] && [ -f "$record" ] || { echo "orca lab: refusing: no runtime record in '$data'" >&2; return 1; }
+  rec_pid=$(jq -r '.pid // empty' "$record" 2>/dev/null)
+  rec_id=$(jq -r '.runtimeId // empty' "$record" 2>/dev/null)
+  if [ -z "$child" ] || [ "$rec_pid" != "$child" ]; then
+    echo "orca lab: refusing: the runtime record names pid '${rec_pid:-none}', not the child the lab started ('${child:-none}')" >&2
+    return 1
+  fi
+  orca_lab_pid_owned "$child" "$data" || { echo "orca lab: refusing: pid $child is not live or not owned by the lab data directory" >&2; return 1; }
+  [ -n "$rec_id" ] || { echo "orca lab: refusing: the runtime record holds no runtime id" >&2; return 1; }
+  live_id=$("$launcher" status --json 2>/dev/null | jq -r '.result.runtime.runtimeId // empty' 2>/dev/null)
+  if [ "$live_id" != "$rec_id" ]; then
+    echo "orca lab: refusing: the answering runtime id '${live_id:-none}' differs from the recorded '$rec_id'" >&2
+    return 1
+  fi
+  return 0
+}
+
+# orca_lab_signal <signal> <pid> <data-dir>: send <signal> to <pid> only when it
+# is proven to belong to the lab; otherwise send nothing and fail.
+orca_lab_signal() {
+  local sig=${1:-} pid=${2:-} data=${3:-}
+  case "$sig" in TERM | KILL | INT | HUP | 0) ;; *) echo "orca lab: refusing signal '$sig'" >&2; return 1 ;; esac
+  orca_lab_pid_owned "$pid" "$data" || { echo "orca lab: refusing to signal pid '${pid:-none}': not proven to belong to the lab" >&2; return 1; }
+  kill "-$sig" "$pid"
+}

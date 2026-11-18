@@ -70,4 +70,106 @@ mkdir -p "$TMP_ROOT/hidden"; : > "$TMP_ROOT/hidden/.hidden"
 refused "A3 a directory holding only a dotfile" "$TMP_ROOT/hidden"
 pass "A3: a caller-supplied non-empty directory is refused, an absent or empty one is accepted"
 
-echo "ok - guard (path cluster)"
+
+# --- processes: fake runtimes --------------------------------------------------
+
+if [ ! -r "/proc/$$/environ" ]; then
+  echo "skip: process-proof cases need /proc (Linux); the live lane is Linux-only"
+  exit 0
+fi
+
+SLEEPERS=()
+reap_sleepers() {
+  local p
+  for p in "${SLEEPERS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
+  return 0
+}
+trap 'reap_sleepers; fm_test_cleanup' EXIT
+
+# start_sleeper <data-dir-in-env>: a process carrying a runtime's environment.
+start_sleeper() {
+  ORCA_USER_DATA_PATH=$1 sleep 300 &
+  SLEEPER_PID=$!
+  SLEEPERS+=("$SLEEPER_PID")
+}
+
+alive() { kill -0 "$1" 2>/dev/null; }
+
+# make_lab <name> <runtime-id>: a lab dir with a launcher that reports <runtime-id>.
+make_lab() {
+  LAB="$TMP_ROOT/$1"
+  LAB_DATA="$LAB/data"
+  mkdir -p "$LAB/bin" "$LAB_DATA"
+  printf '%s' "$2" > "$LAB/status-id"
+  cat > "$LAB/bin/orca" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = status ]; then
+  printf '{"ok":true,"result":{"runtime":{"runtimeId":"%s"}}}' "\$(cat "$LAB/status-id")"
+fi
+SH
+  chmod +x "$LAB/bin/orca"
+}
+write_record() {  # <pid> <runtime-id>
+  printf '{"runtimeId":"%s","pid":%s}' "$2" "$1" > "$LAB_DATA/orca-runtime.json"
+}
+
+# --- A4 / U8: the own-runtime proof --------------------------------------------
+
+make_lab own1 rt-own
+start_sleeper "$LAB_DATA"; OWN=$SLEEPER_PID
+orca_lab_assert_own_runtime "$LAB_DATA" "$OWN" "$LAB/bin/orca" >/dev/null 2>&1 \
+  && fail "A4: a missing runtime record must be refused" || true
+write_record "$OWN" rt-own
+orca_lab_assert_own_runtime "$LAB_DATA" "$OWN" "$LAB/bin/orca" || fail "A4: the lab's own runtime must pass the proof"
+
+write_record "$((OWN + 1))" rt-own
+orca_lab_assert_own_runtime "$LAB_DATA" "$OWN" "$LAB/bin/orca" >/dev/null 2>&1 \
+  && fail "U8: a record naming a different pid than the started child must be refused" || true
+
+kill "$OWN"; wait "$OWN" 2>/dev/null
+write_record "$OWN" rt-own
+orca_lab_assert_own_runtime "$LAB_DATA" "$OWN" "$LAB/bin/orca" >/dev/null 2>&1 \
+  && fail "U8: a dead pid must be refused" || true
+
+make_lab own2 rt-own
+start_sleeper "$TMP_ROOT/some-other-data"; OTHER=$SLEEPER_PID
+write_record "$OTHER" rt-own
+orca_lab_assert_own_runtime "$LAB_DATA" "$OTHER" "$LAB/bin/orca" >/dev/null 2>&1 \
+  && fail "U8: a process whose environment names another data directory must be refused" || true
+
+make_lab own3 rt-own
+start_sleeper "$HOME/.orca"; OPERATOR=$SLEEPER_PID
+write_record "$OPERATOR" rt-own
+orca_lab_assert_own_runtime "$LAB_DATA" "$OPERATOR" "$LAB/bin/orca" >/dev/null 2>&1 \
+  && fail "A4: an operator-shaped runtime (environment names ~/.orca) must be refused" || true
+
+make_lab own4 rt-reported
+start_sleeper "$LAB_DATA"; OWN4=$SLEEPER_PID
+write_record "$OWN4" rt-recorded
+orca_lab_assert_own_runtime "$LAB_DATA" "$OWN4" "$LAB/bin/orca" >/dev/null 2>&1 \
+  && fail "U8: a status runtime id that differs from the record must be refused" || true
+pass "A4/U8: the own-runtime proof refuses a missing record, other pid, dead pid, other environment owner, operator runtime, and id mismatch"
+
+# --- U9: signals only reach proven lab processes -------------------------------
+
+make_lab sig1 rt-sig
+start_sleeper "$LAB_DATA"; LABPROC=$SLEEPER_PID
+start_sleeper "$TMP_ROOT/not-this-lab"; BYSTANDER=$SLEEPER_PID
+start_sleeper "$HOME/.orca"; OPERATOR2=$SLEEPER_PID
+for p in "$BYSTANDER" "$OPERATOR2"; do
+  orca_lab_signal TERM "$p" "$LAB_DATA" >/dev/null 2>&1 && fail "U9: a signal to non-lab pid $p must be refused"
+  alive "$p" || fail "U9: non-lab pid $p must still be running after the refused signal"
+done
+orca_lab_signal TERM "$$" "$LAB_DATA" >/dev/null 2>&1 && fail "U9: a signal to the test shell itself must be refused"
+orca_lab_signal TERM "" "$LAB_DATA" >/dev/null 2>&1 && fail "U9: an empty pid must be refused"
+orca_lab_signal TERM "$LABPROC" "$LAB_DATA" || fail "U9: a signal to a proven lab process must be sent"
+wait "$LABPROC" 2>/dev/null
+alive "$LABPROC" && fail "U9: the proven lab process must have terminated"
+# A caller whose own environment names the lab directory (as a lab-spawned shell
+# would) must still never signal itself.
+self_out=$(ORCA_USER_DATA_PATH=$LAB_DATA bash -c '. "$1"; orca_lab_signal TERM "$$" "$2" && echo SIGNALLED-SELF; echo survived' _ "$ROOT/tests/orca-lab-safety.sh" "$LAB_DATA" 2>&1)
+assert_contains "$self_out" "survived" "U9: a lab-environment shell must survive a self-signal attempt"
+assert_not_contains "$self_out" "SIGNALLED-SELF" "U9: the self-signal must be refused"
+pass "U9: signals reach only processes proven to belong to the lab"
+
+echo "ok - guard (process cluster)"
