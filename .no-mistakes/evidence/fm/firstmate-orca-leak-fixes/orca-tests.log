@@ -1,0 +1,30 @@
+== tests/fm-backend-orca.test.sh
+ok - fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness
+ok - fm-spawn.sh --backend orca --secondmate: refuses before secondmate-home mutation
+ok - fm-spawn.sh --backend orca: refuses before mutation when Orca runtime is not ready
+ok - fm-spawn.sh --backend orca: refuses non-isolated worktrees and closes implicit terminals
+ok - fm-spawn.sh --backend orca: removes worktree when terminal creation fails
+ok - fm-spawn.sh --backend orca: preserves metadata when abort cleanup fails
+ok - fm-spawn.sh --backend orca: releases terminal and worktree on later aborts
+ok - fm-peek/fm-send/fm-crew-state route through backend=orca metadata and its durable inbox
+ok - fm-peek/fm-crew-state: Orca read error JSON fails closed
+ok - fm_backend_target_exists: Orca ok:false read JSON is not live
+ok - fm-teardown.sh backend=orca: scout report gate then helper-backed worktree removal
+ok - fm-teardown.sh backend=orca: scout teardown refuses id/path mismatches
+ok - fm-teardown.sh backend=orca: releases terminal/worktree when path is absent
+ok - fm-teardown.sh backend=orca: preserves metadata on remove ok:false JSON
+ok - fm-teardown.sh backend=orca: scout report gate precedes pathless helper cleanup
+ok - fm-teardown.sh backend=orca: ship teardown fails closed when worktree path is missing
+ok - fm-teardown.sh backend=orca: ship teardown requires a matching Orca id path
+ok - fm-teardown.sh backend=orca: a release that reports no branch deletion still completes
+ok - fm-teardown.sh backend=orca: ship teardown fails closed when id resolution fails
+ok - fm-teardown.sh backend=orca: ship teardown refuses id/path mismatches
+ok - fm-teardown.sh backend=orca: refuses missing worktree ids before cleanup
+ok - fm-teardown.sh backend=orca: refuses incomplete worktree-only endpoint metadata before runtime dispatch
+ok - fm-teardown.sh --force: removes Orca secondmate children through Orca
+ok - fm-teardown.sh --force: refuses Orca child id/path mismatches
+ok - fm-teardown.sh --force: refuses partial Orca secondmate children before runtime dispatch
+== tests/fm-spawn-orca-worktree.test.sh
+ok - an Orca-backed fresh spawn enters the worktree Orca created for it, instead of hard-refusing on the post-launch proof
+ok - a relaunch against an Orca-backed task is refused before the RELAUNCH+orca worktree carve-out could run
+# all fm-spawn-orca-worktree tests passed
