@@ -921,6 +921,62 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/004-orca-docs-truth-pass/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/contracts/claim-audit.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/data-model.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-orca-docs-truth-pass/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-pin-ci-runner-image/analyze.md",
       "audience": "maintainer-verification"
     },

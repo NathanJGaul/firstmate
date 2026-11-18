@@ -1886,7 +1886,9 @@ The real lifecycle smoke proved spawn, metadata, nested-subshell worktree discov
 
 ## Orca
 
-Real readiness was verified against `/usr/local/bin/orca` with `/Applications/Orca.app` bundle version 1.4.116.
+### macOS, Orca.app 1.4.116
+
+Real readiness was verified on macOS against `/usr/local/bin/orca` with `/Applications/Orca.app` bundle version 1.4.116.
 
 ```sh
 orca status --json
@@ -1910,6 +1912,48 @@ tests/fm-bootstrap.test.sh
 ```
 
 The fake-Orca suite covers readiness, registration, create response parsing, metadata routing, popup-safe submit, and path-matched release refusal.
+
+### Linux, headless runtime 1.4.261
+
+Observed on 2026-11-17 on Linux against Orca 1.4.261 running as the headless runtime, using read-only commands and no new worktree or terminal.
+The macOS evidence above is retained and is not superseded: it records a different platform and version.
+
+```sh
+orca --version
+orca status --json
+orca repo list --json
+```
+
+Observed live:
+
+```text
+orca --version                                  1.4.261
+result.runtime.state=ready
+result.runtime.reachable=true
+result.runtime.appVersion=1.4.261
+result.runtime.remoteUpdateSupport.installMode=unsupported-headless-serve
+result.app.desktopWindowStatus=blocked
+result.runtime.capabilities=[...]               a capability list is reported
+orca repo list --json                           one repository kind=git, one kind=folder
+```
+
+Inside Orca-created task worktrees, `git rev-parse --git-dir` printed `<project>/.git/worktrees/<name>` and `--git-common-dir` printed `<project>/.git`, and `git worktree list` in the project clone listed them, so Orca's command line creates linked git worktrees.
+Claude workspace-trust entries were registered for those worktree paths, so the structural test in `bin/fm-claude-trust.sh` accepts them.
+`orca worktree ps --json` reported `liveTerminalCount=2` for each task worktree and per-agent `state` and `hasLivePty`.
+`orca terminal show --json` carried `agentIdentity` and `agentWait`, and `orca terminal read --json` carried `status` and `source`, so Orca exposes native agent state that Firstmate does not read.
+A repository registered as a folder has no git worktree for that structural test to accept.
+
+Read from help text or the runtime bundle and not exercised live:
+
+- Escape and Ctrl+U passthrough is not exercised live: `orca terminal send --help` says text sent without `--enter` is written to the terminal verbatim, so control bytes pass through, but no control byte was sent to a live terminal.
+- The `worktree create` response: the runtime bundle builds `result.startupTerminal` (handle, tab, pane, pty, and surface `background`) and no `result.terminal`, which matches the two terminals per task above, but a fresh create response was not captured.
+- `terminal send --wait-submit` and `--retry-request`: described in `orca terminal send --help` only.
+- What `orca worktree create` does under a repository registered as a folder.
+- Runtime restart and update behavior.
+- Any harness other than Claude.
+
+There is no live Orca lane: `tests/fm-backend-orca.test.sh` and the suites that drive it use a fake Orca, so they prove Firstmate's side of the contract and not Orca's real behavior.
+Refresh this entry by repeating the read-only commands above on a Linux host, and record a macOS re-run when a macOS machine is available.
 
 ## cmux
 
