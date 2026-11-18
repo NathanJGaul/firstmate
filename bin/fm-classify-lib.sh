@@ -2180,7 +2180,7 @@ window_to_task() {
 # record resolves, are returned unchanged. This is a rendering only: a wake's routing key, every per-window
 # marker, and every capture keep using the handle itself.
 window_wake_name() {  # <window> [state]
-  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} label
+  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}}
   if _window_meta_task_scan "$w" "$state"; then
     case "${w##*:}" in
       fm-*) printf '%s' "$w" ;;
