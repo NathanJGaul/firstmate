@@ -16,9 +16,8 @@ Prerequisites:
 - On macOS: `/Applications/Orca.app` installed, running, and ready.
 - On macOS: the `orca` CLI, installed with `brew install orca`.
 - On Linux: Orca's headless runtime, which Firstmate requires to report ready and which needs no desktop app.
-- The `orca` CLI on the `PATH` of the shell that runs Firstmate.
-  Orca's own terminals export `ORCA_CLI_BIN_DIR` and prepend it to `PATH`, so any other shell, including a primary restarted outside Orca, needs that directory added.
-  On the Linux headless runtime the shim directory is `~/.orca/cli/bin`.
+- The `orca` CLI, which Firstmate looks for on `PATH`, then in `$ORCA_CLI_BIN_DIR`, then in `~/.orca/cli/bin`.
+  Orca's own terminals export `ORCA_CLI_BIN_DIR` and prepend it to `PATH`, and the Linux headless runtime writes its shim to `~/.orca/cli/bin`, so a shell outside an Orca terminal, including a primary restarted outside Orca, finds the CLI without a `PATH` edit when it is in either directory.
 
 Select Orca with local `config/backend` containing `orca`, `FM_BACKEND=orca` for one launch, or an explicit request to Firstmate.
 It is never auto-detected.
@@ -26,6 +25,8 @@ It is never auto-detected.
 Before any spawn mutates repository state, Firstmate requires `orca status --json` to report `reachable=true` and `state="ready"`.
 The first task for a project registers that repository with `orca repo add --path` when needed.
 No manual repository registration is required.
+A project Orca already holds as a folder, or an unregistered path that is not a git repository, is refused before any worktree is created, and the refusal names the per-task `--backend <name>` option for running that task on another backend.
+Firstmate never changes the Orca registration.
 
 On macOS the Orca app can show a task's terminal, and the headless runtime on Linux has no window, so headless operators read it with `bin/fm-peek.sh <id>`.
 Routine supervision uses the recorded endpoint through `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'`.
@@ -101,7 +102,8 @@ These are the captain's current calls, and each holds until the capability it na
   Interrupt is refused for every harness except Grok, whose Ctrl+C interrupt the adapter can send.
   [`agent-control.md`](agent-control.md) owns the reasons.
 - A project Orca registered as a folder, including the firstmate repository itself, cannot host Orca work, because Orca treats a folder as a different object from a git worktree.
-  The spawn path does not check the repository kind today, so spawn that task with the per-task `--backend` override, for example `--backend herdr`.
+  Spawn refuses such a project up front, and also refuses an unregistered path that is not a git repository before running `orca repo add`.
+  Run that task with the per-task `--backend` override, for example `--backend herdr`.
 - Away mode and quiet mode are refused when the primary runs in an Orca terminal, because the away supervisor drives only Herdr and tmux.
   Run the primary in Herdr or tmux to use either.
 

@@ -526,18 +526,62 @@ SH
   pass "bootstrap requires git with an install instruction"
 }
 
+# run_orca_bootstrap: bootstrap for a backend=orca home whose CLI is offered
+# only where the case says. HOME and ORCA_CLI_BIN_DIR are pinned, and the base
+# path carries no orca, so only the named location can supply it. <uname> is the
+# platform the fake `uname` reports.
+run_orca_bootstrap() {  # <case> <cli-dir-or-empty> <uname>
+  local case_name=$1 cli_dir=$2 platform=$3 case_dir fakebin
+  case_dir="$TMP_ROOT/$case_name"
+  mkdir -p "$case_dir/home/config" "$case_dir/user-home"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' orca > "$case_dir/home/config/backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\n' "$platform" > "$fakebin/uname"
+  chmod +x "$fakebin/uname"
+  ORCA_BOOTSTRAP_OUT=$(HOME="$case_dir/user-home" ORCA_CLI_BIN_DIR="$cli_dir" \
+    PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" orca)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+}
+
+test_orca_backend_resolves_the_cli_from_orca_cli_bin_dir() {
+  local case_dir
+  case_dir="$TMP_ROOT/orca-cli-bin-dir"
+  mkdir -p "$case_dir/cli"
+  fm_fake_exit0 "$case_dir/cli" orca
+  run_orca_bootstrap orca-cli-bin-dir "$case_dir/cli" Linux
+  assert_not_contains "$ORCA_BOOTSTRAP_OUT" "MISSING: orca" \
+    "bootstrap should not report orca missing when its CLI is under ORCA_CLI_BIN_DIR"
+  pass "bootstrap: backend=orca finds the Orca CLI under ORCA_CLI_BIN_DIR"
+}
+
+test_orca_install_hint_is_platform_aware() {
+  run_orca_bootstrap orca-hint-linux "" Linux
+  assert_contains "$ORCA_BOOTSTRAP_OUT" "MISSING: orca (install: " "bootstrap should report the missing orca CLI on Linux"
+  assert_not_contains "$ORCA_BOOTSTRAP_OUT" "brew install orca" "the Linux hint must not offer Homebrew"
+  assert_contains "$ORCA_BOOTSTRAP_OUT" ".orca/cli/bin" "the Linux hint should name the CLI shim directory"
+  assert_contains "$ORCA_BOOTSTRAP_OUT" "ORCA_CLI_BIN_DIR" "the Linux hint should name ORCA_CLI_BIN_DIR"
+  run_orca_bootstrap orca-hint-darwin "" Darwin
+  assert_contains "$ORCA_BOOTSTRAP_OUT" "MISSING: orca (install: brew install orca  # or the platform's package manager)" \
+    "the macOS hint should stay the Homebrew command"
+  pass "bootstrap: the orca install hint is Homebrew on macOS and the CLI shim guidance elsewhere"
+}
+
 test_orca_backend_gates_orca_tool_only_when_selected() {
-  local case_dir fakebin out missing_orca
-  missing_orca="MISSING: orca (install: brew install orca  # or the platform's package manager)"
+  local case_dir fakebin out
 
   case_dir="$TMP_ROOT/orca-backend-selected"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' orca > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
-  out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" orca)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  # HOME and ORCA_CLI_BIN_DIR are pinned so the CLI's fallback locations cannot
+  # reach the operator's real Orca CLI; the install hint itself is platform
+  # specific and owned by test_orca_install_hint_is_platform_aware.
+  out=$(HOME="$case_dir/home" ORCA_CLI_BIN_DIR='' PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" orca)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ "$out" = "$missing_orca" ] || fail "backend=orca should require only the Orca-specific missing tool, got: $out"
+  [ "$(printf '%s\n' "$out" | grep -c .)" -eq 1 ] && [[ "$out" == "MISSING: orca (install: "* ]] \
+    || fail "backend=orca should require only the Orca-specific missing tool, got: $out"
 
   case_dir="$TMP_ROOT/orca-backend-not-selected"
   mkdir -p "$case_dir/home/config"
@@ -598,7 +642,10 @@ test_session_provider_backends_gate_own_cli_not_tmux() {
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    # The session CLI is hidden from the base path too: a host that really has it
+    # installed (herdr in /usr/bin) would otherwise satisfy the check this case
+    # simulates as failing.
+    out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" "$cli")" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     if [ "$backend" = herdr ]; then
       missing="MISSING_MANUAL: herdr (instructions: https://herdr.dev)"
@@ -1252,6 +1299,8 @@ test_tasks_axi_min_version
 test_quota_axi_min_version
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
+test_orca_backend_resolves_the_cli_from_orca_cli_bin_dir
+test_orca_install_hint_is_platform_aware
 test_session_provider_backends_do_not_require_tmux
 test_session_provider_backends_gate_own_cli_not_tmux
 test_herdr_install_requires_manual_action

@@ -7,6 +7,9 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-backend-orca-tests)
+FM_TEST_REPO="$TMP_ROOT/repo-path"
+git init -q "$FM_TEST_REPO"
+export FM_TEST_REPO
 # A claude spawn writes workspace trust into the launching user's own store,
 # and the script resolves it as ${CLAUDE_CONFIG_DIR:-${HOME:-}}, so the value
 # is pinned EMPTY beside the throwaway HOME: an inherited one would beat that
@@ -131,7 +134,7 @@ orca_log_count() {  # <noun> <verb> [log]
 # arguments are numbered responses, "<n>=<json>" or "<n>=exit:<code>", written
 # before the run. SPAWN_OMIT_PATH=1 leaves the path out of the worktree result.
 run_orca_spawn() {  # <case> <id> <shape> [<n>=<json>...]
-  local case_name=$1 id=$2 shape=$3 proj data config arg staged result_path
+  local case_name=$1 id=$2 shape=$3 proj data config arg staged result_path spawn_path cli_env
   shift 3
   proj="$TMP_ROOT/$case_name-project"
   SPAWN_WT="$TMP_ROOT/$case_name-wt"
@@ -144,6 +147,11 @@ run_orca_spawn() {  # <case> <id> <shape> [<n>=<json>...]
   touch "$SPAWN_STATE/.last-watcher-beat"
   orca_case "$case_name"
   printf '1\n' > "$RESP/1.exit"
+  if [ -n "${SPAWN_REPO_SHOW:-}" ]; then
+    # The repository is already registered: `repo show` answers with this JSON.
+    rm -f "$RESP/1.exit"
+    printf '%s\n' "$SPAWN_REPO_SHOW" > "$RESP/1.out"
+  fi
   printf '{"ok":true,"result":{"repo":{"id":"repo-%s"}}}\n' "$case_name" > "$RESP/2.out"
   result_path=$SPAWN_WT
   [ "${SPAWN_OMIT_PATH:-0}" != 1 ] || result_path=
@@ -154,7 +162,17 @@ run_orca_spawn() {  # <case> <id> <shape> [<n>=<json>...]
       *) printf '%s\n' "${arg#*=}" > "$RESP/${arg%%=*}.out" ;;
     esac
   done
-  SPAWN_OUT=$( HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+  # ORCA_CLI_BIN_DIR is always pinned so an inherited one never reaches a case.
+  # SPAWN_ORCA_ONLY_VIA_ENV=1 takes the fake off PATH and offers it only through
+  # ORCA_CLI_BIN_DIR, the way a shell outside an Orca terminal sees the CLI.
+  spawn_path="$FB:$PATH"
+  cli_env=
+  if [ "${SPAWN_ORCA_ONLY_VIA_ENV:-0}" = 1 ]; then
+    orca_free_path
+    spawn_path=$ORCA_FREE_PATH_CACHE
+    cli_env=$FB
+  fi
+  SPAWN_OUT=$( HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' PATH="$spawn_path" ORCA_CLI_BIN_DIR="$cli_env" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SPAWN_STATE" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --mode no-mistakes --yolo off --backend orca 2>&1 )
@@ -162,6 +180,214 @@ run_orca_spawn() {  # <case> <id> <shape> [<n>=<json>...]
   staged=$(tr '\037' '\n' < "$LOG" | sed -n "s/^\. '\([^']*\)'$/\1/p" | tail -1)
   [ -z "$staged" ] || rm -rf "$(dirname "$staged")"
   rm -rf "/tmp/fm-$id"
+}
+
+test_json_get_reads_repo_kind() {
+  local out status
+  out=$( printf '{"ok":true,"result":{"repo":{"id":"r1","kind":"folder"}}}\n' | \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_json_get repo-kind' "$ROOT" )
+  [ "$out" = folder ] || fail "repo-kind should read result.repo.kind, got '$out'"
+  out=$( printf '{"ok":true,"result":{"id":"r1","kind":"git"}}\n' | \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_json_get repo-kind' "$ROOT" )
+  [ "$out" = git ] || fail "repo-kind should fall back to result.kind, got '$out'"
+  status=0
+  out=$( printf '{"ok":true,"result":{"repo":{"id":"r1"}}}\n' | \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_json_get repo-kind' "$ROOT" ) || status=$?
+  [ "$status" -ne 0 ] && [ -z "$out" ] || fail "repo-kind should be empty when no kind is reported, got '$out' (status $status)"
+  pass "fm_backend_orca_json_get: repo-kind reads the repository kind and is empty when absent"
+}
+
+test_repo_ensure_refuses_a_folder_repo() {
+  local out status
+  orca_case repo-ensure-folder
+  printf '{"ok":true,"result":{"repo":{"id":"repo-folder","kind":"folder"}}}\n' > "$RESP/1.out"
+  status=0
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_repo_ensure /repo/folder-project' "$ROOT" 2>&1 ) || status=$?
+  [ "$status" -ne 0 ] || fail "repo_ensure should refuse a folder-kind repository, got '$out'"
+  assert_contains "$out" "/repo/folder-project" "the folder refusal should name the project"
+  assert_contains "$out" "folder" "the folder refusal should say Orca holds the project as a folder"
+  assert_contains "$out" "--backend" "the folder refusal should name the per-task --backend escape hatch"
+  assert_not_contains "$out" "repo-folder" "a refused folder repository must not print a repository id"
+  [ "$(orca_log_count repo show)" -eq 1 ] || fail "the refusal should read the registration once, log: $(cat "$LOG")"
+  [ "$(grep -c . "$LOG")" -eq 1 ] || fail "the refusal should issue no Orca call besides repo show, log: $(cat "$LOG")"
+  pass "fm_backend_orca_repo_ensure: refuses a folder repository naming --backend and changes nothing"
+}
+
+test_repo_ensure_accepts_git_and_kindless_repos() {
+  local out kind
+  for kind in git none; do
+    orca_case "repo-ensure-$kind"
+    if [ "$kind" = git ]; then
+      printf '{"ok":true,"result":{"repo":{"id":"repo-%s","kind":"git"}}}\n' "$kind" > "$RESP/1.out"
+    else
+      printf '{"ok":true,"result":{"repo":{"id":"repo-%s"}}}\n' "$kind" > "$RESP/1.out"
+    fi
+    out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+      bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_repo_ensure /repo/ok-project' "$ROOT" )
+    [ "$out" = "repo-$kind" ] || fail "repo_ensure should return the id for kind '$kind', got '$out'"
+    [ "$(orca_log_count repo add)" -eq 0 ] || fail "a registered '$kind' repository must not be added again"
+  done
+  pass "fm_backend_orca_repo_ensure: a git or kindless registered repository is used as before"
+}
+
+test_repo_ensure_unregistered_path_probes_git_before_add() {
+  local out status plain="$TMP_ROOT/unreg-plain" repo="$TMP_ROOT/unreg-git"
+  mkdir -p "$plain"
+  git init -q "$repo"
+  orca_case repo-ensure-unreg-plain
+  printf '1\n' > "$RESP/1.exit"
+  status=0
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_repo_ensure "$1"' "$ROOT" "$plain" 2>&1 ) || status=$?
+  [ "$status" -ne 0 ] || fail "an unregistered non-git path should be refused, got '$out'"
+  assert_contains "$out" "--backend" "the refusal should name the per-task --backend escape hatch"
+  [ "$(orca_log_count repo add)" -eq 0 ] || fail "a non-git path must never reach repo add, log: $(cat "$LOG")"
+  orca_case repo-ensure-unreg-git
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-new","kind":"git"}}}\n' > "$RESP/2.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_repo_ensure "$1"' "$ROOT" "$repo" )
+  [ "$out" = repo-new ] || fail "an unregistered git path should be added, got '$out'"
+  [ "$(orca_log_count repo add)" -eq 1 ] || fail "a git path should be added once, log: $(cat "$LOG")"
+  pass "fm_backend_orca_repo_ensure: an unregistered non-git path is refused before repo add, a git path is added"
+}
+
+test_spawn_refuses_a_folder_kind_repo_before_any_mutation() {
+  local id=orcafolderz9 log verb
+  SPAWN_REPO_SHOW='{"ok":true,"result":{"repo":{"id":"repo-folder-spawn","kind":"folder"}}}' \
+    run_orca_spawn folder-spawn "$id" startup
+  [ "$SPAWN_RC" -ne 0 ] || fail "spawn should refuse a folder-registered project on Orca, got: $SPAWN_OUT"
+  assert_contains "$SPAWN_OUT" "folder" "the spawn refusal should say the project is a folder repository"
+  assert_contains "$SPAWN_OUT" "--backend" "the spawn refusal should name the per-task --backend escape hatch"
+  log=$(cat "$LOG")
+  for verb in "repo add" "repo rm" "repo set" "worktree create" "terminal"; do
+    assert_not_contains "$log" "orca"$'\x1f'"${verb%% *}"$'\x1f'"${verb#* }" "the folder refusal must not log '$verb'"
+  done
+  assert_not_contains "$log" $'orca\x1f''terminal' "the folder refusal must not touch a terminal"
+  assert_absent "$SPAWN_STATE/$id.meta" "the folder refusal must not record task metadata"
+  pass "fm-spawn.sh --backend orca: refuses a folder-kind repository before any worktree, terminal, or registration change"
+}
+
+# orca_free_path: the caller's PATH with no orca on it. Building it walks every
+# PATH directory, so it is built once per run and reused (call it directly, never
+# in a command substitution, or the cache is lost with the subshell).
+ORCA_FREE_PATH_CACHE=
+orca_free_path() {
+  [ -n "$ORCA_FREE_PATH_CACHE" ] || ORCA_FREE_PATH_CACHE=$(fm_test_base_path_sans "$PATH" orca)
+}
+
+# make_marker_orca: a stand-in `orca` that only records which copy ran, so a
+# resolution test can tell the candidate locations apart.
+make_marker_orca() {  # <dir> <marker>
+  mkdir -p "$1"
+  # shellcheck disable=SC2016  # Single quotes are deliberate: the ${...} belongs to the generated script.
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s" >> "${FM_ORCA_LOG:?}"\nprintf "{\\"ok\\":true,\\"result\\":{}}\\n"\n' "$2" > "$1/orca"
+  chmod +x "$1/orca"
+}
+
+# resolve_orca_cli: run the adapter's tool check with the CLI offered only in
+# the named candidate locations, then call `orca` the way an adapter primitive
+# would. Sets RESOLVE_RC, RESOLVE_OUT, RESOLVE_LOG and RESOLVE_MARKER (which
+# copy ran, empty when none did). HOME is a throwaway so the operator's real
+# ~/.orca/cli/bin can never be found, and the base path carries no orca.
+#   on_path  0|1
+#   env_mode unset|empty|missing|nonexec|dir|ok
+#   home_has 0|1
+resolve_orca_cli() {  # <case> <on_path> <env_mode> <home_has>
+  local case_name=$1 on_path=$2 env_mode=$3 home_has=$4 d pathdir envdir home sans
+  local -a env_arg
+  d="$TMP_ROOT/$case_name"
+  rm -rf "$d"
+  pathdir="$d/path"; envdir="$d/env"; home="$d/home"
+  mkdir -p "$pathdir" "$envdir" "$home/.orca/cli/bin"
+  RESOLVE_LOG="$d/log"
+  : > "$RESOLVE_LOG"
+  [ "$on_path" != 1 ] || make_marker_orca "$pathdir" path
+  env_arg=(ORCA_CLI_BIN_DIR="$envdir")
+  case "$env_mode" in
+    unset) env_arg=(-u ORCA_CLI_BIN_DIR) ;;
+    empty) env_arg=(ORCA_CLI_BIN_DIR=) ;;
+    missing) env_arg=(ORCA_CLI_BIN_DIR="$d/nowhere") ;;
+    nonexec) printf '#!/bin/sh\n' > "$envdir/orca"; chmod 644 "$envdir/orca" ;;
+    dir) mkdir "$envdir/orca" ;;
+    ok) make_marker_orca "$envdir" env ;;
+    *) fail "unknown env mode '$env_mode'" ;;
+  esac
+  [ "$home_has" != 1 ] || make_marker_orca "$home/.orca/cli/bin" home
+  orca_free_path
+  sans=$ORCA_FREE_PATH_CACHE
+  ! PATH="$sans" command -v orca >/dev/null 2>&1 || fail "the orca-free search path still resolved orca"
+  PATH="$sans" command -v bash >/dev/null 2>&1 || fail "the orca-free search path lost bash, so this case would pass vacuously"
+  RESOLVE_RC=0
+  # shellcheck disable=SC2016  # Single quotes are deliberate: $0 belongs to the inner bash.
+  RESOLVE_OUT=$( env "${env_arg[@]}" HOME="$home" PATH="$pathdir:$sans" FM_ORCA_LOG="$RESOLVE_LOG" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_tool_check && orca worktree show' "$ROOT" 2>&1 ) || RESOLVE_RC=$?
+  RESOLVE_MARKER=$(tail -n 1 "$RESOLVE_LOG")
+}
+
+test_tool_check_resolution_order() {
+  resolve_orca_cli cli-all 1 ok 1
+  [ "$RESOLVE_RC" -eq 0 ] && [ "$RESOLVE_MARKER" = path ] \
+    || fail "PATH should win over ORCA_CLI_BIN_DIR and ~/.orca/cli/bin, ran '$RESOLVE_MARKER' (rc $RESOLVE_RC): $RESOLVE_OUT"
+  resolve_orca_cli cli-env-only 0 ok 0
+  [ "$RESOLVE_RC" -eq 0 ] && [ "$RESOLVE_MARKER" = env ] \
+    || fail "a CLI only under ORCA_CLI_BIN_DIR should be found and run, ran '$RESOLVE_MARKER' (rc $RESOLVE_RC): $RESOLVE_OUT"
+  resolve_orca_cli cli-home-only 0 unset 1
+  [ "$RESOLVE_RC" -eq 0 ] && [ "$RESOLVE_MARKER" = home ] \
+    || fail "a CLI only under ~/.orca/cli/bin should be found and run, ran '$RESOLVE_MARKER' (rc $RESOLVE_RC): $RESOLVE_OUT"
+  resolve_orca_cli cli-env-and-home 0 ok 1
+  [ "$RESOLVE_RC" -eq 0 ] && [ "$RESOLVE_MARKER" = env ] \
+    || fail "ORCA_CLI_BIN_DIR should beat ~/.orca/cli/bin, ran '$RESOLVE_MARKER' (rc $RESOLVE_RC): $RESOLVE_OUT"
+  pass "fm_backend_orca_tool_check: resolves the CLI from PATH, then ORCA_CLI_BIN_DIR, then ~/.orca/cli/bin"
+}
+
+test_tool_check_skips_unusable_candidates() {
+  local mode
+  for mode in empty missing nonexec dir; do
+    resolve_orca_cli "cli-skip-$mode" 0 "$mode" 1
+    [ "$RESOLVE_RC" -eq 0 ] && [ "$RESOLVE_MARKER" = home ] \
+      || fail "an ORCA_CLI_BIN_DIR that is $mode should fall through to ~/.orca/cli/bin, ran '$RESOLVE_MARKER' (rc $RESOLVE_RC): $RESOLVE_OUT"
+  done
+  pass "fm_backend_orca_tool_check: skips an empty, missing, non-executable, or directory candidate"
+}
+
+test_tool_check_refusal_is_actionable() {
+  resolve_orca_cli cli-none 0 unset 0
+  [ "$RESOLVE_RC" -ne 0 ] || fail "tool check should refuse when no location holds the CLI, got: $RESOLVE_OUT"
+  assert_contains "$RESOLVE_OUT" "backend=orca selected but the 'orca' CLI is not installed" "the refusal should keep naming the missing CLI"
+  assert_contains "$RESOLVE_OUT" "PATH" "the refusal should name PATH"
+  assert_contains "$RESOLVE_OUT" "ORCA_CLI_BIN_DIR" "the refusal should name ORCA_CLI_BIN_DIR"
+  assert_contains "$RESOLVE_OUT" ".orca/cli/bin" "the refusal should name the ~/.orca/cli/bin shim directory"
+  [ ! -s "$RESOLVE_LOG" ] || fail "the refusal should make no Orca call, log: $(cat "$RESOLVE_LOG")"
+  pass "fm_backend_orca_tool_check: an absent CLI is refused naming every searched location and the fix"
+}
+
+test_worktree_create_uses_a_cli_found_off_path() {
+  local out home
+  orca_case create-off-path
+  home="$CASE_DIR/home"
+  mkdir -p "$home"
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-off-path"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-off::/orca/wt-off","path":"/tmp/orca-wt-off"}}}\n' > "$RESP/3.out"
+  orca_free_path
+  out=$( HOME="$home" ORCA_CLI_BIN_DIR="$FB" PATH="$ORCA_FREE_PATH_CACHE" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" 2>&1 ) \
+    || fail "worktree create should work with the CLI only under ORCA_CLI_BIN_DIR, got: $out"
+  [ "$out" = $'wt-off::/orca/wt-off\t/tmp/orca-wt-off' ] || fail "worktree create printed '$out'"
+  [ "$(orca_log_count worktree create)" -eq 1 ] || fail "worktree create should have reached the CLI found off PATH, log: $(cat "$LOG")"
+  pass "fm_backend_orca_worktree_create: every Orca call uses a CLI found off PATH"
+}
+
+test_spawn_finds_the_orca_cli_under_orca_cli_bin_dir() {
+  local id=orcacliz10
+  SPAWN_ORCA_ONLY_VIA_ENV=1 run_orca_spawn cli-env-spawn "$id" startup
+  [ "$SPAWN_RC" -eq 0 ] || fail "spawn should complete with the CLI only under ORCA_CLI_BIN_DIR, got: $SPAWN_OUT"
+  assert_contains "$SPAWN_OUT" "spawned $id " "spawn did not report the task as spawned"
+  [ "$(orca_log_count worktree create)" -eq 1 ] || fail "spawn should have created the worktree through the CLI found off PATH"
+  assert_grep "backend=orca" "$SPAWN_STATE/$id.meta" "meta missing backend=orca"
+  pass "fm-spawn.sh --backend orca: runs with the CLI only under ORCA_CLI_BIN_DIR"
 }
 
 test_capture_reads_terminal_tail_json() {
@@ -444,7 +670,9 @@ test_kill_refuses_when_the_orca_cli_is_absent() {
     || fail "the orca-free search path still resolved orca"
   PATH="$orca_free" command -v bash >/dev/null 2>&1 \
     || fail "the orca-free search path lost bash, so this case would pass vacuously"
-  out=$( PATH="$orca_free" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+  # HOME and ORCA_CLI_BIN_DIR are pinned so the adapter's fallback locations
+  # cannot reach the operator's real Orca CLI.
+  out=$( HOME="$CASE_DIR/home" ORCA_CLI_BIN_DIR='' PATH="$orca_free" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_kill term-123' "$ROOT" 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "kill reported success for a close its missing CLI never attempted"
@@ -518,7 +746,7 @@ test_json_get_ignores_undocumented_terminal_id_shapes() {
   printf '{"ok":true,"result":{"repo":{"id":"repo-123"}}}\n' > "$RESP/2.out"
   printf '{"ok":true,"result":{"worktree":{"id":"wt-123::/orca/wt-123","path":"/tmp/orca-wt","terminal":{"handle":"term-nested"}}}}\n' > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" )
   wt_id=${out%%$'\t'*}
   wt_path=${out#*$'\t'}
   term=${wt_path#*$'\t'}
@@ -537,7 +765,7 @@ test_worktree_and_terminal_helpers_parse_json() {
   printf '{"ok":true,"result":{"worktree":{"id":"wt-123::/orca/wt-123","path":"/tmp/orca-wt"}}}\n' > "$RESP/3.out"
   printf '{"ok":true,"result":{"terminal":{"handle":"term-123"}}}\n' > "$RESP/4.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" )
   wt_id=${out%%$'\t'*}
   wt_path=${out#*$'\t'}
   [ "$wt_id" = wt-123::/orca/wt-123 ] || fail "worktree helper should print worktree id, got '$wt_id'"
@@ -545,9 +773,9 @@ test_worktree_and_terminal_helpers_parse_json() {
   term=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_terminal_create wt-123::/orca/wt-123 fm-task' "$ROOT" )
   [ "$term" = term-123 ] || fail "terminal helper should print terminal handle, got '$term'"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''show'$'\x1f''--repo'$'\x1f''path:/repo/path'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''show'$'\x1f''--repo'$'\x1f'"path:$FM_TEST_REPO"$'\x1f''--json' \
     "worktree helper should first check repo registration"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''add'$'\x1f''--path'$'\x1f''/repo/path'$'\x1f''--json' \
+  assert_contains "$(cat "$LOG")" $'orca\x1f''repo'$'\x1f''add'$'\x1f''--path'$'\x1f'"$FM_TEST_REPO"$'\x1f''--json' \
     "worktree helper should register an absent repo"
   assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''create'$'\x1f''--repo'$'\x1f''id:repo-123'$'\x1f''--name'$'\x1f''fm-task'$'\x1f''--no-parent'$'\x1f''--setup'$'\x1f''skip'$'\x1f''--json' \
     "worktree helper did not create an independent no-hook worktree"
@@ -563,7 +791,7 @@ test_worktree_create_removes_worktree_when_path_missing() {
   printf '{"ok":true,"result":{"repo":{"id":"repo-no-path"}}}\n' > "$RESP/2.out"
   printf '{"ok":true,"result":{"worktree":{"id":"wt-no-path::/orca/wt-no-path"},"terminal":{"handle":"term-no-path"}}}\n' > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "worktree helper should fail when Orca omits the worktree path"
   assert_contains "$out" "orca worktree create did not return a path for fm-task" \
@@ -1494,7 +1722,7 @@ run_orca_worktree_create() {  # <case> <shape> <path-or-empty> [<n>=<json>|<n>=e
     esac
   done
   CREATE_OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" 2>&1 )
   CREATE_RC=$?
 }
 
@@ -1747,6 +1975,16 @@ test_worktree_path_resolves_id
 test_dispatcher_sources_orca_and_routes_primitives
 test_json_get_ignores_undocumented_terminal_id_shapes
 test_worktree_and_terminal_helpers_parse_json
+test_json_get_reads_repo_kind
+test_repo_ensure_refuses_a_folder_repo
+test_repo_ensure_accepts_git_and_kindless_repos
+test_repo_ensure_unregistered_path_probes_git_before_add
+test_spawn_refuses_a_folder_kind_repo_before_any_mutation
+test_tool_check_resolution_order
+test_tool_check_skips_unusable_candidates
+test_tool_check_refusal_is_actionable
+test_worktree_create_uses_a_cli_found_off_path
+test_spawn_finds_the_orca_cli_under_orca_cli_bin_dir
 test_worktree_create_removes_worktree_when_path_missing
 test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails
 test_spawn_writes_orca_metadata_and_launches_harness

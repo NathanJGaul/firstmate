@@ -12,8 +12,24 @@
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../fm-composer-lib.sh"
 
+# fm_backend_orca_tool_check: make the `orca` CLI runnable by name, or refuse.
+# Orca's own terminals put its CLI shim directory on PATH, but a restarted
+# primary, a daemon, or a worker usually runs outside one, so the CLI is looked
+# for in order: PATH, then $ORCA_CLI_BIN_DIR (the variable Orca's terminals
+# export), then ~/.orca/cli/bin (where the Linux headless runtime writes its
+# shim). A hit off PATH is prepended to this shell's PATH so every later bare
+# `orca` call in the same shell uses it; an entry point that runs this inside a
+# command substitution must therefore call it again in its own shell.
 fm_backend_orca_tool_check() {
-  command -v orca >/dev/null 2>&1 || { echo "error: backend=orca selected but the 'orca' CLI is not installed" >&2; return 1; }
+  local dir
+  command -v orca >/dev/null 2>&1 && return 0
+  for dir in "${ORCA_CLI_BIN_DIR:-}" "${HOME:+$HOME/.orca/cli/bin}"; do
+    [ -n "$dir" ] && [ -f "$dir/orca" ] && [ -x "$dir/orca" ] || continue
+    PATH="$dir${PATH:+:$PATH}"
+    return 0
+  done
+  echo "error: backend=orca selected but the 'orca' CLI is not installed or not reachable: it is not on PATH, not in \$ORCA_CLI_BIN_DIR (${ORCA_CLI_BIN_DIR:-unset}), and not in ~/.orca/cli/bin. Install Orca and start it once so it writes its CLI shim, then put ~/.orca/cli/bin on PATH or export ORCA_CLI_BIN_DIR" >&2
+  return 1
 }
 
 fm_backend_orca_runtime_check() {
@@ -48,7 +64,7 @@ process.exit(1);
 '
 }
 
-fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id
+fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id repo-kind
   # Terminal handles are accepted only from known terminal result shapes:
   # result.terminal or a root terminal object with .handle, plus, for
   # worktree-terminal-handle only, the result.startupTerminal that Orca 1.4.261
@@ -86,6 +102,7 @@ if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path 
 if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
 if (field === "worktree-terminal-handle") v = handle(explicitTerm) || handle(startupTerm) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
+if (field === "repo-kind") v = scalar(repo.kind);
 if (!v) process.exit(1);
 process.stdout.write(String(v));
 ' "$field"
@@ -118,12 +135,27 @@ fm_backend_orca_run_json() {
 }
 
 fm_backend_orca_repo_ensure() {  # <project-path>
-  local project=$1 out repo_id
+  local project=$1 out repo_id kind
   fm_backend_orca_tool_check || return 1
   out=$(orca repo show --repo "path:$project" --json 2>/dev/null || true)
   if repo_id=$(printf '%s' "$out" | fm_backend_orca_json_get repo-id 2>/dev/null); then
+    # Orca registers some projects as a folder rather than a git repository, and
+    # a folder cannot host the linked worktrees this backend creates. Refuse
+    # before anything is created, and leave the registration as the operator set
+    # it: the way out is a different backend for this one task.
+    kind=$(printf '%s' "$out" | fm_backend_orca_json_get repo-kind 2>/dev/null || true)
+    if [ "$kind" = folder ]; then
+      echo "error: backend=orca cannot host work for $project: Orca holds it as a folder, not a git repository. Run this task on another backend with the per-task option --backend <name>; Firstmate leaves the Orca registration unchanged" >&2
+      return 1
+    fi
     printf '%s' "$repo_id"
     return 0
+  fi
+  # Orca would hold a non-git path as a folder, and adding it would change the
+  # operator's registration, so refuse before the add.
+  if ! git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "error: backend=orca cannot host work for $project: it is not a git repository, so Orca would hold it as a folder. Run this task on another backend with the per-task option --backend <name>; Firstmate leaves the Orca registration unchanged" >&2
+    return 1
   fi
   out=$(orca repo add --path "$project" --json) || return 1
   repo_id=$(printf '%s' "$out" | fm_backend_orca_json_get repo-id) || {
@@ -135,6 +167,9 @@ fm_backend_orca_repo_ensure() {  # <project-path>
 
 fm_backend_orca_worktree_create() {  # <project-path> <name>
   local project=$1 name=$2 repo_id out wt_id wt_path terminal
+  # The repo step below runs in a command substitution, so a CLI resolved there
+  # would not reach this shell's own `orca worktree create`.
+  fm_backend_orca_tool_check || return 1
   repo_id=$(fm_backend_orca_repo_ensure "$project") || return 1
   out=$(orca worktree create --repo "id:$repo_id" --name "$name" --no-parent --setup skip --json) || return 1
   wt_id=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-id) || {
