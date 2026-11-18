@@ -53,6 +53,11 @@
 #   (w) index.lock mtime read failure                         -> lock kept, REFUSE
 #   (x) transient lock cleared after first failed return      -> retry ALLOW
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
+#
+# Also covers the per-task browser session stop (the "per-task browser session"
+# section): cleanup stops the task's own chrome-devtools-axi session once, after
+# the leaked-process reap and only past every refusal, bounded and best effort,
+# and never the default session or a session the caller's environment names.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -4323,6 +4328,243 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+# --- per-task browser session -------------------------------------------------
+#
+# Every local launch exports CHROME_DEVTOOLS_AXI_SESSION=<task id>
+# (bin/fm-spawn.sh), so cleanup stops that one chrome-devtools-axi session, once,
+# after the leaked-process reap and best effort. The fake below records what the
+# real tool would have been told: its arguments, the session variable it was
+# handed, and whether the case's leaked process was already gone. The case's own
+# PATH puts it ahead of any real chrome-devtools-axi on the host.
+install_fake_browser_tool() {  # <case-dir> [leaked-pid]
+  local case_dir=$1 leaked_pid=${2:-}
+  cat > "$case_dir/fakebin/chrome-devtools-axi" <<EOF
+#!/usr/bin/env bash
+leaked=none
+if [ -n "$leaked_pid" ]; then
+  if kill -0 $leaked_pid 2>/dev/null; then leaked=alive; else leaked=gone; fi
+fi
+printf '%s session=%s leaked=%s\n' "\$*" "\${CHROME_DEVTOOLS_AXI_SESSION-unset}" "\$leaked" >> "$case_dir/browser.log"
+[ -z "\${FM_FAKE_BROWSER_HANG:-}" ] || exec sleep "\$FM_FAKE_BROWSER_HANG"
+exit "\${FM_FAKE_BROWSER_EXIT:-0}"
+EOF
+  chmod +x "$case_dir/fakebin/chrome-devtools-axi"
+}
+
+# The case's tools without chrome-devtools-axi: the host may have the real one
+# on PATH, and "no such tool" must be exercised against a PATH that truly lacks it.
+make_path_without_browser_tool() {  # <case-dir>
+  local case_dir=$1 path_dir lsof_path
+  path_dir=$(make_path_without_lsof "$case_dir")
+  lsof_path=$(command -v lsof) && ln -sf "$lsof_path" "$path_dir/lsof"
+  printf '%s\n' "$path_dir"
+}
+
+# Same as write_meta and run_teardown for a task whose id is not task-x1.
+write_meta_for() {  # <case-dir> <id>
+  local case_dir=$1 id=$2
+  fm_write_meta "$case_dir/state/$id.meta" \
+    "window=firstmate:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "spawn_gen=teardown-test-$id"
+}
+
+run_teardown_for() {  # <case-dir> <id> [args...]
+  local case_dir=$1 id=$2
+  shift 2
+  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_DATA_OVERRIDE="$case_dir/data" \
+  FM_CONFIG_OVERRIDE="$case_dir/config" \
+  PATH="$case_dir/fakebin:${FM_TEARDOWN_TEST_PATH:-$PATH}" \
+    "$TEARDOWN" "$id" "$@"
+}
+
+browser_log_lines() {
+  if [ -f "$1/browser.log" ]; then wc -l < "$1/browser.log" | tr -d ' '; else printf '0'; fi
+}
+
+test_teardown_stops_the_task_browser_session() {  # A9
+  local case_dir rc=0
+  case_dir=$(make_case browser-stop)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  install_fake_browser_tool "$case_dir"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "browser-stop: teardown should succeed"
+  assert_equals 1 "$(browser_log_lines "$case_dir")" \
+    "browser-stop: the task's browser session should be stopped exactly once"
+  assert_grep 'stop session=task-x1 ' "$case_dir/browser.log" \
+    "browser-stop: the stop should name the task's own session"
+  pass "teardown stops the task's own chrome-devtools-axi session exactly once"
+}
+
+test_browser_session_stop_follows_the_leaked_process_reap() {  # A10
+  local case_dir rc=0 pid
+  case_dir=$(make_case browser-stop-order)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "browser-stop-order: setup sleeper did not start"
+  install_fake_browser_tool "$case_dir" "$pid"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  kill -0 "$pid" 2>/dev/null && { kill -KILL "$pid" 2>/dev/null || true; }
+
+  expect_code 0 "$rc" "browser-stop-order: teardown should succeed"
+  assert_grep 'stop session=task-x1 leaked=gone' "$case_dir/browser.log" \
+    "browser-stop-order: the leaked process must already be reaped when the browser session is stopped"
+  pass "the browser session stop runs only after the leaked-process reap"
+}
+
+test_a_failing_browser_stop_never_blocks_teardown() {  # A11
+  local case_dir rc=0
+  case_dir=$(make_case browser-stop-fails)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  install_fake_browser_tool "$case_dir"
+
+  FM_FAKE_BROWSER_EXIT=3 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "browser-stop-fails: a failed stop must not change teardown's exit status"
+  assert_equals 1 "$(browser_log_lines "$case_dir")" \
+    "browser-stop-fails: the stop should still have been attempted once"
+  assert_grep 'browser session task-x1' "$case_dir/stderr" \
+    "browser-stop-fails: a failed stop should warn about the session"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "browser-stop-fails: teardown should still have removed the task record"
+  pass "a chrome-devtools-axi stop that fails warns and leaves teardown's outcome unchanged"
+}
+
+test_a_hung_browser_stop_is_cut_off_at_its_bound() {  # U10
+  local case_dir rc=0 started elapsed
+  case_dir=$(make_case browser-stop-hangs)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  install_fake_browser_tool "$case_dir"
+
+  started=$(date +%s)
+  FM_FAKE_BROWSER_HANG=60 FM_TEARDOWN_BROWSER_STOP_TIMEOUT=1 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  elapsed=$(( $(date +%s) - started ))
+
+  expect_code 0 "$rc" "browser-stop-hangs: a hung stop must not change teardown's exit status"
+  [ "$elapsed" -lt 40 ] || fail "browser-stop-hangs: teardown waited ${elapsed}s on a hung stop with a 1s bound"
+  assert_grep 'browser session task-x1' "$case_dir/stderr" \
+    "browser-stop-hangs: a stop that hit its bound should warn about the session"
+  pass "a hung chrome-devtools-axi stop is ended at its bound and teardown completes"
+}
+
+test_a_non_numeric_stop_bound_falls_back_to_the_default() {  # U11
+  local case_dir rc=0
+  case_dir=$(make_case browser-stop-bad-bound)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  install_fake_browser_tool "$case_dir"
+
+  FM_TEARDOWN_BROWSER_STOP_TIMEOUT=soon \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "browser-stop-bad-bound: a bad bound must not abort teardown"
+  assert_grep 'stop session=task-x1 ' "$case_dir/browser.log" \
+    "browser-stop-bad-bound: the stop should still run under the default bound"
+  pass "a non-numeric browser stop bound falls back to the default instead of aborting teardown"
+}
+
+test_teardown_without_the_browser_tool_is_silent() {  # A12
+  local case_dir rc=0
+  case_dir=$(make_case browser-tool-absent)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  FM_TEARDOWN_TEST_PATH=$(make_path_without_browser_tool "$case_dir") \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "browser-tool-absent: teardown should succeed without chrome-devtools-axi"
+  assert_no_grep 'chrome-devtools-axi' "$case_dir/stderr" \
+    "browser-tool-absent: a host without the tool should get no browser warning"
+  assert_no_grep 'browser session' "$case_dir/stderr" \
+    "browser-tool-absent: a host without the tool should get no browser session warning"
+  pass "teardown on a host without chrome-devtools-axi completes with no browser warning"
+}
+
+test_a_refused_teardown_never_stops_the_browser_session() {  # A13
+  local case_dir rc=0
+  case_dir=$(make_case browser-stop-refused)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "unpushed work"
+  install_fake_browser_tool "$case_dir"
+
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "browser-stop-refused: unlanded work should refuse teardown"
+  assert_equals 0 "$(browser_log_lines "$case_dir")" \
+    "browser-stop-refused: a refused teardown must not stop the browser session"
+  pass "a teardown refused for unlanded work leaves the task's browser session running"
+}
+
+test_a_default_named_task_never_stops_the_default_session() {  # A15
+  local case_dir rc=0
+  case_dir=$(make_case browser-stop-default)
+  write_meta_for "$case_dir" default
+  land_shippable_commit "$case_dir"
+  install_fake_browser_tool "$case_dir"
+
+  run_teardown_for "$case_dir" default > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "browser-stop-default: teardown of a task named default should succeed"
+  assert_equals 0 "$(browser_log_lines "$case_dir")" \
+    "browser-stop-default: the machine-wide default session must never be stopped"
+  pass "teardown of a task whose id is the default session name stops no browser session"
+}
+
+test_the_stop_names_the_task_not_the_callers_session() {  # A16
+  local value case_dir rc
+  for value in default other-session; do
+    rc=0
+    case_dir=$(make_case "browser-stop-caller-$value")
+    write_meta "$case_dir" no-mistakes ship
+    land_shippable_commit "$case_dir"
+    install_fake_browser_tool "$case_dir"
+
+    CHROME_DEVTOOLS_AXI_SESSION=$value \
+      run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+    expect_code 0 "$rc" "browser-stop-caller-$value: teardown should succeed"
+    assert_equals 1 "$(browser_log_lines "$case_dir")" \
+      "browser-stop-caller-$value: exactly one stop should be issued"
+    assert_grep 'stop session=task-x1 ' "$case_dir/browser.log" \
+      "browser-stop-caller-$value: a caller's session must never be the one stopped"
+  done
+  pass "the stop always names the task's own session whatever session the caller's environment carries"
+}
+
+test_an_overlong_legacy_id_never_stops_a_browser_session() {  # A17
+  local case_dir rc=0 id
+  id=$(printf 'a%.0s' $(seq 1 70))
+  case_dir=$(make_case browser-stop-overlong)
+  write_meta_for "$case_dir" "$id"
+  land_shippable_commit "$case_dir"
+  install_fake_browser_tool "$case_dir"
+
+  run_teardown_for "$case_dir" "$id" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "browser-stop-overlong: teardown of a legacy long id should succeed"
+  assert_equals 0 "$(browser_log_lines "$case_dir")" \
+    "browser-stop-overlong: an id that cannot name a session must not issue a stop"
+  pass "teardown of a legacy task id too long to name a session stops no browser session"
+}
+
 # Copy the public teardown script tree, then drop or blank one required file.
 # Symlinks keep the copy cheap; an unreadable case replaces one link with a
 # real mode-000 file so the probe is of the file itself.
@@ -4607,3 +4849,13 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_teardown_stops_the_task_browser_session
+test_browser_session_stop_follows_the_leaked_process_reap
+test_a_failing_browser_stop_never_blocks_teardown
+test_a_hung_browser_stop_is_cut_off_at_its_bound
+test_a_non_numeric_stop_bound_falls_back_to_the_default
+test_teardown_without_the_browser_tool_is_silent
+test_a_refused_teardown_never_stops_the_browser_session
+test_a_default_named_task_never_stops_the_default_session
+test_the_stop_names_the_task_not_the_callers_session
+test_an_overlong_legacy_id_never_stops_a_browser_session

@@ -341,7 +341,12 @@
 #   An enabled task trace also retains TRACEPARENT. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment, including the
 #   FM_TASK_INBOX export every launch carries (the absolute state/<id>.inbox
-#   path the steering doorbell names). Raw commands must
+#   path the steering doorbell names) and the CHROME_DEVTOOLS_AXI_SESSION export
+#   that gives the agent its own chrome-devtools-axi browser session named by the
+#   task id (bin/fm-pr-lib.sh fm_browser_session_name decides which ids name one;
+#   an id it refuses, such as "default", gets no export). Being a launch export it
+#   overrides a session already in the pane, so the allowlist neither needs nor
+#   carries the name. bin/fm-teardown.sh stops that session at cleanup. Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
@@ -5447,6 +5452,17 @@ fi
 # kill switch below it is an export statement, so it survives a compound raw
 # launch and the launch-env-allowlist `env -i` wrapper.
 LAUNCH="export FM_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
+# Every launch also gives its agent its own chrome-devtools-axi browser session,
+# named by the task id, so one worker's browser bridge is never shared with
+# another's (the shared machine-wide default session stalls every worker when
+# its bridge fails). The same export-statement channel as FM_TASK_INBOX makes it
+# override a session already in the pane and survive the allowlist `env -i`.
+# fm_browser_session_name (bin/fm-pr-lib.sh) owns which ids name a session, and
+# bin/fm-teardown.sh stops the same name at cleanup; an id it refuses, such as
+# the default session's own name, gets no export.
+if BROWSER_SESSION=$(fm_browser_session_name "$ID"); then
+  LAUNCH="export CHROME_DEVTOOLS_AXI_SESSION=$(shell_quote "$BROWSER_SESSION"); $LAUNCH"
+fi
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # When the live-harness gate has exported DISABLE_AUTOUPDATER into this spawn's
 # own environment, carry it into the launch command text so Claude Code's

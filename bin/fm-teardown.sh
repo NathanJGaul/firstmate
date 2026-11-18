@@ -294,6 +294,19 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote secondmate worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
+#   Fix 4 - stop the task's own browser session. Every local launch gives its
+#     agent CHROME_DEVTOOLS_AXI_SESSION=<task id> (bin/fm-spawn.sh), so each
+#     worker has its own chrome-devtools-axi bridge; a bridge is a detached
+#     daemon whose working directory lies outside Fix 2's roots, so nothing else
+#     ends it. After the Fix 2 reap, and only once every unlanded-work refusal
+#     has passed, teardown runs `chrome-devtools-axi stop` with that session set
+#     explicitly, so a session in this script's own environment can never be the
+#     one stopped. bin/fm-pr-lib.sh fm_browser_session_name decides whether the
+#     task id names a session: the default session and an id that cannot name
+#     one are never stopped. Best effort and bounded by
+#     FM_TEARDOWN_BROWSER_STOP_TIMEOUT seconds (default 15; non-numeric or zero
+#     uses the default): a missing chrome-devtools-axi, a failed stop, or a hit
+#     bound warns at most and never blocks this teardown.
 # After Fix 1 and Fix 2, when config/pipeline-spend opts this home in, a ship
 # task whose local copy this teardown owns has its no-mistakes pipeline spend
 # recorded by bin/fm-pipeline-spend.sh, which owns the attribution and the
@@ -2300,6 +2313,27 @@ EOF
   return 1
 }
 
+# Fix 4 (see script header): stop the task's own chrome-devtools-axi session.
+# fm_browser_session_name (bin/fm-pr-lib.sh) decides whether the task id names a
+# session - the same rule bin/fm-spawn.sh used to export it - so the default
+# session and any id that cannot name one are never touched. The session is set
+# explicitly on the command, so a value inherited from this script's caller can
+# never select another session. Best effort and bounded: an absent tool, a
+# failure, or a hit bound warns at most and never changes teardown's outcome.
+BROWSER_STOP_TIMEOUT=${FM_TEARDOWN_BROWSER_STOP_TIMEOUT:-15}
+case "$BROWSER_STOP_TIMEOUT" in ''|*[!0-9]*|0) BROWSER_STOP_TIMEOUT=15 ;; esac
+teardown_stop_browser_session() {
+  local session status=0
+  session=$(fm_browser_session_name "$ID") || return 0
+  command -v chrome-devtools-axi >/dev/null 2>&1 || return 0
+  fm_run_timed "$BROWSER_STOP_TIMEOUT" env "CHROME_DEVTOOLS_AXI_SESSION=$session" \
+    chrome-devtools-axi stop >/dev/null 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "warning: could not stop browser session $session (status $status); cleanup continues" >&2
+  fi
+  return 0
+}
+
 require_orca_worktree_path_match() {
   local worktree_id=$1 inspected=$2 resolved inspected_abs resolved_abs
   resolved=$(fm_backend_worktree_path orca "$worktree_id") || {
@@ -3561,6 +3595,10 @@ if [ "$KIND" = ship ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend"
     "$SCRIPT_DIR/fm-pipeline-spend.sh" record "$ID" >/dev/null \
     || echo "warning: could not record $ID's no-mistakes pipeline spend; cleanup continues" >&2
 fi
+
+# Fix 4 (see script header): stop the task's own browser session, after the
+# leaked-process reap above and only once every unlanded-work refusal has passed.
+teardown_stop_browser_session
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
 # pruned code root. Best effort - a sweep failure never blocks this teardown.
