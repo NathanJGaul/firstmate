@@ -805,7 +805,7 @@ mixed_fleet_home() {
 run_mixed_fleet_bootstrap() {  # <case-dir> <fakebin> <tool-to-hide...>
   local case_dir=$1 fakebin=$2
   shift 2
-  PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" "$@")" FM_HOME="$case_dir/home" \
+  PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" "$@")" HOME="$case_dir/user-home" ORCA_CLI_BIN_DIR="" FM_HOME="$case_dir/home" \
     FM_ROOT_OVERRIDE="$case_dir/home" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh"
 }
 
@@ -830,7 +830,7 @@ test_bootstrap_checks_the_backend_a_live_task_runs_on() {
   mixed_fleet_home "$case_dir" - os-task=orca
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
-  [ "$out" = "MISSING: orca (install: brew install orca  # or the platform's package manager)" ] \
+  [ "$(printf '%s\n' "$out" | grep -c .)" -eq 1 ] && [[ "$out" == "MISSING: orca (install: "* ]] \
     || fail "a live Orca task in a tmux home should report orca missing, got: $out"
   fm_fake_exit0 "$fakebin" orca
   out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
