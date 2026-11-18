@@ -2132,33 +2132,63 @@ status_open_activities() {  # <status-file-or-dash>
   _fm_status_open_activities_stream < "$f"
 }
 
+# _window_meta_task_scan: find the task record that names <window> as its
+# window= or terminal=. Sets WINDOW_META_TASK and returns 0 on a match; returns 1
+# with it empty otherwise. It sets a global instead of printing so the hot
+# per-poll callers pay no command substitution.
+_window_meta_task_scan() {  # <window> [state]
+  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} meta mw mt line
+  WINDOW_META_TASK=
+  [ -n "$state" ] || return 1
+  for meta in "$state"/*.meta; do
+    [ -e "$meta" ] || continue
+    # The last window= and terminal= values, read in one pass without the
+    # grep | tail -1 | cut -d= -f2- pipelines this once forked per key.
+    mw=
+    mt=
+    {
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          window=*) mw=${line#window=} ;;
+          terminal=*) mt=${line#terminal=} ;;
+        esac
+      done < "$meta"
+    } 2>/dev/null
+    [ "$mw" = "$w" ] || [ "$mt" = "$w" ] || continue
+    WINDOW_META_TASK=${meta##*/}
+    WINDOW_META_TASK=${WINDOW_META_TASK%.meta}
+    return 0
+  done
+  return 1
+}
+
 # task id from a recorded window target, falling back to the tmux-shaped
 # "<session>:fm-<id>" form when no metadata state is available.
 window_to_task() {
-  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} meta mw mt t line
-  if [ -n "$state" ]; then
-    for meta in "$state"/*.meta; do
-      [ -e "$meta" ] || continue
-      # The last window= and terminal= values, read in one pass without the
-      # grep | tail -1 | cut -d= -f2- pipelines this once forked per key.
-      mw=
-      mt=
-      {
-        while IFS= read -r line || [ -n "$line" ]; do
-          case "$line" in
-            window=*) mw=${line#window=} ;;
-            terminal=*) mt=${line#terminal=} ;;
-          esac
-        done < "$meta"
-      } 2>/dev/null
-      [ "$mw" = "$w" ] || [ "$mt" = "$w" ] || continue
-      t=${meta##*/}
-      t=${t%.meta}
-      printf '%s' "$t"
-      return 0
-    done
+  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} t
+  if _window_meta_task_scan "$w" "$state"; then
+    printf '%s' "$WINDOW_META_TASK"
+    return 0
   fi
   t="${w##*:}"; t="${t#fm-}"; printf '%s' "$t"
+}
+
+# window_wake_name: how a wake REASON names <window>. A backend handle that does
+# not itself name its task (an Orca `term_<uuid>`, a Herdr `<session>:<pane>`)
+# reads as `fm-<id>` when a task record resolves it; a handle whose last
+# `:`-component already starts with `fm-` (tmux's `<session>:fm-<id>`), and one no
+# record resolves, are returned unchanged. This is a rendering only: a wake's routing key, every per-window
+# marker, and every capture keep using the handle itself.
+window_wake_name() {  # <window> [state]
+  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}}
+  if _window_meta_task_scan "$w" "$state"; then
+    case "${w##*:}" in
+      fm-*) printf '%s' "$w" ;;
+      *) printf '%s' "fm-$WINDOW_META_TASK" ;;
+    esac
+    return 0
+  fi
+  printf '%s' "$w"
 }
 
 # --- home-owned status-append ledger ----------------------------------------

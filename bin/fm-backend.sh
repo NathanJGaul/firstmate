@@ -316,6 +316,42 @@ fm_backend_required_tools() {  # <backend>
   esac
 }
 
+# fm_backend_fleet_required_tools: the tools a home needs on its default backend
+# AND on every backend a live task record in <state-dir> names, so a task that
+# runs somewhere other than the default is checked at session start. Prints one
+# `<tool> <backend>` line per distinct tool, the default backend's tools first and
+# then each further backend in first-seen record order; the named backend is the
+# one whose availability check owns the tool (fm_backend_required_tool_available).
+# A record with no backend field counts as tmux (fm_backend_of_meta), and a
+# recorded backend this version does not know has no verified dependency set, so
+# it adds nothing. An invalid DEFAULT adds nothing either; the caller reports it.
+fm_backend_fleet_required_tools() {  # <default-backend> <state-dir>
+  local default=$1 state=${2:-} meta backend order tools tool seen=' '
+  order=$default
+  if [ -n "$state" ] && [ -d "$state" ]; then
+    for meta in "$state"/*.meta; do
+      [ -f "$meta" ] || continue
+      backend=$(fm_backend_of_meta "$meta")
+      fm_backend_is_known "$backend" || continue
+      fm_backend_list_contains "$order" "$backend" || order="$order $backend"
+    done
+  fi
+  while IFS= read -r backend; do
+    [ -n "$backend" ] || continue
+    tools=$(fm_backend_required_tools "$backend") || continue
+    while IFS= read -r tool; do
+      [ -n "$tool" ] || continue
+      case "$seen" in *" $tool "*) continue ;; esac
+      seen="$seen$tool "
+      printf '%s %s\n' "$tool" "$backend"
+    done <<EOF_TOOLS
+$(printf '%s\n' "$tools" | tr ' ' '\n')
+EOF_TOOLS
+  done <<EOF_BACKENDS
+$(printf '%s\n' "$order" | tr ' ' '\n')
+EOF_BACKENDS
+}
+
 fm_backend_required_tool_available() {  # <backend> <tool>
   local backend=$1 tool=$2 required
   required=$(fm_backend_required_tools "$backend") || return 1

@@ -839,13 +839,18 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
+# The delta is the union over the default backend and every backend a live task
+# record in state/ names (fm_backend_fleet_required_tools), so a task running on
+# a non-default backend has its own tools checked too.
 COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
-if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
-  BACKEND_VALID=0
-  BACKEND_TOOLS=""
-fi
+fm_backend_required_tools "$BACKEND" >/dev/null || BACKEND_VALID=0
+# The backend delta covers the default backend plus every backend a live task
+# record names (fm_backend_fleet_required_tools), one "<tool> <backend>" line per
+# distinct tool; a mixed fleet is checked for everything it actually runs on.
+BACKEND_TOOL_LINES=$(fm_backend_fleet_required_tools "$BACKEND" "$STATE")
+BACKEND_TOOLS=$(printf '%s\n' "$BACKEND_TOOL_LINES" | awk 'NF { printf "%s%s", sep, $1; sep = " " }')
 TOOLS="$BACKEND_TOOLS $COMMON_TOOLS"
 NO_MISTAKES_MIN=1.46.0
 # AXI-FAMILY FLOOR POLICY. Every axi-family floor is the CURRENT LATEST published
@@ -1415,10 +1420,14 @@ detect_local_tools() {
   if [ "$BACKEND_VALID" -eq 0 ]; then
     echo "BACKEND_INVALID: $BACKEND (known: $FM_BACKEND_KNOWN)"
   fi
-  for t in $BACKEND_TOOLS; do
-    fm_backend_required_tool_available "$BACKEND" "$t" \
+  local tool_backend
+  while read -r t tool_backend; do
+    [ -n "$t" ] || continue
+    fm_backend_required_tool_available "$tool_backend" "$t" \
       || missing_tool_diagnostic "$t"
-  done
+  done <<EOF_BACKEND_TOOLS
+$BACKEND_TOOL_LINES
+EOF_BACKEND_TOOLS
   for t in $COMMON_TOOLS; do
     command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
   done

@@ -1007,7 +1007,7 @@ SSH_AUTH_SOCK
 
 ### Variables retained and where values come from
 
-Firstmate retains basic home, executable search, terminal, locale, temporary-directory, and backend routing variables, plus its explicit launch assignments, its ship and scout task marker, the compact-adviser kill switch described below, and enabled task trace.
+Firstmate retains basic home, executable search, terminal, locale, temporary-directory, and backend routing variables (including the `ORCA_` variables an Orca terminal exports, which Orca's CLI routing, agent hooks, and per-agent configuration depend on), plus its explicit launch assignments, its ship and scout task marker, the compact-adviser kill switch described below, and enabled task trace.
 [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact retained names and parsing mechanics.
 
 Other ambient names must be listed explicitly, including custom credential-store locations, proxy settings, and certificate overrides when required by the selected tools.
@@ -1347,10 +1347,12 @@ Lavish is a presentation-only dependency for visual decisions and reports; nonvi
 
 **Backend requirements**
 
-The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
-`fm_backend_required_tools` in `bin/fm-backend.sh` owns the backend additions:
+The per-backend delta is required for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, plus every backend a live task record in `state/` names, so a home is never told to install a tool no backend in use would need and never misses one a running task depends on.
+A task record with no `backend=` field counts as `tmux`, and a recorded backend this version does not know adds nothing.
+A tool several of those backends require is reported once.
+`fm_backend_required_tools` in `bin/fm-backend.sh` owns each backend's additions, and `fm_backend_fleet_required_tools` there owns the union:
 
-| Resolved backend | Additional tools |
+| Backend | Additional tools |
 | --- | --- |
 | `tmux` | `tmux`, `treehouse` |
 | `herdr` | `herdr`, `jq`, `treehouse` |

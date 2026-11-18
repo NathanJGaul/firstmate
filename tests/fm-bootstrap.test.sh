@@ -777,6 +777,154 @@ test_treehouse_lease_check_follows_resolved_backend() {
   pass "bootstrap: the treehouse lease check follows the resolved backend's worktree provider"
 }
 
+# --- mixed-fleet tool checks (specs/005-orca-fleet-plumbing) -----------------
+# Required tools are the union of the default backend's set and the set of every
+# backend a live task record names, so a task on a non-default backend is checked
+# at session start rather than failing later.
+
+# mixed_fleet_home <case-dir> <default-backend|-> <id=backend|id=> ...: a manual-backlog home
+# whose state/ holds one task record per pair; an empty backend writes a record
+# with no backend field, which means tmux.
+mixed_fleet_home() {
+  local case_dir=$1 default=$2 pair id backend
+  shift 2
+  mkdir -p "$case_dir/home/config" "$case_dir/home/state"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  [ "$default" = - ] || printf '%s\n' "$default" > "$case_dir/home/config/backend"
+  for pair in "$@"; do
+    id=${pair%%=*}
+    backend=${pair#*=}
+    if [ -n "$backend" ]; then
+      fm_write_meta "$case_dir/home/state/$id.meta" "window=fm-$id" "kind=ship" "backend=$backend"
+    else
+      fm_write_meta "$case_dir/home/state/$id.meta" "window=s:fm-$id" "kind=ship"
+    fi
+  done
+}
+
+run_mixed_fleet_bootstrap() {  # <case-dir> <fakebin> <tool-to-hide...>
+  local case_dir=$1 fakebin=$2
+  shift 2
+  PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" "$@")" HOME="$case_dir/user-home" ORCA_CLI_BIN_DIR="" FM_HOME="$case_dir/home" \
+    FM_ROOT_OVERRIDE="$case_dir/home" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh"
+}
+
+test_fleet_required_tools_orders_default_first() {
+  local case_dir out want
+  case_dir="$TMP_ROOT/fleet-tools-order"
+  mixed_fleet_home "$case_dir" - a-one=orca b-two=herdr c-three= d-four=bogus e-five=zellij
+  out=$(. "$ROOT/bin/fm-backend.sh"; fm_backend_fleet_required_tools tmux "$case_dir/home/state")
+  want=$(printf '%s\n' 'tmux tmux' 'treehouse tmux' 'orca orca' 'herdr herdr' 'jq herdr' 'zellij zellij')
+  [ "$out" = "$want" ] || fail "the union should list the default first, then each recorded backend's new tools once, got: $out"
+  out=$(. "$ROOT/bin/fm-backend.sh"; fm_backend_fleet_required_tools orca "$case_dir/home/state")
+  want=$(printf '%s\n' 'orca orca' 'herdr herdr' 'jq herdr' 'treehouse herdr' 'tmux tmux' 'zellij zellij')
+  [ "$out" = "$want" ] || fail "an orca default should keep its own tools first, got: $out"
+  out=$(. "$ROOT/bin/fm-backend.sh"; fm_backend_fleet_required_tools orca "$case_dir/no-such-state")
+  [ "$out" = "orca orca" ] || fail "an absent state directory should leave only the default's tools, got: $out"
+  pass "fleet tools: the default backend's set comes first and each recorded backend adds only what is new"
+}
+
+test_bootstrap_checks_the_backend_a_live_task_runs_on() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/fleet-orca-task-in-tmux-home"
+  mixed_fleet_home "$case_dir" - os-task=orca
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
+  [ "$(printf '%s\n' "$out" | grep -c .)" -eq 1 ] && [[ "$out" == "MISSING: orca (install: "* ]] \
+    || fail "a live Orca task in a tmux home should report orca missing, got: $out"
+  fm_fake_exit0 "$fakebin" orca
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
+  [ -z "$out" ] || fail "with orca present the mixed fleet should be silent, got: $out"
+  pass "bootstrap: a live task's recorded backend adds its tools to the required set"
+}
+
+test_bootstrap_treats_an_unrecorded_task_backend_as_tmux() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/fleet-legacy-task-in-orca-home"
+  mixed_fleet_home "$case_dir" orca legacy-task=
+  fakebin=$(make_fake_toolchain "$case_dir")
+  rm -f "$fakebin/tmux" "$fakebin/treehouse"
+  fm_fake_exit0 "$fakebin" orca
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" tmux treehouse)
+  assert_contains "$out" "MISSING: tmux" "a task with no recorded backend runs on tmux, so an orca home must still check tmux"
+  assert_contains "$out" "MISSING: treehouse" "a task with no recorded backend runs on tmux, so an orca home must still check treehouse"
+  pass "bootstrap: a task record with no backend field counts as tmux"
+}
+
+test_bootstrap_reports_a_shared_tool_once() {
+  local case_dir fakebin out count
+  case_dir="$TMP_ROOT/fleet-shared-tool"
+  mixed_fleet_home "$case_dir" - h-task=herdr z-task=zellij c-task=cmux
+  fakebin=$(make_fake_toolchain "$case_dir")
+  fm_fake_exit0 "$fakebin" herdr zellij cmux
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" jq)
+  count=$(printf '%s\n' "$out" | grep -c '^MISSING: jq ')
+  [ "$count" = 1 ] || fail "jq is required by three recorded backends and should be reported once, got $count in: $out"
+  pass "bootstrap: a tool several backends require is reported once"
+}
+
+test_bootstrap_without_task_records_is_unchanged() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/fleet-no-records"
+  mixed_fleet_home "$case_dir" -
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
+  [ -z "$out" ] || fail "an empty state directory should leave a tmux home silent, got: $out"
+  case_dir="$TMP_ROOT/fleet-only-default-records"
+  mixed_fleet_home "$case_dir" - plain-task= explicit-task=tmux
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
+  [ -z "$out" ] || fail "tmux task records in a tmux home should add nothing, got: $out"
+  case_dir="$TMP_ROOT/fleet-orca-default-records"
+  mixed_fleet_home "$case_dir" orca o-task=orca
+  fakebin=$(make_fake_toolchain "$case_dir")
+  rm -f "$fakebin/tmux" "$fakebin/treehouse"
+  fm_fake_exit0 "$fakebin" orca
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" tmux treehouse)
+  [ -z "$out" ] || fail "orca task records in an orca home should add nothing, got: $out"
+  pass "bootstrap: records on the default backend leave the required set unchanged"
+}
+
+test_bootstrap_ignores_an_unknown_recorded_backend() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/fleet-unknown-recorded"
+  mixed_fleet_home "$case_dir" - odd-task=bogus
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
+  [ -z "$out" ] || fail "a task recorded on an unknown backend should add no requirement and no diagnostic, got: $out"
+  case_dir="$TMP_ROOT/fleet-unknown-default"
+  mixed_fleet_home "$case_dir" bogus o-task=orca
+  fakebin=$(make_fake_toolchain "$case_dir")
+  fm_fake_exit0 "$fakebin" orca
+  out=$(run_mixed_fleet_bootstrap "$case_dir" "$fakebin" orca)
+  assert_contains "$out" "BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux)" \
+    "an invalid default backend should still be reported"
+  assert_not_contains "$out" "MISSING: tmux" "an invalid default backend must not fall back to tmux requirements"
+  pass "bootstrap: an unknown recorded backend adds nothing and the default's invalid diagnostic is unchanged"
+}
+
+test_treehouse_lease_check_follows_recorded_backends() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/fleet-lease-recorded"
+  mixed_fleet_home "$case_dir" orca h-task=herdr
+  fakebin=$(make_fake_toolchain "$case_dir")
+  rm -f "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" orca herdr jq
+  # FM_FAKE_TREEHOUSE_LEASE_HELP is unset below: the fake treehouse advertises no --lease.
+  out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" tmux)" FM_HOME="$case_dir/home" \
+    FM_ROOT_OVERRIDE="$case_dir/home" "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "MISSING: treehouse" "a recorded herdr task uses treehouse, so a lease-less treehouse must be reported in an orca home"
+  case_dir="$TMP_ROOT/fleet-lease-not-recorded"
+  mixed_fleet_home "$case_dir" orca
+  fakebin=$(make_fake_toolchain "$case_dir")
+  rm -f "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" orca
+  out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" tmux)" FM_HOME="$case_dir/home" \
+    FM_ROOT_OVERRIDE="$case_dir/home" "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "without a treehouse-using task an orca home must stay silent, got: $out"
+  pass "bootstrap: the treehouse lease check follows the backends tasks are recorded on"
+}
+
 test_fleet_sync_timeout_scales_with_origin_backed_project_count() {
   local case_dir home fakebin fake_root out
   case_dir="$TMP_ROOT/fleet-timeout-scaled"
@@ -1308,6 +1456,13 @@ test_cmux_bundled_cli_satisfies_dependency
 test_unknown_backend_reports_invalid_configuration
 test_json_backends_require_jq_not_tmux
 test_treehouse_lease_check_follows_resolved_backend
+test_fleet_required_tools_orders_default_first
+test_bootstrap_checks_the_backend_a_live_task_runs_on
+test_bootstrap_treats_an_unrecorded_task_backend_as_tmux
+test_bootstrap_reports_a_shared_tool_once
+test_bootstrap_without_task_records_is_unchanged
+test_bootstrap_ignores_an_unknown_recorded_backend
+test_treehouse_lease_check_follows_recorded_backends
 test_fleet_sync_timeout_scales_with_origin_backed_project_count
 test_fleet_sync_timeout_floor_preserves_small_fleets
 test_fleet_sync_timeout_explicit_override_wins

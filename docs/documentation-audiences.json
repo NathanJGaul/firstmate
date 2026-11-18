@@ -1061,6 +1061,54 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/005-orca-fleet-plumbing/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/005-orca-fleet-plumbing/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
