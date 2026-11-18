@@ -333,7 +333,10 @@
 #   LANG LC_ALL LC_CTYPE TMPDIR TMP TEMP GOTMPDIR, plus backend identity/routing:
 #   TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH HERDR_PANE_ID
 #   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID CMUX_SOCKET_PATH
-#   ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION, plus the task
+#   ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION, plus every
+#   ORCA_ name an Orca terminal exports (the fixed list in ORCA_FLOOR_NAMES below:
+#   terminal identity, CLI routing, agent hooks, runtime source, and per-agent
+#   configuration pointers; a floor entry is a name, not a prefix), plus the task
 #   marker FM_TASK_ID that ship and scout panes receive above, plus the
 #   compact-adviser kill switch COMPACT_ADVISER_DISABLE, which the floor also
 #   pins to 1 with a literal assignment so it survives the cleared environment
@@ -5540,6 +5543,19 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
     LAUNCH="unset TRACEPARENT; $LAUNCH"
   fi
 fi
+# The ORCA_ names an Orca 1.4.261 terminal exports into every terminal it starts.
+# The floor forwards names, never a prefix: it expands each as ${NAME+"NAME=$NAME"}
+# in the destination shell, which cannot enumerate a prefix portably, so a name a
+# later Orca adds joins this list when observed. CLAUDE_CODE_PLUGIN_DIRS, which
+# Orca also injects, does not carry the prefix and is not part of this floor.
+ORCA_FLOOR_NAMES="ORCA_AGENT_HOOK_ENDPOINT ORCA_AGENT_HOOK_ENV ORCA_AGENT_HOOK_OPENCODE_TUI \
+  ORCA_AGENT_HOOK_PORT ORCA_AGENT_HOOK_TOKEN ORCA_AGENT_HOOK_TRANSPORT ORCA_AGENT_HOOK_VERSION \
+  ORCA_AGENT_PANE ORCA_APP_VERSION ORCA_CLAUDE_AGENT_VIEW_PLUGIN_DIR ORCA_CLAUDE_CONFIG_DIR \
+  ORCA_CLAUDE_PROFILE_POINTER ORCA_CLI_BIN_DIR ORCA_CLI_COMMAND ORCA_HISTFILE ORCA_IMAGE_PROTOCOL \
+  ORCA_OMP_FRESH_CONFIG ORCA_OMP_SOURCE_AGENT_DIR ORCA_OMP_STATUS_EXTENSION ORCA_OPENCODE_AGENT \
+  ORCA_PANE_KEY ORCA_PI_SOURCE_AGENT_DIR ORCA_REMOTE_VIEWER_CLIPBOARD ORCA_RUNTIME_SOURCE_ID \
+  ORCA_RUNTIME_SOURCE_INCARNATION ORCA_RUNTIME_SOURCE_PROFILE_PATH ORCA_TAB_ID ORCA_TERMINAL_HANDLE \
+  ORCA_USER_DATA ORCA_USER_DATA_PATH ORCA_VERSION ORCA_WORKSPACE_ID ORCA_WORKTREE_ID"
 if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH_ENV_PREFIX='/usr/bin/env -i'
   # COMPACT_ADVISER_DISABLE is the intentional declarative floor-membership
@@ -5550,7 +5566,7 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
     CMUX_SOCKET_PATH ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION \
     FM_TASK_ID COMPACT_ADVISER_DISABLE LAVISH_AXI_HOST \
-    $LAUNCH_ENV_NAMES; do
+    $ORCA_FLOOR_NAMES $LAUNCH_ENV_NAMES; do
     # Only validated names enter shell syntax. Values expand once, quoted, in
     # the pane shell and never become source text or spawn-process snapshots.
     # shellcheck disable=SC2016

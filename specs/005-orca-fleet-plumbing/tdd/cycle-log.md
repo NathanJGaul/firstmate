@@ -34,3 +34,13 @@ Method notes:
 - refactor: none.
 - docs: `docs/configuration.md` "Backend requirements" and the bootstrap header now state the union.
 
+## Cycle 2: US2 an allowlisted Orca launch keeps Orca's variables (A8-A11)
+
+- tests (new, in `tests/fm-spawn-orca-worktree.test.sh`, whose fake `orca` now also logs every call): `test_orca_allowlisted_launch_keeps_the_orca_floor` (A8, A9, A10), `test_orca_launch_without_an_allowlist_is_unfiltered` (A11)
+- red against the unchanged `bin/fm-spawn.sh`:
+  - A8 `not ok - an allowlisted Orca launch dropped ORCA_AGENT_HOOK_ENDPOINT from the agent environment`
+  - A11 was green before the change: it pins that an absent allowlist file still inherits the whole terminal environment, which the change must keep true.
+- green: the observed Orca 1.4.261 names are listed once in `ORCA_FLOOR_NAMES` in `bin/fm-spawn.sh` and joined into the floor loop beside the `TMUX*` and `HERDR_*` names. Both tests and the three neighbouring launch-env suites (`fm-spawn-compact-adviser-disable`, `fm-spawn-dispatch-profile`, `fm-trace-context-spawn`) pass.
+- refactor: none.
+- docs: the `fm-spawn.sh` header contract and `docs/configuration.md` "Variables retained" name the Orca variables.
+

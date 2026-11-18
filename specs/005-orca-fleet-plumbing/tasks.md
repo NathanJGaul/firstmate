@@ -41,11 +41,11 @@ Tests extend `tests/fm-bootstrap.test.sh`, `tests/fm-spawn-orca-worktree.test.sh
 
 ### Tests for User Story 2 (write first, see them fail)
 
-- [ ] T007 [A8,A9,A10,A11] [US2] Extend `tests/fm-spawn-orca-worktree.test.sh` so its fake Orca logs sent text, then add the retained, unset-stays-unset, outside-the-floor-removed, and no-allowlist cases.
+- [X] T007 [A8,A9,A10,A11] [US2] Extend `tests/fm-spawn-orca-worktree.test.sh` so its fake Orca logs sent text, then add the retained, unset-stays-unset, outside-the-floor-removed, and no-allowlist cases.
 
 ### Implementation for User Story 2
 
-- [ ] T008 [US2] Add the Orca names to the floor loop in `bin/fm-spawn.sh` and update its header contract and `docs/configuration.md` "Variables retained".
+- [X] T008 [US2] Add the Orca names to the floor loop in `bin/fm-spawn.sh` and update its header contract and `docs/configuration.md` "Variables retained".
 
 ## Phase 4: User Story 3 - Wakes name the task (Priority: P2)
 
