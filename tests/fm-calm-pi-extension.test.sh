@@ -596,6 +596,9 @@ function makeHost(session) {
   Object.assign(host, {
     // Pi reads its session through runtimeHost, which a session replacement swaps.
     runtimeHost: { session },
+    // Pi 1.5 lists user bash output here while the agent works, and
+    // updatePendingMessagesDisplay iterates it before reading the queues.
+    pendingBashComponents: [],
     compactionQueuedMessages: [],
     statuses: [],
     warnings: [],

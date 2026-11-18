@@ -921,6 +921,42 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/004-pin-ci-runner-image/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/checklist.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/plan.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/004-pin-ci-runner-image/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     },
