@@ -190,3 +190,8 @@ Each mutant was applied to a committed file, the audit run for the behavior it t
 - structure: `bin/fm-doc-audience-check.sh` -> `ok surfaces=224 local_links=761`
 - lint: `bin/fm-lint.sh` and `bin/fm-lint.sh bin/fm-claude-trust.sh` -> exit 0 with ShellCheck 0.11.0 and actionlint 1.7.12 installed into a scratch directory outside the worktree
 - no test file changed: `git diff af20b2c9 --stat -- tests` is empty
+
+## Pipeline document step and rebase
+
+- the no-mistakes document step corrected the stale "no native busy primitive" statement for Orca in `docs/architecture.md` (commit `no-mistakes(document): Fix stale Orca native busy-state claim in architecture`), which research R7 had left as follow-up; `claim-audit.sh` `A15` now allows that one file
+- the branch was rebased onto origin/main `43f04966` and the audience inventory conflicts were resolved by keeping both sides

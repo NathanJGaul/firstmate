@@ -184,7 +184,7 @@ allowed_files() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
-      "$O" | "$AC" | "$RB" | "$CT" | "$SK" | docs/documentation-audiences.json | "$FEATURE"/*) ;;
+      "$O" | "$AC" | "$RB" | "$CT" | "$SK" | docs/architecture.md | docs/documentation-audiences.json | "$FEATURE"/*) ;;
       *) printf '  unexpected changed file: %s\n' "$f"; bad=1 ;;
     esac
   done < <({ git diff --name-only "$BASE"; git ls-files --others --exclude-standard; } | sort -u)
