@@ -38,7 +38,7 @@ The fixture commit is a one-field correction whose red run was observed on the u
 | Mutant | Test | Result |
 | --- | --- | --- |
 | `tests-herdr` runs on `ubuntu-latest` | `tests/fm-ci-workflow.test.sh` | killed: exit 1 naming `tests-herdr: ubuntu-latest` |
-| the guard's Linux selection removed so no job is found | covered by the vacuity branch | not run; the branch prints its own message |
+| every Linux label replaced by a non-Ubuntu label so no Linux job exists | `tests/fm-ci-workflow.test.sh` | killed: exit 1 with `no Linux job found, so the pin guard would pass vacuously` |
 | `pendingBashComponents` removed from the fake host | `tests/fm-calm-pi-extension.test.sh` with Pi 1.5.2 | killed: exit 1 with the `TypeError` |
 
 ## Acceptance-criteria coverage

@@ -26,5 +26,5 @@
 - [x] `bin/fm-doc-audience-check.sh` reports `ok`.
 - [x] Every sentence of the new Markdown sits on its own line and no em dash was added.
 - [x] No agent name appears as a commit co-author.
-- [x] `tests/fm-ci-workflow.test.sh` passes in full.
+- [x] `tests/fm-ci-workflow.test.sh` passes in full, and its two mutants (one floating label, no Linux job) are killed.
 - [ ] Hosted checks on the delivery PR are green (SC-003): recorded in the final status report, not in this file.
