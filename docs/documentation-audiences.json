@@ -954,6 +954,9 @@
     },
     {
       "path": "specs/004-pin-ci-runner-image/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
