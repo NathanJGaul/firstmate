@@ -96,7 +96,6 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - Orca is explicit-only.
 - A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
-- A receipt proves Orca accepted input and, for a recognized agent, that its turn started; it does not prove which agent runs in a live terminal, so `fm_backend_agent_state` stays unverified for Orca.
 - Before any spawn mutates repository state, Firstmate reads `appVersion` and the capability list from `orca status --json` and refuses a runtime whose version is below 1.4.261, the lowest runtime proven against this adapter.
   A runtime that reports no readable version is not refused, but it reports no capability either, so nothing gated on one is enabled for it.
   A task already running is not re-checked, so only a new spawn meets the floor.
