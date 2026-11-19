@@ -45,6 +45,10 @@ next=$(( $(cat "$COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
   for a in "$@"; do printf '\x1f%s' "$a"; done
   printf '\n'
 } >> "$LOG"
+if [ "${1:-}" = status ] && [ -n "${FM_ORCA_STATUS_FILE:-}" ]; then
+  cat "$FM_ORCA_STATUS_FILE"
+  exit "${FM_ORCA_STATUS_EXIT:-0}"
+fi
 if [ "${1:-}" = status ] && [ "${FM_ORCA_STATUS_RESPONSE:-ready}" != sequence ]; then
   # FM_ORCA_STATUS_RAW answers verbatim (with FM_ORCA_STATUS_EXIT); FM_ORCA_STATUS_CAPS
   # lists runtime capabilities; neither set is the plain ready status.
@@ -671,16 +675,141 @@ test_send_key_refuses_unknown_key() {
   pass "fm_backend_orca_send_key: refuses unsupported keys loudly"
 }
 
-test_send_key_refuses_escape_until_supported() {
+# orca_status_case <name> <appVersion-or-empty> <capabilities-csv>: a case whose
+# `orca status --json` reports a ready runtime with that version and capability
+# list. An empty version omits the field, as an older runtime would.
+orca_status_case() {
+  orca_case "$1"
+  local ver=${2:-} caps=${3:-} list='' c fields
+  for c in ${caps//,/ }; do list="${list:+$list,}\"$c\""; done
+  fields='"reachable":true,"state":"ready"'
+  [ -z "$ver" ] || fields="$fields,\"appVersion\":\"$ver\""
+  [ -z "$caps" ] || fields="$fields,\"capabilities\":[$list]"
+  printf '{"ok":true,"result":{"runtime":{%s}}}\n' "$fields" > "$CASE_DIR/status.json"
+}
+
+# orca_with_status <script>: run an adapter snippet against the case's status.
+orca_with_status() {
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_FILE="$CASE_DIR/status.json" \
+    bash -c ". \"\$0/bin/backends/orca.sh\"; $1" "$ROOT" 2>&1
+}
+
+ESC_KEY_CAP=terminal.ordered-input.v1
+
+test_send_key_escape_sends_a_raw_escape_byte() {
+  local out
+  orca_status_case send-key-escape 1.4.261 "$ESC_KEY_CAP"
+  out=$(orca_with_status 'fm_backend_orca_send_key term-123 Escape'); expect_code 0 $? "send_key Escape should succeed: $out"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--text'$'\x1f\x1b\x1f''--json' \
+    "send_key Escape did not send the raw ESC byte as --text"
+  case "$(cat "$LOG")" in
+    *--enter*|*--interrupt*) fail "Escape must be sent without --enter and without --interrupt: $(cat "$LOG")" ;;
+  esac
+  pass "fm_backend_orca_send_key: Escape is one raw ESC byte through terminal send, with no enter and no interrupt"
+}
+
+test_send_key_ctrl_u_sends_a_raw_nak_byte() {
+  local out
+  orca_status_case send-key-ctrl-u 1.4.261 "$ESC_KEY_CAP"
+  out=$(orca_with_status 'fm_backend_orca_send_key term-123 C-u'); expect_code 0 $? "send_key C-u should succeed: $out"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--text'$'\x1f\x15\x1f''--json' \
+    "send_key C-u did not send the raw Ctrl+U byte as --text"
+  case "$(cat "$LOG")" in
+    *--enter*|*--interrupt*) fail "Ctrl+U must be sent without --enter and without --interrupt: $(cat "$LOG")" ;;
+  esac
+  pass "fm_backend_orca_send_key: C-u is one raw Ctrl+U byte through terminal send, with no enter and no interrupt"
+}
+
+test_send_key_escape_and_ctrl_u_accept_their_spellings() {
+  local spelling
+  for spelling in Escape escape Esc esc C-u ctrl+u Ctrl-u Ctrl-U; do
+    orca_status_case "send-key-spelling-$spelling" 1.4.261 "$ESC_KEY_CAP"
+    orca_with_status "fm_backend_orca_send_key term-1 '$spelling'" >/dev/null \
+      || fail "send_key should accept the spelling '$spelling'"
+    grep -q $'send\x1f' "$LOG" || fail "'$spelling' sent nothing"
+  done
+  pass "fm_backend_orca_send_key: Escape and Ctrl+U are accepted in the spellings Ctrl+C already is"
+}
+
+test_send_key_refuses_escape_and_ctrl_u_without_the_capability() {
+  local out status key
+  for key in Escape C-u; do
+    orca_status_case "send-key-nocap-$key" 1.4.261 "terminal.prompt-delivery.v1"
+    out=$(orca_with_status "fm_backend_orca_send_key term-123 $key"); status=$?
+    [ "$status" -ne 0 ] || fail "send_key $key should refuse a runtime without $ESC_KEY_CAP"
+    assert_contains "$out" "$ESC_KEY_CAP" "the $key refusal should name the missing capability"
+    assert_contains "$out" "1.4.261" "the $key refusal should name the runtime version"
+    case "$(cat "$LOG")" in
+      *terminal*) fail "a refused $key must not reach orca terminal send: $(cat "$LOG")" ;;
+    esac
+  done
+  pass "fm_backend_orca_send_key: without the capability Escape and Ctrl+U are refused before any send, naming the capability and version"
+}
+
+test_send_key_refuses_escape_when_the_status_is_unreadable() {
   local out status
-  orca_case send-key-escape
-  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
-    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_key term-123 Escape' "$ROOT" 2>&1 )
-  status=$?
-  [ "$status" -ne 0 ] || fail "send_key should refuse Escape until Orca exposes a real Escape primitive"
-  assert_contains "$out" "unsupported Orca key 'Escape'" "send_key did not name Escape as unsupported"
-  [ ! -s "$LOG" ] || fail "unsupported Escape should not call orca terminal send"
-  pass "fm_backend_orca_send_key: refuses Escape instead of mapping it to interrupt"
+  orca_status_case send-key-nostatus 1.4.261 "$ESC_KEY_CAP"
+  printf 'not json\n' > "$CASE_DIR/status.json"
+  out=$(orca_with_status 'fm_backend_orca_send_key term-123 Escape'); status=$?
+  [ "$status" -ne 0 ] || fail "send_key Escape should refuse when the runtime status cannot be read"
+  case "$(cat "$LOG")" in
+    *terminal*) fail "an unreadable status must not let Escape through: $(cat "$LOG")" ;;
+  esac
+  pass "fm_backend_orca_send_key: an unreadable runtime status refuses Escape rather than sending it blind"
+}
+
+test_send_key_enter_and_ctrl_c_ignore_the_capability_gate() {
+  orca_status_case send-key-ungated "" ""
+  orca_with_status 'fm_backend_orca_send_key term-123 Enter; fm_backend_orca_send_key term-123 C-c' >/dev/null \
+    || fail "Enter and C-c must keep working on a runtime that reports no capabilities"
+  case "$(cat "$LOG")" in
+    *status*) fail "Enter and C-c must not read the runtime status: $(cat "$LOG")" ;;
+  esac
+  pass "fm_backend_orca_send_key: Enter and Ctrl+C behave exactly as before and never read the runtime status"
+}
+
+test_runtime_check_records_the_version_and_capabilities() {
+  local out
+  orca_status_case runtime-facts 1.4.261 "$ESC_KEY_CAP,terminal.prompt-delivery.v1"
+  # shellcheck disable=SC2016  # the snippet is run by the adapter's own shell
+  out=$(orca_with_status 'fm_backend_orca_runtime_check && printf "%s|%s" "$FM_ORCA_APP_VERSION" "$FM_ORCA_CAPABILITIES"'); expect_code 0 $? "runtime_check should accept: $out"
+  [ "$out" = "1.4.261|$ESC_KEY_CAP terminal.prompt-delivery.v1" ] \
+    || fail "runtime_check should record the version and the space-separated capabilities, got '$out'"
+  pass "fm_backend_orca_runtime_check: records appVersion and the capability list for later gates"
+}
+
+test_runtime_check_refuses_a_version_below_the_floor() {
+  local out status ver
+  for ver in 1.4.260 1.4.116 1.3.999 0.9.0 0.99999.99999; do
+    orca_status_case "runtime-old-$ver" "$ver" "$ESC_KEY_CAP"
+    out=$(orca_with_status 'fm_backend_orca_runtime_check'); status=$?
+    [ "$status" -ne 0 ] || fail "runtime_check should refuse Orca $ver, below the tested floor"
+    assert_contains "$out" "$ver" "the refusal should name the runtime version"
+    assert_contains "$out" "1.4.261" "the refusal should name the floor"
+  done
+  pass "fm_backend_orca_runtime_check: a runtime below the tested floor is refused, naming both versions"
+}
+
+test_runtime_check_accepts_the_floor_and_anything_above_it() {
+  local ver
+  for ver in 1.4.261 1.4.262 1.5.0 1.10.0 2.0.0 1.4.261-rc.1 1.4.300+build.7; do
+    orca_status_case "runtime-new-$ver" "$ver" ""
+    orca_with_status 'fm_backend_orca_runtime_check' >/dev/null \
+      || fail "runtime_check should accept Orca $ver, at or above the floor"
+  done
+  pass "fm_backend_orca_runtime_check: the floor and every later version compare numerically, not as text"
+}
+
+test_runtime_check_does_not_refuse_a_missing_or_unreadable_version() {
+  local ver out
+  for ver in "" "not-a-version" "1.4"; do
+    orca_status_case "runtime-nover-$ver" "$ver" ""
+    # shellcheck disable=SC2016  # the snippet is run by the adapter's own shell
+    out=$(orca_with_status 'fm_backend_orca_runtime_check && printf "[%s][%s]" "$FM_ORCA_APP_VERSION" "$FM_ORCA_CAPABILITIES"') \
+      || fail "runtime_check should not refuse a runtime whose version is '$ver': $out"
+    [ "$out" = "[$ver][]" ] || fail "runtime_check should record version '$ver' and no capabilities, got '$out'"
+  done
+  pass "fm_backend_orca_runtime_check: a runtime that reports no readable version behaves exactly as before, with no gated feature enabled"
 }
 
 test_kill_is_best_effort_close() {
@@ -2211,7 +2340,16 @@ test_send_text_submit_reports_send_failed
 test_send_helpers_reject_orca_error_json
 test_send_key_enter_and_interrupt
 test_send_key_refuses_unknown_key
-test_send_key_refuses_escape_until_supported
+test_send_key_escape_sends_a_raw_escape_byte
+test_send_key_ctrl_u_sends_a_raw_nak_byte
+test_send_key_escape_and_ctrl_u_accept_their_spellings
+test_send_key_refuses_escape_and_ctrl_u_without_the_capability
+test_send_key_refuses_escape_when_the_status_is_unreadable
+test_send_key_enter_and_ctrl_c_ignore_the_capability_gate
+test_runtime_check_records_the_version_and_capabilities
+test_runtime_check_refuses_a_version_below_the_floor
+test_runtime_check_accepts_the_floor_and_anything_above_it
+test_runtime_check_does_not_refuse_a_missing_or_unreadable_version
 test_kill_is_best_effort_close
 test_kill_refuses_when_the_orca_cli_is_absent
 test_remove_worktree_refuses_empty_id

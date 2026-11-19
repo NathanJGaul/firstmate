@@ -505,20 +505,17 @@ test_unverified_harness_is_refused() {
 
 test_backend_key_capability_matrix() {
   local backend key
-  for backend in tmux herdr zellij cmux; do
-    # C-u is the composer clear muse's interrupt needs; every session provider
-    # but Orca normalizes it (bin/backends/*.sh).
+  # C-u is the composer clear muse's interrupt needs. Every session provider
+  # normalizes all four keys; Orca delivers Escape and C-u as raw bytes once its
+  # runtime reports the capability (bin/backends/orca.sh), which is the adapter's
+  # own live gate and not this table's.
+  for backend in tmux herdr zellij cmux orca; do
     for key in Escape Enter C-c C-u; do
       fm_control_backend_supports_key "$backend" "$key" \
         || fail "$backend should be able to deliver $key"
     done
   done
-  fm_control_backend_supports_key orca Escape \
-    && fail "orca's terminal API has no Escape and must not claim it"
-  fm_control_backend_supports_key orca C-u \
-    && fail "orca's terminal API has no composer clear and must not claim one"
-  fm_control_backend_supports_key orca C-c || fail "orca should deliver C-c"
-  fm_control_backend_supports_key orca Enter || fail "orca should deliver Enter"
+  fm_control_backend_supports_key orca F12 && fail "orca must not claim a key it has no mapping for"
   pass "fm-control-lib: the backend key matrix matches each adapter's real send-key surface"
 }
 
@@ -546,21 +543,129 @@ test_harness_kind_capability() {
   pass "fm-control-lib: adapter capability is per task kind, not per adapter alone"
 }
 
-test_orca_refuses_an_escape_harness_interrupt() {
+# make_orca_stub: an `orca` CLI whose whole model is files under $dir/fake:
+# orca.log (every call, fields joined by 0x1f), status.json (the runtime
+# status), and a terminal that always reads back one line.
+make_orca_stub() {  # <dir> <version> <capabilities-csv>
+  local dir=$1 ver=$2 caps=$3 list='' c
+  for c in ${caps//,/ }; do list="${list:+$list,}\"$c\""; done
+  printf '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready","appVersion":"%s","capabilities":[%s]}}}\n' \
+    "$ver" "$list" > "$dir/fake/status.json"
+  : > "$dir/fake/orca.log"
+  cat > "$dir/fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+set -u
+{
+  printf 'orca'
+  for a in "$@"; do printf '\x1f%s' "$a"; done
+  printf '\n'
+} >> "$FM_FAKE_DIR/orca.log"
+case "${1:-}:${2:-}" in
+  status:*) cat "$FM_FAKE_DIR/status.json" ;;
+  terminal:read) printf '{"ok":true,"result":{"terminal":{"tail":["$ "]}}}\n' ;;
+  terminal:send) printf '{"ok":true,"result":{"accepted":true}}\n' ;;
+  *) printf '{"ok":true,"result":{}}\n' ;;
+esac
+SH
+  chmod +x "$dir/fakebin/orca"
+}
+
+# add_orca_task: a task recorded on Orca the way bin/fm-spawn.sh records one.
+add_orca_task() {  # <dir> <id> <harness>
+  local dir=$1 id=$2 harness=$3
+  add_task "$dir" "$id" "$harness" ship orca "term-$id"
+  {
+    cat "$dir/home/state/$id.meta"
+    echo "terminal=term-$id"
+    echo "orca_worktree_id=wt-$id::/orca/wt-$id"
+  } | sed 's|^window=.*|window=fm-'"$id"'|' > "$dir/home/state/$id.meta.new"
+  mv "$dir/home/state/$id.meta.new" "$dir/home/state/$id.meta"
+}
+
+# orca_sends: the `orca terminal send` calls, one per line, fields joined by `|`
+# with the ESC and Ctrl+U bytes rendered as <ESC> and <C-u> so a log is readable.
+orca_sends() {  # <dir>
+  grep $'^orca\x1fterminal\x1fsend' "$1/fake/orca.log" \
+    | sed -e $'s/\x1f/|/g' -e $'s/\x1b/<ESC>/g' -e $'s/\x15/<C-u>/g' || true
+}
+
+ORCA_KEY_CAP=terminal.ordered-input.v1
+
+test_orca_delivers_an_escape_harness_interrupt() {
   local dir out rc
   dir=$(new_case orca-escape)
-  add_task "$dir" t1 claude ship orca "term-1"
-  # Orca records its endpoint as terminal=, which endpoint validation requires.
-  {
-    cat "$dir/home/state/t1.meta"
-    echo "terminal=term-1"
-    echo "orca_worktree_id=wt-1::/orca/wt-1"
-  } > "$dir/home/state/t1.meta.new"
-  sed 's|^window=.*|window=fm-t1|' "$dir/home/state/t1.meta.new" > "$dir/home/state/t1.meta"
+  make_orca_stub "$dir" 1.4.261 "$ORCA_KEY_CAP"
+  add_orca_task "$dir" t1 claude
   out=$(run_control "$dir" t1 interrupt); rc=$?
-  expect_code 1 "$rc" "an Escape harness on orca should refuse"
-  assert_contains "$out" "cannot deliver" "refusal should name the undeliverable key"
-  pass "fm-control interrupt: a backend that cannot deliver the harness's key refuses instead of sending another"
+  expect_code 0 "$rc" "an Escape harness on orca should be interrupted: $out"
+  assert_contains "$out" "interrupt-delivered t1 harness=claude backend=orca" "the success line should name the orca backend"
+  [ "$(orca_sends "$dir")" = "orca|terminal|send|--terminal|term-t1|--text|<ESC>|--json" ] \
+    || fail "claude's interrupt on orca should be exactly one raw Escape, got: $(orca_sends "$dir")"
+  pass "fm-control interrupt: an Escape harness on orca receives one raw Escape byte through terminal send"
+}
+
+test_orca_interrupt_follows_a_composer_restoring_harness_with_ctrl_u() {
+  local dir out rc
+  dir=$(new_case orca-muse)
+  make_orca_stub "$dir" 1.4.261 "$ORCA_KEY_CAP"
+  add_orca_task "$dir" t1 muse
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "muse's interrupt on orca should succeed: $out"
+  [ "$(orca_sends "$dir")" = "orca|terminal|send|--terminal|term-t1|--text|<ESC>|--json
+orca|terminal|send|--terminal|term-t1|--text|<C-u>|--json" ] \
+    || fail "muse's interrupt on orca should be Escape then Ctrl+U, in that order, got: $(orca_sends "$dir")"
+  pass "fm-control interrupt: muse on orca gets Escape and then the Ctrl+U composer clear"
+}
+
+test_orca_interrupt_for_a_ctrl_c_harness_is_unchanged() {
+  local dir out rc
+  dir=$(new_case orca-grok)
+  make_orca_stub "$dir" 1.4.261 ""
+  add_orca_task "$dir" t1 grok
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "grok's Ctrl+C interrupt on orca should still work with no capability: $out"
+  [ "$(orca_sends "$dir")" = "orca|terminal|send|--terminal|term-t1|--interrupt|--json" ] \
+    || fail "grok's interrupt on orca should stay one --interrupt send, got: $(orca_sends "$dir")"
+  pass "fm-control interrupt: a Ctrl+C harness on orca still uses --interrupt and needs no capability"
+}
+
+test_orca_refuses_an_escape_interrupt_without_the_capability() {
+  local dir out rc
+  dir=$(new_case orca-nocap)
+  make_orca_stub "$dir" 1.4.261 "terminal.prompt-delivery.v1"
+  add_orca_task "$dir" t1 claude
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 1 "$rc" "an Escape harness on a runtime without the capability should refuse"
+  assert_contains "$out" "$ORCA_KEY_CAP" "the refusal should name the missing capability"
+  [ -z "$(orca_sends "$dir")" ] || fail "a refused interrupt must send nothing, got: $(orca_sends "$dir")"
+  pass "fm-control interrupt: orca refuses an Escape harness before sending when the runtime lacks the capability"
+}
+
+test_orca_refuses_exit_and_relaunch() {
+  local dir out rc verb
+  dir=$(new_case orca-stop)
+  make_orca_stub "$dir" 1.4.261 "$ORCA_KEY_CAP"
+  add_orca_task "$dir" t1 claude
+  for verb in exit "relaunch --note x"; do
+    # shellcheck disable=SC2086
+    out=$(run_control "$dir" t1 $verb); rc=$?
+    expect_code 1 "$rc" "${verb%% *} on orca should still refuse"$'\n'"$out"
+    assert_contains "$out" "no recovery-grade agent-state classifier" "the ${verb%% *} refusal should name the missing stop proof"
+  done
+  [ -z "$(orca_sends "$dir")" ] || fail "a refused stop verb must send nothing, got: $(orca_sends "$dir")"
+  pass "fm-control: exit and relaunch stay refused on orca even though Escape now delivers"
+}
+
+test_fm_send_delivers_escape_to_an_orca_task() {
+  local dir out rc
+  dir=$(new_case orca-send-key)
+  make_orca_stub "$dir" 1.4.261 "$ORCA_KEY_CAP"
+  add_orca_task "$dir" t1 claude
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" "$SEND" t1 --key Escape 2>&1); rc=$?
+  expect_code 0 "$rc" "fm-send --key Escape on orca should deliver: $out"
+  [ "$(orca_sends "$dir")" = "orca|terminal|send|--terminal|term-t1|--text|<ESC>|--json" ] \
+    || fail "fm-send --key Escape on orca should be one raw Escape, got: $(orca_sends "$dir")"
+  pass "fm-send --key: Escape reaches an orca task as a raw byte"
 }
 
 test_unverified_state_backends_refuse_stop_verbs() {
@@ -1186,7 +1291,12 @@ test_relaunch_resume_flag_is_per_adapter_and_reference_owner
 test_prefixed_recorded_harness_reaches_each_control_verb
 test_backend_key_capability_matrix
 test_harness_kind_capability
-test_orca_refuses_an_escape_harness_interrupt
+test_orca_delivers_an_escape_harness_interrupt
+test_orca_interrupt_follows_a_composer_restoring_harness_with_ctrl_u
+test_orca_interrupt_for_a_ctrl_c_harness_is_unchanged
+test_orca_refuses_an_escape_interrupt_without_the_capability
+test_orca_refuses_exit_and_relaunch
+test_fm_send_delivers_escape_to_an_orca_task
 test_unverified_state_backends_refuse_stop_verbs
 test_state_verified_backends_are_exactly_tmux_and_herdr
 test_window_label_is_refused_with_the_exact_id
