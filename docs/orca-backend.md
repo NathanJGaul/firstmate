@@ -30,9 +30,10 @@ Firstmate never changes the Orca registration.
 
 On macOS the Orca app can show a task's terminal, and the headless runtime on Linux has no window, so headless operators read it with `bin/fm-peek.sh <id>`.
 Routine supervision uses the recorded endpoint through `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'`.
-The adapter delivers Enter and Ctrl+C and does not deliver Escape or Ctrl+U today.
-That is an adapter gap and not an Orca limit, because Orca's help says text sent without `--enter` is written to the terminal verbatim, so control bytes pass through.
-The live lab sent Escape and Ctrl+U to a real terminal and both arrived, so the gap is only the adapter's.
+The adapter delivers Enter and Ctrl+C, and delivers Escape and Ctrl+U as raw control bytes.
+Orca writes text sent without `--enter` to the terminal verbatim, so one control byte through `orca terminal send --text` is one key press, and the live lab proved both bytes arrive.
+Escape and Ctrl+U are gated on the runtime: the adapter reads `orca status --json` fresh before each one and sends nothing, naming the capability and the version, unless the runtime reports `terminal.ordered-input.v1`.
+Orca names no capability for control-byte passthrough itself, so that is the closest marker the lab saw on a runtime where passthrough was proven; a runtime without it keeps the earlier behavior and refuses these two keys.
 
 ## Task shape and metadata
 
@@ -92,8 +93,10 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - Orca is explicit-only.
 - A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
-- Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
 - A receipt proves Orca accepted input and, for a recognized agent, that its turn started; it does not prove which agent runs in a live terminal, so `fm_backend_agent_state` stays unverified for Orca.
+- Before any spawn mutates repository state, Firstmate reads `appVersion` and the capability list from `orca status --json` and refuses a runtime whose version is below 1.4.261, the lowest runtime proven against this adapter.
+  A runtime that reports no readable version is not refused, but it reports no capability either, so nothing gated on one is enabled for it.
+  A task already running is not re-checked, so only a new spawn meets the floor.
 - The adapter reads only verified response fields: the worktree id and path, a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned, and the `result.terminals[]` rows of `terminal list --worktree`. It rejects other response shapes.
 - The branch-deleting release and the one-terminal-per-task adoption are proven live on the Linux headless runtime: after spawn, `worktree ps` reports `liveTerminalCount=1`, and teardown leaves no terminal behind; `verification/runtime-backends.md` records the lab results.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
@@ -103,10 +106,12 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 
 These are the captain's current calls, and each holds until the capability it names lands.
 
-- Long-running or high-value ships belong on Herdr until Orca interrupt and relaunch land.
+- Long-running or high-value ships belong on Herdr until Orca relaunch lands.
   Orca suits scouts and short ships that are cheap to redo.
-- Orca refuses `interrupt`, `exit`, and `relaunch` today, so a wedged or dead Orca worker cannot be recovered through `bin/fm-control.sh` or `bin/fm-spawn.sh --relaunch`.
-  Interrupt is refused for every harness except Grok, whose Ctrl+C interrupt the adapter can send.
+- Orca delivers `interrupt` through `bin/fm-control.sh` for every harness whose interrupt is Escape or Ctrl+C, but refuses `exit` and `relaunch` today, so a dead Orca worker cannot be recovered through `bin/fm-control.sh` or `bin/fm-spawn.sh --relaunch`.
+  Both wait on a recovery-grade agent-state proof that Orca does not yet have.
+  An interrupt on Orca proves only that the endpoint still exists, and reports `cancel=unconfirmed` unless the harness has its own acknowledgement.
+  A harness that must see its screen between interrupt presses, such as Devin, is still refused, because Orca has no verified viewport read.
   [`agent-control.md`](agent-control.md) owns the reasons.
 - A project Orca registered as a folder, including the firstmate repository itself, cannot host Orca work, because Orca treats a folder as a different object from a git worktree.
   Spawn refuses such a project up front, and also refuses an unregistered path that is not a git repository before running `orca repo add`.

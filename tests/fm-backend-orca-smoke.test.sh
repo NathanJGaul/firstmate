@@ -163,6 +163,7 @@ observe "appVersion=$APPVER capabilities=$NCAPS"
 for cap in terminal.prompt-delivery.v1 terminal.program-status.v1 worktree.remove-branch-policy.v1 terminal.create-idempotency.v2 worktree.create-idempotency.v1 agent-session.keyboard.v1 terminal.ordered-input.v1; do
   if jq -e --arg c "$cap" '.result.runtime.capabilities | index($c)' <<<"$STATUS" >/dev/null; then observe "capability present: $cap"; else observe "capability absent: $cap"; fi
 done
+observe "capabilities: $(jq -r '.result.runtime.capabilities | join(" ")' <<<"$STATUS")"
 observe "degradations: $(jq -c '[.result.runtime.degradations[]? | {code, capability, reason}]' <<<"$STATUS")"
 observe "target/app shape: $(jq -c '{target: .result.target, app: .result.app, graph: .result.graph}' <<<"$STATUS")"
 
@@ -262,6 +263,29 @@ wait_for_text "$AUTO_T" 'zz' 10 || fail "A5: nothing was echoed after Ctrl+U"
 TAIL=$(read_tail "$AUTO_T")
 case "$TAIL" in *abczz*) fail "A5: Ctrl+U did not clear the line (abczz reached cat)" ;; esac
 ok "A5: --text \$'\\x15' without --enter reaches the terminal as Ctrl+U and clears the typed line"
+# The same two keys through the adapter (slice 9), against the gate (slice 8):
+# the lab runtime must pass the spawn check, report the gating capability, and
+# then receive Escape and Ctrl+U as the adapter sends them.
+own
+# shellcheck source=bin/fm-backend.sh
+. "$ROOT/bin/fm-backend.sh"
+fm_backend_source orca || fail "A5: cannot source the Orca adapter"
+fm_backend_orca_runtime_check || fail "A5: the adapter's runtime check refused the lab runtime (appVersion=${FM_ORCA_APP_VERSION:-unset}, floor $FM_ORCA_MIN_APP_VERSION)"
+ok "A5: fm_backend_orca_runtime_check accepts the lab runtime at appVersion=$FM_ORCA_APP_VERSION (floor $FM_ORCA_MIN_APP_VERSION)"
+case " $FM_ORCA_CAPABILITIES " in
+  *" $FM_ORCA_CONTROL_BYTES_CAPABILITY "*) ok "A5: the runtime reports $FM_ORCA_CONTROL_BYTES_CAPABILITY, the capability Escape and Ctrl+U delivery is gated on" ;;
+  *) fail "A5: the lab runtime does not report $FM_ORCA_CONTROL_BYTES_CAPABILITY" ;;
+esac
+fm_backend_send_key orca "$AUTO_T" Escape || fail "A5: the adapter did not deliver Escape"
+O terminal send --terminal "$AUTO_T" --text 'ey' --enter --json >/dev/null
+wait_for_text "$AUTO_T" '^[ey' 10 || fail "A5: the adapter's Escape did not reach cat -v (no '^[ey' in $(read_tail "$AUTO_T"))"
+ok "A5: fm_backend_send_key orca Escape reaches cat -v as a raw Escape (^[ey)"
+fm_backend_orca_send_literal "$AUTO_T" 'def' >/dev/null || fail "A5: could not type into the terminal"
+fm_backend_send_key orca "$AUTO_T" C-u || fail "A5: the adapter did not deliver Ctrl+U"
+O terminal send --terminal "$AUTO_T" --text 'qq' --enter --json >/dev/null
+wait_for_text "$AUTO_T" 'qq' 10 || fail "A5: nothing was echoed after the adapter's Ctrl+U"
+case "$(read_tail "$AUTO_T")" in *defqq*) fail "A5: the adapter's Ctrl+U did not clear the line (defqq reached cat)" ;; esac
+ok "A5: fm_backend_send_key orca C-u reaches the terminal as Ctrl+U and clears the typed line"
 O terminal send --terminal "$AUTO_T" --interrupt --json >/dev/null
 sleep 0.5
 SCREEN=$(O terminal read --terminal "$AUTO_T" --screen --json | jq -r '.result.terminal.tail | join("\n")')
@@ -591,14 +615,44 @@ BRIEF
   assert_contains "$(cat "$LAB/rx.err")" "$RX_T" "F: the failure does not name the terminal"
   ok "F: the adapter reports a closed Orca terminal as terminal-gone with a nonzero exit and a message naming it"
 
-  # send --key
-  for key in Enter C-c Escape; do
-    if kout=$(fm "$ROOT/bin/fm-send.sh" "$ID" --key "$key" 2>&1); then
-      observe "fm-send --key $key: delivered"
-    else
-      observe "fm-send --key $key: refused ($(printf '%s' "$kout" | tail -1 | cut -c1-160))"
-    fi
+  # send --key: every key the adapter supports is delivered, Escape and Ctrl+U
+  # included (slice 9). Escape is read back before the next key, because Ctrl+U
+  # erases the line discipline's ^[ echo.
+  for key in Enter Escape; do
+    kout=$(fm "$ROOT/bin/fm-send.sh" "$ID" --key "$key" 2>&1) || fail "F: fm-send --key $key was refused on the lab runtime: $(printf '%s' "$kout" | tail -1 | cut -c1-200)"
   done
+  sleep 1
+  case "$(O terminal read --terminal "$TASK_T" --json | jq -r '.result.terminal.tail | join("\n")')" in
+    *'^['*) ok "F: the Escape fm-send delivered reached the task terminal as a raw Escape (the line discipline echoed ^[)" ;;
+    *) fail "F: fm-send --key Escape was accepted but no ^[ echo appeared in the task terminal" ;;
+  esac
+  kout=$(fm "$ROOT/bin/fm-send.sh" "$ID" --key C-u 2>&1) || fail "F: fm-send --key C-u was refused on the lab runtime: $(printf '%s' "$kout" | tail -1 | cut -c1-200)"
+  # fm-control interrupt (slice 9): the raw harness here is no real agent, so
+  # the lab's own record is relabelled with a verified harness whose interrupt
+  # key is Escape. No agent turn is started: that needs the harness's
+  # credentials and spends model tokens, which the lab's isolated home has none
+  # of and must not use. What this proves is the whole control path - record,
+  # key table, live capability gate, adapter - delivering a real Escape to a
+  # real Orca terminal; the harness's reaction to it is a per-harness fact
+  # recorded in the harness-adapters skill.
+  ORIG_HARNESS=$(meta harness)
+  sed -i.bak 's/^harness=.*/harness=claude/' "$META" && rm -f "$META.bak"
+  kout=$(fm "$ROOT/bin/fm-control.sh" "$ID" interrupt 2>&1) || fail "F: fm-control interrupt was refused on the lab runtime: $kout"
+  assert_contains "$kout" "interrupt-delivered $ID harness=claude backend=orca" "F: fm-control interrupt did not report delivery on orca"
+  sleep 1
+  case "$(O terminal read --terminal "$TASK_T" --json | jq -r '.result.terminal.tail | join("\n")')" in
+    *'^['*) ok "F: fm-control interrupt on Orca delivered a real Escape to the task terminal (the line discipline echoed ^[ after Ctrl+U cleared the earlier one)" ;;
+    *) fail "F: fm-control interrupt reported delivery but no ^[ echo appeared in the task terminal" ;;
+  esac
+  observe "fm-control interrupt: $kout"
+  kout=$(fm "$ROOT/bin/fm-send.sh" "$ID" --key C-c 2>&1) || fail "F: fm-send --key C-c was refused on the lab runtime: $(printf '%s' "$kout" | tail -1 | cut -c1-200)"
+  ok "F: fm-send --key Enter, Escape, C-u, and C-c are all delivered on Orca"
+  for verb in exit relaunch; do
+    if kout=$(fm "$ROOT/bin/fm-control.sh" "$ID" "$verb" 2>&1); then fail "F: fm-control $verb succeeded on Orca, which has no agent-state proof yet"; fi
+    assert_contains "$kout" "no recovery-grade agent-state classifier" "F: the $verb refusal does not name the missing stop proof"
+  done
+  ok "F: fm-control exit and relaunch are still refused on Orca, waiting on agent-state proof"
+  sed -i.bak "s/^harness=.*/harness=$ORIG_HARNESS/" "$META" && rm -f "$META.bak"
   fm "$ROOT/bin/fm-send.sh" "$ID" --key Enter >/dev/null 2>&1 || fail "F: fm-send --key Enter failed on Orca"
   ok "F: fm-send --key Enter is delivered on Orca"
 

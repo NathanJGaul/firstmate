@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # bin/backends/orca.sh - the Orca terminal session-provider adapter.
 #
-# Orca owns both the task worktree and the terminal endpoint. Escape key support
-# remains unsupported until Orca exposes a terminal-send primitive for it.
+# Orca owns both the task worktree and the terminal endpoint. Escape and Ctrl+U
+# are delivered as raw control bytes through `terminal send` without --enter,
+# which Orca writes to the terminal verbatim, gated on the runtime's reported
+# capability (fm_backend_orca_control_bytes_ready).
 #
 # Text sends use Orca's delivery receipts when the runtime lists the
 # terminal.prompt-delivery.v1 capability: one `terminal send --enter
@@ -39,15 +41,37 @@ fm_backend_orca_tool_check() {
   return 1
 }
 
-fm_backend_orca_runtime_check() {
+# The lowest Orca runtime this adapter is proven against, and the capability
+# its status reports on every runtime that delivered raw control bytes in the
+# live lab (tests/fm-backend-orca-smoke.test.sh, docs/verification/runtime-backends.md).
+# Orca names no capability for control-byte passthrough itself, so
+# terminal.ordered-input.v1 (ordered terminal input) is the closest marker the
+# lab saw; a runtime that does not report it keeps today's behavior and does
+# not receive Escape or Ctrl+U.
+FM_ORCA_MIN_APP_VERSION=1.4.261
+FM_ORCA_CONTROL_BYTES_CAPABILITY=terminal.ordered-input.v1
+
+# Facts fm_backend_orca_status_read records for the calling shell: the
+# appVersion exactly as reported (empty when none), the space-separated
+# capability list, and 1 when a readable appVersion is below the floor.
+FM_ORCA_APP_VERSION=
+FM_ORCA_CAPABILITIES=
+FM_ORCA_BELOW_FLOOR=0
+
+# fm_backend_orca_status_read: read `orca status --json` once, require a ready
+# and reachable runtime, and record the version and capability facts above.
+# It does not enforce the floor; callers decide what a missing capability or an
+# old version means. It sets variables, so call it directly, never inside a
+# command substitution whose result the caller needs.
+fm_backend_orca_status_read() {
   fm_backend_orca_tool_check || return 1
-  local out
+  local out facts
   out=$(orca status --json 2>/dev/null) || {
     echo "error: backend=orca selected but 'orca status --json' failed; start Orca and wait for the runtime to be ready" >&2
     return 1
   }
   # shellcheck disable=SC2016  # Single quotes are deliberate: ${...} belongs to the Node snippet.
-  printf '%s' "$out" | node -e '
+  facts=$(printf '%s' "$out" | node -e '
 const fs = require("fs");
 let data;
 try {
@@ -65,10 +89,58 @@ const r = data.result || {};
 const runtime = r.runtime || {};
 const reachable = runtime.reachable ?? r.runtimeReachable;
 const state = runtime.state || r.runtimeState || "";
-if (reachable === true && state === "ready") process.exit(0);
-console.error(`error: backend=orca requires a ready Orca runtime (reachable=${String(reachable)}, state=${state || "unknown"})`);
-process.exit(1);
-'
+if (!(reachable === true && state === "ready")) {
+  console.error(`error: backend=orca requires a ready Orca runtime (reachable=${String(reachable)}, state=${state || "unknown"})`);
+  process.exit(1);
+}
+const version = String(runtime.appVersion ?? r.appVersion ?? "");
+const caps = Array.isArray(runtime.capabilities ?? r.capabilities)
+  ? (runtime.capabilities ?? r.capabilities).filter((c) => typeof c === "string" && c && !/\s/.test(c)) : [];
+const parse = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v); return m ? [+m[1], +m[2], +m[3]] : null; };
+const have = parse(version);
+const floor = parse(process.argv[1]);
+let below = 0;
+if (have && floor) {
+  for (let i = 0; i < 3; i++) {
+    if (have[i] !== floor[i]) { below = have[i] < floor[i] ? 1 : 0; break; }
+  }
+}
+process.stdout.write(version.replace(/[\r\n]/g, " ") + "\n" + caps.join(" ") + "\n" + below + "\n");
+' "$FM_ORCA_MIN_APP_VERSION") || return 1
+  {
+    IFS= read -r FM_ORCA_APP_VERSION
+    IFS= read -r FM_ORCA_CAPABILITIES
+    IFS= read -r FM_ORCA_BELOW_FLOOR
+  } <<<"$facts"
+  return 0
+}
+
+# fm_backend_orca_runtime_check: the spawn-time gate. The runtime must be ready,
+# and a runtime that reports a version below the tested floor is refused. A
+# runtime that reports no readable version is not refused, because nothing
+# proves it old, but it then reports no capability either, so no capability
+# gated feature is enabled for it.
+fm_backend_orca_runtime_check() {
+  fm_backend_orca_status_read || return 1
+  if [ "$FM_ORCA_BELOW_FLOOR" = 1 ]; then
+    echo "error: backend=orca requires Orca $FM_ORCA_MIN_APP_VERSION or newer, the lowest runtime proven against this adapter, but the runtime reports appVersion=$FM_ORCA_APP_VERSION. Update Orca, or run this task on another backend with the per-task option --backend <name>" >&2
+    return 1
+  fi
+}
+
+# fm_backend_orca_control_bytes_ready: whether this runtime may be sent a raw
+# control byte (Escape, Ctrl+U). Reads the status fresh on every call, so a
+# long-lived caller never acts on a stale capability list. Refuses, naming the
+# capability and the version, when the status cannot be read or does not report
+# the capability, so the caller sends nothing.
+fm_backend_orca_control_bytes_ready() {  # <key-name>
+  local key=$1
+  fm_backend_orca_status_read || return 1
+  case " $FM_ORCA_CAPABILITIES " in
+    *" $FM_ORCA_CONTROL_BYTES_CAPABILITY "*) return 0 ;;
+  esac
+  echo "error: cannot send $key to Orca: the runtime (appVersion=${FM_ORCA_APP_VERSION:-unknown}) does not report the $FM_ORCA_CONTROL_BYTES_CAPABILITY capability that Escape and Ctrl+U delivery is gated on; nothing was sent" >&2
+  return 1
 }
 
 fm_backend_orca_json_get() {  # <field> [<worktree-id>] ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle listed-terminal-handle repo-id repo-kind
@@ -354,6 +426,17 @@ fm_backend_orca_send_key() {  # <terminal-id> <key>
       ;;
     Enter|enter)
       fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "" --enter --json
+      ;;
+    # Text sent without --enter is written to the terminal verbatim, so one
+    # control byte is one key press. Never --enter (it would submit) and never
+    # --interrupt (that is Ctrl+C).
+    Escape|escape|Esc|esc)
+      fm_backend_orca_control_bytes_ready Escape || return 1
+      fm_backend_orca_send_literal "$terminal" $'\x1b'
+      ;;
+    C-u|ctrl+u|Ctrl-u|Ctrl-U)
+      fm_backend_orca_control_bytes_ready C-u || return 1
+      fm_backend_orca_send_literal "$terminal" $'\x15'
       ;;
     *)
       echo "error: unsupported Orca key '$key'" >&2

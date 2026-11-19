@@ -113,8 +113,9 @@
 # Fail-closed boundaries:
 #   - An unverified harness, or a harness whose control mechanics are unknown,
 #     is refused rather than guessed at.
-#   - A backend that cannot deliver the harness's interrupt key is refused
-#     (Orca's terminal API has no Escape).
+#   - A backend that cannot deliver the harness's interrupt key is refused. Orca
+#     delivers Escape and Ctrl+U only when its runtime reports the capability
+#     they are gated on, and refuses before sending anything when it does not.
 #   - `exit` and `relaunch` require a backend with a recovery-grade agent-state
 #     classifier (tmux, herdr), because without one the "the agent stopped"
 #     postcondition cannot be proven. zellij, orca, and cmux are refused rather
