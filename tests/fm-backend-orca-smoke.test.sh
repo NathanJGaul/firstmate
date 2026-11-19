@@ -337,12 +337,20 @@ esac
 observe "agent identity while running: terminal show agentIdentity=$(O terminal show --terminal "$AG_T" --json | jq -r '.result.terminal.agentIdentity // "none"'), agentWait=$(O terminal show --terminal "$AG_T" --json | jq -c '.result.terminal.agentWait')"
 observe "worktree ps agents[] while running: $(O worktree ps --json | jq -c --arg id "$WT_A_ID" '[.result.worktrees[] | select(.worktreeId == $id) | .agents]')"
 O terminal send --terminal "$AG_T" --text $'\x04' --json >/dev/null
-sleep 1.5
-observe "after the fake agent exited (Ctrl+D): agentIdentity=$(O terminal show --terminal "$AG_T" --json | jq -r '.result.terminal.agentIdentity // "none"'), worktree ps agents[]=$(O worktree ps --json | jq -c --arg id "$WT_A_ID" '[.result.worktrees[] | select(.worktreeId == $id) | .agents]'), terminal still listed=$(O terminal list --worktree "id:$WT_A_ID" --json | jq -r --arg h "$AG_T" '[.result.terminals[] | select(.handle == $h)] | length')"
-AG_AFTER_ID=$(O terminal show --terminal "$AG_T" --json | jq -r '.result.terminal.agentIdentity // "none"')
+AG_FIRST=''
+AG_CLEARED='not within 12s'
+i=0
+while [ "$i" -lt 24 ]; do
+  sleep 0.5; i=$((i + 1))
+  cur=$(O terminal show --terminal "$AG_T" --json | jq -r '.result.terminal.agentIdentity // "none"')
+  [ -n "$AG_FIRST" ] || AG_FIRST=$cur
+  if [ "$cur" = none ]; then AG_CLEARED="$(awk -v n="$i" 'BEGIN{printf "%.1f", n/2}')s"; break; fi
+done
+observe "after the fake agent exited (Ctrl+D): first agentIdentity read 0.5s later=$AG_FIRST, identity cleared: ${AG_CLEARED}; worktree ps agents[]=$(O worktree ps --json | jq -c --arg id "$WT_A_ID" '[.result.worktrees[] | select(.worktreeId == $id) | .agents]'), terminal still listed=$(O terminal list --worktree "id:$WT_A_ID" --json | jq -r --arg h "$AG_T" '[.result.terminals[] | select(.handle == $h)] | length')"
 observe "terminal tail after the fake agent exited: $(read_tail "$AG_T" | tail -2 | tr '\n' '|' | cut -c1-200)"
-if [ "$AG_AFTER_ID" != none ]; then
-  finding "terminal show still reports agentIdentity=$AG_AFTER_ID after the agent process exited and worktree ps agents[] stayed empty throughout: neither can prove 'no agent'; the terminal's processId from terminal create is the only process-level handle observed"
+observe "agentIdentity after that terminal read: $(O terminal show --terminal "$AG_T" --json | jq -r '.result.terminal.agentIdentity // "none"')"
+if [ "$AG_FIRST" != none ]; then
+  finding "terminal show still reported agentIdentity=$AG_FIRST 0.5s after the agent process exited (cleared: ${AG_CLEARED}) and worktree ps agents[] stayed empty throughout: the identity is not refreshed by the process exit (it can be refreshed by a later terminal read) and so cannot prove 'no agent'; the terminal's processId from terminal create is the only process-level handle observed"
 fi
 ok "A7: a fake agent named for a recognized harness launches, is readable, and its identity and agent list were recorded before and after it exited"
 AG2=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-agent2 --command "$LAB/fake/claude" --json | jq -r '.result.terminal.handle')

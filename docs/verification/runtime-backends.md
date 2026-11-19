@@ -1997,7 +1997,7 @@ Per assertion, the slice each one proves or unblocks, and what it observed:
 | 4 live terminal count | one terminal already exists after create; a second appears after the adapter's fallback create | startup-terminal adoption (merged P1-A) |
 | 5 control bytes | Escape (`\x1b`) and Ctrl+U (`\x15`) sent without `--enter` reach a `cat -v` shell; `--interrupt` delivers Ctrl+C; `terminal wait` behaves as above | unblocks Escape and Ctrl+U delivery (P2-A) |
 | 6 read status and source | shell and a full-screen program both read `status=running`; `--screen` returns the rendered viewport and shows the full-screen program's text | unblocks viewport capture (P2-F) and agent-state work (P2-B) |
-| 7 fake agent | a command named for a recognized harness gets `agentIdentity` and has its command line rewritten; `worktree ps` agents stays empty; identity is still reported after the agent exits; `terminal create` reports a `processId` that is a lab-owned process | informs agent-state proof (P2-B): identity cannot prove "no agent", a pid is exposed on create |
+| 7 fake agent | a command named for a recognized harness gets `agentIdentity` and has its command line rewritten; `worktree ps` agents stays empty; identity is still reported 12 s after the agent exits and cleared only after a later `terminal read`; `terminal create` reports a `processId` that is a lab-owned process | informs agent-state proof (P2-B): identity cannot prove "no agent", a pid is exposed on create |
 | 8 receipts | `--wait-submit` returns a receipt (`provider` and `observation` for a recognized agent, `unsupported` for a plain shell); `--retry-request` replays without repeating input | unblocks delivery receipts (P2-D) |
 | 9 close and remove | landed branch deleted by `--delete-branch`; unmerged branch kept with `preservedBranch`; no terminal, process, or directory left | proves safe branch deletion (merged P1-B) live; informs P2-B |
 | 10 runtime restart | the terminal's process survives a runtime stop; after restart the same handle is listed and readable under a new runtime id | answers gap G11 |
@@ -2017,7 +2017,7 @@ Findings, where a real shape contradicts what a merged or held slice assumes:
 - `worktree create` returns neither `startupTerminal` nor `terminal` on this runtime, although a terminal already exists, so `fm_backend_orca_worktree_create` adopts nothing and falls back to `terminal create`, and each spawned task ends with two live terminals instead of one.
   Follow-up: adopt the existing terminal from `terminal list --worktree` before creating one.
 - `worktree create` under a folder-kind repo succeeds and returns the folder itself, so without the adapter's folder refusal a task would run in the operator's own folder.
-- A command whose name Orca recognizes as an agent has its command line rewritten (`--plugin-dir` is appended), and `agentIdentity` stays set after the agent exits, so neither proves "no agent".
+- A command whose name Orca recognizes as an agent has its command line rewritten (`--plugin-dir` is appended), and `agentIdentity` stays set after the agent exits until a later `terminal read` refreshes it, while `worktree ps` `agents[]` stayed empty throughout, so neither proves "no agent".
 - `terminal create` returns `processId`, which was a live lab-owned process: the pid the held agent-state slice listed as not exposed is exposed on create.
 - The command-line shim cannot be pointed at another data directory by environment, and the default worktree root is under the runtime's home, so a lab needs its own launcher and home.
 
