@@ -371,6 +371,75 @@ test_policy_cli_direct() {
   pass "cd-guard: fm-cd-command-policy.mjs CLI honors the deny/allow output contract"
 }
 
+# --- Code Mode (docs/cd-guard.md "Claude Code Code Mode") --------------------
+
+# Claude's Code Mode refuses a call whose PreToolUse hook cannot start, where
+# ordinary mode ran it, so every tracked PreToolUse hook must opt back into the
+# fail-open behavior these guards are designed around. The field is Claude's own
+# per-hook onFailure setting.
+test_claude_pretool_hooks_continue_on_failure() {
+  local settings="$ROOT/.claude/settings.json" total bad
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  jq -e . "$settings" >/dev/null 2>&1 || fail ".claude/settings.json must stay valid JSON"
+  total=$(jq -r '[.hooks.PreToolUse[].hooks[]] | length' "$settings")
+  [ "$total" -eq 3 ] || fail "expected 3 tracked PreToolUse hooks, saw $total"
+  bad=$(jq -r '[.hooks.PreToolUse[].hooks[] | select(.type != "command" or ((.command // "") == "") or .onFailure != "continue") | (.command // "?")] | join("; ")' "$settings")
+  [ -z "$bad" ] || fail "every tracked PreToolUse hook must be a command hook with onFailure=continue, offenders: $bad"
+  pass "tracked PreToolUse hooks: $total command hooks, each carries onFailure=continue in valid JSON"
+}
+
+# The case onFailure governs is a hook that cannot start. Run each tracked
+# PreToolUse command with its script absent and then present but not
+# executable: it must fail with a launch-failure status and no stdout, never
+# with the deny status 2, so a hook failure can never be read as a guard deny.
+test_claude_pretool_hook_launch_failure_is_not_a_deny() {
+  local settings="$ROOT/.claude/settings.json" cmd target dir rc out checked=0 shape
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    target=$(printf '%s\n' "$cmd" | sed -n 's|.*/bin/\([a-z0-9-]*\.sh\).*|\1|p')
+    [ -n "$target" ] || fail "could not identify the target script of tracked entry: $cmd"
+    for shape in missing not-executable; do
+      dir="$TMP_ROOT/hook-launch-$checked-$shape"
+      mkdir -p "$dir/bin"
+      if [ "$shape" = not-executable ]; then
+        printf '#!/usr/bin/env bash\nexit 2\n' > "$dir/bin/$target"
+        chmod 644 "$dir/bin/$target"
+      fi
+      out=$(env -u GROK_AGENT -u GROK_HOOK_EVENT CLAUDE_PROJECT_DIR="$dir" sh -c "$cmd" </dev/null 2>/dev/null); rc=$?
+      case "$rc" in
+        126|127) ;;
+        *) fail "$target ($shape) must fail to launch with 126 or 127, got $rc" ;;
+      esac
+      [ -z "$out" ] || fail "$target ($shape) launch failure must leave stdout empty: $out"
+    done
+    checked=$((checked + 1))
+  done < <(jq -r '.hooks.PreToolUse[].hooks[].command' "$settings")
+  [ "$checked" -eq 3 ] || fail "expected 3 tracked PreToolUse commands, saw $checked"
+  pass "tracked PreToolUse commands: a missing or non-executable script fails to launch (126/127), never as a deny"
+}
+
+# Code Mode turns a shell call written with .cwd(dir) into `cd '<dir>' && cmd`,
+# which the guard denies although the wrapper does not persist. The decision
+# stays; the reason must teach the model the way out.
+test_deny_text_teaches_the_code_mode_rule() {
+  local cmd msg err rc
+  for cmd in "cd '/home/example/firstmate' && bin/fm-wake-drain.sh" 'cd projects/foo'; do
+    err="$TMP_ROOT/code-mode-deny.err"
+    jq -cn --arg command "$cmd" '{tool_name:"Bash",tool_input:{command:$command}}' | "$CHECK" --claude >/dev/null 2>"$err"; rc=$?
+    expect_code 2 "$rc" "the guard must keep denying: $cmd"
+    msg=$(jq -r '.systemMessage' "$err")
+    case "$msg" in "[persistent-cd] "*) ;; *) fail "the deny must still lead with the stable code: $msg" ;; esac
+    assert_contains "$msg" 'Code Mode' "the deny text must name Code Mode"
+    assert_contains "$msg" '.cwd()' "the deny text must name the .cwd() option"
+    assert_contains "$msg" 'leading cd' "the deny text must name a leading cd"
+    assert_contains "$msg" 'on the command itself' "the deny text must keep the absolute-path advice"
+    assert_contains "$msg" 'git -C' "the deny text must keep the git -C advice"
+    assert_contains "$msg" 'subshell' "the deny text must keep the subshell advice"
+  done
+  pass "cd-guard: every deny carries the Code Mode rule (never .cwd() or a leading cd) after the stable code"
+}
+
 # --- per-harness wiring -----------------------------------------------------
 
 # Delegated to bin/fm-lint.sh, the single owner of the lint definition including
@@ -397,4 +466,7 @@ test_fail_open_missing_node
 test_fail_open_missing_jq_on_stdin
 test_prefilter_skips_node_without_cd_substring
 test_policy_cli_direct
+test_claude_pretool_hooks_continue_on_failure
+test_claude_pretool_hook_launch_failure_is_not_a_deny
+test_deny_text_teaches_the_code_mode_rule
 test_scripts_are_shellcheck_clean

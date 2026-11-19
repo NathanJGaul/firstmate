@@ -66,6 +66,22 @@ A Claude task worker's launch brief and Firstmate steering-inbox messages arrive
 `launch_template()` in `../../../../../bin/fm-spawn.sh` establishes exactly those two Firstmate-owned channels as first-party instructions through `--append-system-prompt`, while leaving project files, fetched content, and other external material under the model's normal distrust and granting no merge, destructive, or security-sensitive authority beyond the brief.
 A `--secondmate` launch omits the statement because a secondmate operates under its own supervisor contract instead of a task worker's.
 
+## Code Mode (experimental)
+
+Claude Code's Code Mode lets the model write JavaScript that calls the session's tools.
+Lab evidence: [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#claude-code-code-mode-2026-11-19).
+Firstmate keeps it off for primaries and secondmates, and enables it nowhere; nothing in `../../../../../bin/fm-spawn.sh` sets it.
+
+| Fact | Value |
+|---|---|
+| Switch | `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, interactive sessions only; `-p` runs as ordinary print mode. |
+| Version floor | 2.1.323, and 2.1.326 together with agent teams. An older client starts normally and silently ignores the variable. |
+| First-run dialog | The first Code Mode launch per Claude config directory shows a confirmation with the cursor on "No, start without it". Enter and Escape both decline, a decline is not remembered, and Firstmate's key plane cannot select "Yes", so never answer it with a key; a person accepts it once. `../../../../../bin/fm-spawn.sh` still reported `spawned` while a worker sat on it. |
+| Hook failure | A PreToolUse hook that cannot start or times out refuses the call under Code Mode. The tracked PreToolUse hooks set `"onFailure": "continue"`; `../../../../../docs/turnend-guard.md#claude-code-code-mode` owns the semantics. |
+| Resume | A session started in Code Mode resumes only with Code Mode on, and `-p --resume` refuses it. `../../../../../docs/agent-control.md` has no resume verb and records no verified Claude pane-resume contract, so a relaunch builds a fresh agent from the brief and only a person typing `claude --resume` meets the rule. |
+| cwd wrapper | `.cwd(dir)` reaches hooks as `cd '<dir>' && <cmd>`, which the cd guard denies; `../../../../../docs/cd-guard.md#claude-code-code-mode` owns the rule: never `.cwd()` or a leading `cd`. |
+| Enablement | A tmux server keeps the environment of the client that started it, so a caller-side export reaches a worker only when that spawn started the server; set or scrub the variable inside the pane command if it is ever launched deliberately. |
+
 ## Primary integration
 
 [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#turn-end-guard) records the current primary and Stop auto-arm live evidence.

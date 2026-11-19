@@ -416,6 +416,20 @@ The alarm cannot repeat during that failure episode, and a later unhealthy stop 
 A positively verified healthy watcher clears the failure notice, alarm, and block budget for a future independent episode.
 A Claude failure notice describes the automatic mechanism as broken and does not direct a routine manual background arm.
 
+### Claude Code Code Mode
+
+Claude Code's experimental Code Mode (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, off by default) needs Claude 2.1.323 or later and runs only in the interactive terminal, so the supervision host's `-p` engine never meets it.
+Firstmate keeps it off for primaries and secondmates; the Claude adapter reference owns the other facts ([`harness/claude.md`](../.agents/skills/harness-adapters/references/harness/claude.md#code-mode-experimental)).
+The Stop hook and its exit-2 rewake, the watcher-arm seatbelt, the delegation guard, and the session-start digest all behaved as in ordinary mode in the lab.
+
+Hook failure semantics are the one inversion.
+A PreToolUse command hook that cannot start (a missing or non-executable script, status 126 or 127) or does not finish before its timeout lets the call run in ordinary mode but refuses it under Code Mode (`the hook failed, so this call was not run`).
+The tracked PreToolUse seatbelts are fail-open by design, so each of the three PreToolUse entries in `.claude/settings.json` sets `"onFailure": "continue"`, a per-hook field Claude has understood since 2.1.295, which restores fail-open under Code Mode.
+It changes nothing else: exit 2 with the deny object still blocks, and the Stop hooks are unchanged.
+Grok, Cursor, and pi-code also load that file and are expected to ignore a hook field they do not define.
+
+[`verification/supervision.md`](verification/supervision.md#claude-code-code-mode-2026-11-19) records the dated lab evidence, and [`cd-guard.md`](cd-guard.md#claude-code-code-mode) owns the persistent-cd false positive Code Mode's `.cwd()` option causes.
+
 ### Passive adapters
 
 OpenCode, Pi, and pi-signed expose passive callbacks for this purpose.

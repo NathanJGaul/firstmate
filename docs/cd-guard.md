@@ -61,6 +61,17 @@ Consistent with the agent-mistake threat model, the guard deliberately does not 
 
 If a genuinely ambiguous command shape is found that risks a false block, the guard is not extended by guesswork; the ambiguity is escalated and the guard stays precise rather than over-eager.
 
+## Claude Code Code Mode
+
+Claude Code's experimental Code Mode lets the model write JavaScript whose shell calls reach PreToolUse as ordinary `Bash` calls.
+The shell tag's `.cwd(dir)` option arrives as `cd '<dir>' && <cmd>`, so the guard denies it as a `persistent-cd`, although the wrapper itself does not persist the directory change.
+The hook cannot tell that wrapper from a model-written `tools.Bash({command: "cd 'x' && ..."})`, which does persist, so the decision stays as it is and the guard teaches instead of exempting.
+
+The rule for the model: never pass `.cwd()` or a leading `cd` to a shell call; use an absolute path or `git -C <dir>`.
+The deny reason states this rule, so a model that writes the `.cwd()` form learns the way out from the first denial.
+An exemption keyed on code-originated call ids, and a scan of REPL code, are deferred until Code Mode is ever allowed on a primary.
+The Claude adapter reference ([`harness/claude.md`](../.agents/skills/harness-adapters/references/harness/claude.md#code-mode-experimental)) owns the version floor and the other Code Mode facts, and [`turnend-guard.md`](turnend-guard.md#claude-code-code-mode) owns hook failure semantics.
+
 ## Stable reason code
 
 Every deny carries one stable code in square brackets before its prose reason.
@@ -71,6 +82,7 @@ Every deny carries one stable code in square brackets before its prose reason.
 
 The reason directs the caller to reach the target without moving the shell by using `git -C <dir>`, placing an absolute path on the intended command itself, or scoping the `cd` to a subshell.
 It does not permit `cd /home/project`, because an absolute-path `cd` remains a persistent directory change and is denied.
+It ends with the Code Mode rule above: never `.cwd()` or a leading `cd`, and an absolute path or `git -C <dir>` instead.
 
 ## Transport and fail-open behavior
 
@@ -89,6 +101,7 @@ The quoting-decoder marker set is coupled to the classifier's decoder set in `bi
 
 Empty stdin, unparseable JSON, missing `jq` on the stdin path, missing Node, a missing policy owner, or an invalid policy response all fail open with exit 0 and no output.
 A broken hook must never deny every shell tool call.
+That holds for a hook that cannot start too: Claude's Code Mode would refuse the call, so `.claude/settings.json` marks the hook `"onFailure": "continue"` ([`turnend-guard.md`](turnend-guard.md#claude-code-code-mode)).
 
 ## Output contract
 
@@ -129,6 +142,7 @@ Every shell variable reference in the Grok hook command carries an inline defaul
 `tests/fm-cd-pretool-check.test.sh` owns the acceptance matrix.
 Every block and allow case runs through Codex-shaped stdin, Claude-shaped stdin, Grok-shaped stdin, OpenCode-shaped CLI, and Pi-shaped CLI entry forms.
 The suite also proves the end-to-end cwd-leak regression (a firstmate-owned backlog write leaking into a project clone, then denied at the exact command), the checkout scoping (fires in a git-cloned secondmate fixture, inert in a crewmate/scout linked worktree, inert outside a firstmate checkout, inert outside a git repo), the fail-open transport behavior, the prefilter fast path, the policy CLI output contract, and the per-harness wiring.
+It also proves that every tracked Claude PreToolUse hook carries `onFailure: continue` in valid JSON, that a missing or non-executable hook script fails to launch with 126 or 127 and never as a deny, and that every deny carries the Code Mode rule after the stable code.
 
 Run:
 
