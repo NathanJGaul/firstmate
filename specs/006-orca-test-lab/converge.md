@@ -15,7 +15,7 @@ Every other functional requirement, user story scenario, and edge case is implem
 
 ## Merge readiness and risk
 
-- Evidence: the guard test passes, eleven deliberate mutants were run (nine killed, two equivalent), lint and the documentation audience check are clean, and the Orca regression set passes.
+- Evidence: the guard test passes, eleven deliberate mutants were run (nine killed, two equivalent), lint and the documentation audience check are clean, and the Orca regression set from report section 6.3 passes (`fm-backend-orca`, `fm-backend`, `fm-teardown-endpoint-safety`, `fm-spawn-orca-worktree`, `fm-control`, `fm-bootstrap`, `fm-project-capacity`), after one pre-existing hermeticity failure in `fm-teardown-endpoint-safety` on a host with Orca installed was fixed in its own commit.
 - Risk 1: the lane's live assertions run only on request, so a future Orca shape change is caught only by an opt-in run.
 - Risk 2: the lane reads the runtime's entry points from the command-line shim Orca writes; a layout change makes it fail with a message naming what is missing, not skip.
 - Risk 3: the lane starts a real runtime, so a bug in the guards is the one way it could touch real state; the guards are tested without Orca and were exercised on the real runtime, and the operator's runtime data was compared before and after.

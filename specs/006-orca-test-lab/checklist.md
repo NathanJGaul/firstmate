@@ -5,7 +5,7 @@ It is not a reviewer's approval of the requirements, and an unchecked box is exp
 
 - [X] Every acceptance scenario and edge case has a test or a recorded live observation, with no `NO_TEST` behavior (`tdd/test-list.md`, `tdd/verification.md`).
 - [X] Every guard behavior was written test-first: `tdd/cycle-log.md` cycles 1 to 3 each record a red before the change; cycle 4 is a recorded characterization cycle with killed mutants.
-- [X] No existing test was weakened, skipped, or excluded.
+- [X] No existing test was weakened, skipped, or excluded; the one existing test edited (`tests/fm-teardown-endpoint-safety.test.sh`, the two Orca-free teardown cases) failed on this host because the adapter's CLI fallback (merged slice P1-E) finds the installed Orca CLI, so it now pins `HOME` and `ORCA_CLI_BIN_DIR` the way `tests/fm-backend-orca.test.sh` already does, in its own commit with its expectation unchanged.
 - [X] The lane refuses to run unless `FM_ORCA_LIVE_E2E=1`, and refuses an `ORCA_USER_DATA_PATH` that is, contains, lies inside, or links to `~/.orca` or `~/.orca-remote`, or that is not fresh (A1 to A3, U1 to U7, U12).
 - [X] Every mutating live step is preceded by the own-child proof, and signals go only to proven lab processes (A4, U8, U9).
 - [X] Every Orca command runs through a launcher pinned to the lab data directory with the caller's other `ORCA_*` variables removed, and the runtime runs with its own home (A5, U10).
