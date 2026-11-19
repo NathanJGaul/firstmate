@@ -124,5 +124,6 @@ tests/fm-teardown-endpoint-safety.test.sh
 ```
 
 The opt-in live lab runs against a throwaway Orca runtime of its own and never the operator's: `env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh`, with its guards proven by `tests/fm-backend-orca-lab-guard.test.sh`.
+The lab also pins `HOME` to an empty lab home and refuses a runtime `PATH` that reaches a real agent harness, so it cannot touch the operator's agent configuration or start a real agent; the [lab isolation record](verification/runtime-backends.md#lab-isolation-home-path-and-inherited-orca-terminal-variables) has the details.
 
 [`verification/runtime-backends.md`](verification/runtime-backends.md#orca) records the macOS readiness and response-shape smoke and the Linux headless 1.4.261 observations.
