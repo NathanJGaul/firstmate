@@ -2021,6 +2021,31 @@ Findings, where a real shape contradicts what a merged or held slice assumes:
 - `terminal create` returns `processId`, which was a live lab-owned process: the pid the held agent-state slice listed as not exposed is exposed on create.
 - The command-line shim cannot be pointed at another data directory by environment, and the default worktree root is under the runtime's home, so a lab needs its own launcher and home.
 
+#### Delivery receipts and dead terminals (2026-11-19)
+
+Observed with the same lab (`passed=43 findings=6` for a full run), after the adapter began sending text through `terminal send --enter --wait-submit` whenever `orca status --json` lists `terminal.prompt-delivery.v1`.
+`tests/fm-backend-orca.test.sh` and `tests/fm-task-inbox.test.sh` prove the parsing and the ring mapping against fake receipts; the lab proves the real answers below.
+
+```text
+terminal send --enter --wait-submit <s>   result.send{accepted, bytesWritten, prompt{requestId, stages, provider, observation, processIncarnation, generation}}, result.mutation{requestId, replayed}, result.warnings[]
+  recognized agent (fake agent named for a harness)  stages=["input_accepted"], provider=claude, observation=supported; the warning says no turn start was observed and to replay with --retry-request <id> --wait-submit <s>
+  plain shell                                        accepted=true, stages=["input_accepted"], provider=unsupported, observation=unsupported; the warning says the provider cannot report delivery
+  --retry-request <id> (same text)                   mutation.replayed=true, the agent received the text once
+  closed terminal                                    ok:false, error.code=terminal_not_writable, exit status nonzero
+  shell whose process exited, still listed           ok:false, error.code=terminal_not_writable
+  handle the runtime never issued                    ok:false, error.code=terminal_handle_stale
+```
+
+Firstmate-level checks, all against the lab runtime:
+
+- The adapter sent text to a live plain-shell terminal through the receipt path, the text arrived, and the verdict was `pending` (the receipt could not observe a plain shell and the composer of a bare shell prompt is unreadable).
+- The same call to the terminal after it was closed printed `terminal-gone`, exited nonzero, and named the terminal and `terminal_not_writable` on stderr.
+- `fm-send` of an ordinary steer to a closed task terminal recorded the durable inbox record and reported that the agent had exited (ring result 3), not a failed ring.
+- `fm-send` of a typed `/...` line to the closed task terminal failed with an error that names the terminal, says it is gone, and says nothing was delivered.
+
+Still unobserved: a `turn_started` stage, because no agent in the lab starts a turn; that stage is taken from the Orca command line's own documentation and is covered by fake receipts only.
+Refresh this section with the lab commands above.
+
 Not run, and what stays unknown:
 
 - Assertion 11, the browser bridge: the lab runtime reports browser automation unavailable, and a real browser session belongs to the operator's desktop, which the lab must not touch.

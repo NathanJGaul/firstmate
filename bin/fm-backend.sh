@@ -852,6 +852,10 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the backend's
 # proof-carrying verdict; callers require exact empty for confirmed delivery.
+# An endpoint the backend can prove cannot take input echoes terminal-gone and
+# returns nonzero (today only Orca, from its delivery receipts), so a caller
+# that tests only the exit status or send-failed still sees a failed send; the
+# steering ring and fm-send alone read the word.
 # A pane that already shows the recognised dialog is refused before any
 # adapter types, so that submit neither types the text nor sends Enter.
 fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]

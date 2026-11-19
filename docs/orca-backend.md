@@ -63,6 +63,10 @@ Exact command flags and response parsing are owned by `bin/backends/orca.sh` and
 
 `fm-peek.sh` reads with `orca terminal read`.
 An ordinary metadata-routed `fm-send.sh` text steer becomes a durable steering-inbox record, and only its best-effort constant doorbell passes through Orca's submit machinery.
+When the runtime lists the `terminal.prompt-delivery.v1` capability in `orca status --json`, that machinery is Orca's own delivery receipt: one send with the enter flag and a bounded wait for a turn to start, replayed by request id (never resent) while the receipt shows input accepted and no turn yet.
+A recognized agent's started turn is delivery proof, and a plain shell or unrecognized agent, which Orca cannot observe, falls to the composer check below.
+A runtime without the capability, or one whose status cannot be read, keeps the literal send and Enter loop unchanged.
+A terminal the runtime reports as closed, exited, or unknown makes the send fail with a message naming it and the runtime's code, and the doorbell's ring then reports the endpoint gone so the watcher escalates it directly instead of ringing again; any other failure stays an ordinary failed send.
 On the typed plane, `fm-send.sh` verifies composer clearance through the fleet-wide classifier in `bin/fm-composer-lib.sh`, retrying Enter without retyping when a slash popup first fills an argument placeholder.
 The composer read is one bounded tail of the live terminal and never pages backward into scrollback, so a stale startup banner cannot compete with the bottom-anchored composer.
 A bare shell row is `unknown`, not an empty agent composer, and plain-text captures degrade a glyph row carrying trailing text to `unknown` rather than a false `pending`.
@@ -87,6 +91,7 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
 - Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
+- A receipt proves Orca accepted input and, for a recognized agent, that its turn started; it does not prove which agent runs in a live terminal, so `fm_backend_agent_state` stays unverified for Orca.
 - The adapter reads only verified response fields: the worktree id and path, and a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned. It rejects other response shapes.
 - The branch-deleting release is proven live, and the startup-terminal adoption never fires on the Linux headless runtime because its worktree create names no startup terminal, so each task ends with two live terminals; `verification/runtime-backends.md` records the lab findings.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
