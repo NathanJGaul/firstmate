@@ -4,6 +4,13 @@
 # Orca owns both the task worktree and the terminal endpoint. Escape key support
 # remains unsupported until Orca exposes a terminal-send primitive for it.
 #
+# Text sends use Orca's delivery receipts when the runtime lists the
+# terminal.prompt-delivery.v1 capability: one `terminal send --enter
+# --wait-submit`, replayed by request id, with the composer as the last word.
+# A terminal the runtime says cannot take input is reported as terminal-gone
+# (verdict on stdout, exit 1). Without the capability the verified literal-send
+# and Enter loop runs unchanged. See fm_backend_orca_send_text_submit.
+#
 # Target string shape: the Orca terminal id accepted by `orca terminal ...`.
 
 # Shared composer-content classifier (empty|pending|unknown, and the fleet-wide
@@ -327,18 +334,189 @@ fm_backend_orca_send_key() {  # <terminal-id> <key>
   esac
 }
 
-# fm_backend_orca_send_text_submit: type <text> once, then drive the shared
-# verify-and-retry-Enter loop (bin/fm-composer-lib.sh:
-# fm_composer_submit_retry_core) against the shared composer verdict, so a
-# slash-command popup placeholder fill gets the required second Enter without
-# duplicating text.
+# fm_backend_orca_has_capability: whether the running Orca runtime lists the
+# named capability in `orca status --json` (result.runtime.capabilities, an
+# array of exact names). Anything short of a positive answer - a failed call,
+# invalid JSON, no list, a different name - is "not supported", so a feature
+# gated on it degrades to the verified path and never fails a send. The list is
+# read per call on purpose: a runtime restarted under a new version must not be
+# judged by an earlier read.
+fm_backend_orca_has_capability() {  # <capability>
+  local out
+  out=$(orca status --json 2>/dev/null) || return 1
+  printf '%s' "$out" | node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  process.exit(1);
+}
+const caps = data && data.result && data.result.runtime && data.result.runtime.capabilities;
+process.exit(Array.isArray(caps) && caps.includes(process.argv[1]) ? 0 : 1);
+' "$1"
+}
+
+# fm_backend_orca_receipt_class: read one `orca terminal send --enter
+# --wait-submit` answer on stdin and print "<class><TAB><detail>". The classes:
+#   started      the receipt's stages include turn_started: the agent began a turn
+#   accepted     input accepted by a recognized agent, no turn observed yet, and a
+#                request id to replay (detail = the id)
+#   unsupported  input accepted but the runtime cannot observe delivery (a plain
+#                shell, an unrecognized agent, an old host, or no replayable id)
+#   gone         the runtime says this endpoint cannot take input: terminal_not_writable
+#                (closed, or its process exited) or terminal_handle_stale (a handle it
+#                does not know). Only those two codes, both seen on Orca 1.4.261
+#                (docs/verification/runtime-backends.md); detail = the code
+#   failed       anything else, including input the runtime did not accept and an
+#                answer that is not JSON (detail = the code or a short reason)
+fm_backend_orca_receipt_class() {
+  node -e '
+const fs = require("fs");
+const out = (cls, detail) => process.stdout.write(cls + "\t" + (detail || ""));
+const GONE = new Set(["terminal_not_writable", "terminal_handle_stale"]);
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  out("failed", "invalid-json");
+  process.exit(0);
+}
+if (!data || typeof data !== "object") {
+  out("failed", "invalid-json");
+  process.exit(0);
+}
+if (data.ok === false) {
+  const code = data.error && data.error.code;
+  out(GONE.has(code) ? "gone" : "failed", code || "error");
+  process.exit(0);
+}
+const r = data.result || {};
+const send = r.send || {};
+if (send.accepted !== true) {
+  out("failed", "not-accepted");
+  process.exit(0);
+}
+const prompt = send.prompt || null;
+const mutation = r.mutation || {};
+const id = (prompt && prompt.requestId) || mutation.requestId || "";
+const stages = prompt && Array.isArray(prompt.stages) ? prompt.stages : [];
+if (stages.includes("turn_started")) {
+  out("started", id);
+} else if (prompt && prompt.observation === "supported" && id) {
+  out("accepted", id);
+} else {
+  out("unsupported", id);
+}
+' 2>/dev/null
+}
+
+# fm_backend_orca_send_text_submit: type <text> once and report the shared
+# proof-carrying verdict (empty = delivered, pending = typed but unconfirmed,
+# send-failed, unknown). The runtime's delivery receipts are used when it lists
+# terminal.prompt-delivery.v1; otherwise (and whenever the status cannot be
+# read) the literal-send-then-Enter loop below runs exactly as before.
 fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sleep> <settle>
-  local terminal=$1 text=$2 retries=$3 sleep_s=$4 settle=$5
   fm_backend_orca_tool_check || { printf 'send-failed'; return 0; }
+  if fm_backend_orca_has_capability terminal.prompt-delivery.v1; then
+    fm_backend_orca_send_text_receipt "$@"
+  else
+    fm_backend_orca_send_text_literal "$@"
+  fi
+}
+
+# fm_backend_orca_send_text_literal: the verified loop for a runtime without
+# receipts. Type the text once, then drive the shared verify-and-retry-Enter loop
+# (bin/fm-composer-lib.sh: fm_composer_submit_retry_core) against the shared
+# composer verdict, so a slash-command popup placeholder fill gets the required
+# second Enter without duplicating text.
+fm_backend_orca_send_text_literal() {  # <terminal-id> <text> <retries> <enter-sleep> <settle>
+  local terminal=$1 text=$2 retries=$3 sleep_s=$4 settle=$5
   fm_backend_orca_send_literal "$terminal" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
   fm_composer_submit_retry_core fm_backend_orca_send_key fm_backend_orca_composer_state \
     "$terminal" "$retries" "$sleep_s"
+}
+
+# fm_backend_orca_composer_finish: the verdict once the receipts cannot settle a
+# send but the input was accepted. An empty composer means the text left it; a
+# proven pending composer means an Enter was swallowed, so Enter alone is
+# retried through the shared core (the text is never typed again, since a receipt
+# replay never presses Enter and retyping would duplicate it); anything the
+# screen cannot prove stays "pending", the typed-but-unconfirmed verdict, because
+# Orca did accept the input and a resend would duplicate it.
+fm_backend_orca_composer_finish() {  # <terminal-id> <retries> <enter-sleep>
+  local terminal=$1 retries=$2 sleep_s=$3 state
+  state=$(fm_backend_orca_composer_state "$terminal")
+  if fm_composer_blocking_dialog_noted >/dev/null; then
+    printf 'unknown'
+    return 0
+  fi
+  case "$state" in
+    empty) printf 'empty' ;;
+    pending|pending-unproven)
+      fm_composer_submit_retry_core fm_backend_orca_send_key fm_backend_orca_composer_state \
+        "$terminal" "$retries" "$sleep_s"
+      ;;
+    *) printf 'pending' ;;
+  esac
+}
+
+# fm_backend_orca_send_text_receipt: one `terminal send --text --enter
+# --wait-submit`, then a replay by request id (never a resend) for as long as the
+# receipt shows input accepted and no turn yet, within the caller's <retries>
+# observations. A receipt the runtime cannot observe (a plain shell, an
+# unrecognized agent) falls to the composer; a terminal the runtime reports as
+# unable to take input prints terminal-gone, names it on stderr, and exits 1 so
+# every caller reads a failed send (the ring and fm-send alone read the word).
+# FM_ORCA_SUBMIT_WAIT sets the per-observation wait in seconds (default 2).
+fm_backend_orca_send_text_receipt() {  # <terminal-id> <text> <retries> <enter-sleep> <settle>
+  local terminal=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 wait=${FM_ORCA_SUBMIT_WAIT:-2}
+  local out cls detail req='' i=0 line
+  case "$wait" in ''|*[!0-9]*) wait=2 ;; esac
+  case "$retries" in ''|*[!0-9]*|0) retries=1 ;; esac
+  while :; do
+    if [ -n "$req" ]; then
+      out=$(orca terminal send --terminal "$terminal" --text "$text" --enter --wait-submit "$wait" --retry-request "$req" --json 2>/dev/null) || true
+    else
+      out=$(orca terminal send --terminal "$terminal" --text "$text" --enter --wait-submit "$wait" --json 2>/dev/null) || true
+    fi
+    line=$(printf '%s' "$out" | fm_backend_orca_receipt_class)
+    cls=${line%%$'\t'*}
+    detail=${line#*$'\t'}
+    case "$cls" in
+      started)
+        printf 'empty'
+        return 0
+        ;;
+      gone)
+        echo "error: Orca terminal $terminal is gone ($detail): nothing was delivered" >&2
+        printf 'terminal-gone'
+        return 1
+        ;;
+      unsupported)
+        sleep "$settle"
+        fm_backend_orca_composer_finish "$terminal" "$retries" "$sleep_s"
+        return 0
+        ;;
+      accepted)
+        i=$((i + 1))
+        if [ "$i" -ge "$retries" ]; then
+          sleep "$settle"
+          fm_backend_orca_composer_finish "$terminal" "$retries" "$sleep_s"
+          return 0
+        fi
+        req=$detail
+        ;;
+      *)
+        # failed: the runtime's own message is the cause worth showing.
+        [ -z "$out" ] || printf '%s' "$out" | fm_backend_orca_json_ok || true
+        echo "error: Orca terminal send to $terminal failed ($detail)" >&2
+        printf 'send-failed'
+        return 0
+        ;;
+    esac
+  done
 }
 
 # fm_backend_orca_kill: close one recorded task terminal. A missing CLI is a

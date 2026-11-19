@@ -297,6 +297,74 @@ test_ring_skips_dead_agent() {
   pass "inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints"
 }
 
+# A fake orca for the ring: status lists the receipt capability, `terminal read`
+# shows an empty composer, and `terminal send` answers ORCA_FAKE_SEND_JSON and
+# exits ORCA_FAKE_SEND_RC. Every call is logged to ORCA_FAKE_LOG.
+make_orca_ring_fake() {  # <dir>
+  mkdir -p "$1/fakebin"
+  cat > "$1/fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${ORCA_FAKE_LOG:?}"
+case "${1:-} ${2:-}" in
+  "status "*) printf '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready","capabilities":["terminal.prompt-delivery.v1"]}}}\n' ;;
+  "terminal read") printf '{"ok":true,"result":{"terminal":{"tail":["╭───╮","│ > │","╰───╯"]}}}\n' ;;
+  "terminal send") printf '%s\n' "${ORCA_FAKE_SEND_JSON:?}"; exit "${ORCA_FAKE_SEND_RC:-0}" ;;
+esac
+exit 0
+SH
+  chmod +x "$1/fakebin/orca"
+}
+
+orca_ring() {  # <dir> <state> <record> <send-json> <send-rc> -> rc of the ring; log in <dir>/orca.log
+  local dir=$1 state=$2 rec=$3 json=$4 src=$5 rc=0
+  : > "$dir/orca.log"
+  PATH="$dir/fakebin:$PATH" ORCA_FAKE_LOG="$dir/orca.log" ORCA_FAKE_SEND_JSON="$json" ORCA_FAKE_SEND_RC="$src" \
+    inbox_lib "$state" fm_task_inbox_ring orca term-9 "$rec" fm-t1 || rc=$?
+  return "$rc"
+}
+
+# An Orca send the runtime refuses because the terminal cannot take input is a
+# gone endpoint, like a dead tmux agent: the ring returns 3, so the watcher
+# escalates the unavailable endpoint directly instead of ringing again.
+test_ring_reports_a_gone_orca_terminal_as_gone() {
+  local dir state rec rc gone_closed gone_unknown
+  dir="$TMP_ROOT/ring-orca-gone"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_orca_ring_fake "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  gone_closed='{"ok":false,"error":{"code":"terminal_not_writable","message":"terminal_not_writable Terminal prompt request ID: r1."}}'
+  gone_unknown='{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal_handle_stale Terminal prompt request ID: r2."}}'
+  rc=0; orca_ring "$dir" "$state" "$rec" "$gone_closed" 1 || rc=$?
+  [ "$rc" = 3 ] || fail "a closed Orca terminal should return 3 from the ring, got $rc"
+  [ "$(grep -c '^terminal send' "$dir/orca.log")" = 1 ] || fail "a gone terminal must be tried once, not re-rung:"$'\n'"$(cat "$dir/orca.log")"
+  [ -f "$rec" ] || fail "a gone endpoint must leave the durable record in place"
+  rc=0; orca_ring "$dir" "$state" "$rec" "$gone_unknown" 1 || rc=$?
+  [ "$rc" = 3 ] || fail "an unknown Orca handle should return 3 from the ring, got $rc"
+  pass "inbox: the ring reports an Orca terminal the runtime says cannot take input as gone (3) after one try"
+}
+
+# Every other Orca outcome keeps its meaning: another runtime error is a failed
+# ring (2), and a receipt showing a started turn is a rung doorbell (0).
+test_ring_keeps_other_orca_failures_as_failed_rings() {
+  local dir state rec rc
+  dir="$TMP_ROOT/ring-orca-other"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_orca_ring_fake "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  rc=0; orca_ring "$dir" "$state" "$rec" '{"ok":false,"error":{"code":"runtime_error","message":"boom"}}' 1 || rc=$?
+  [ "$rc" = 2 ] || fail "an ordinary Orca send failure should return 2 from the ring, got $rc"
+  rc=0; orca_ring "$dir" "$state" "$rec" '{"ok":true,"result":{"send":{"handle":"term-9","accepted":true,"prompt":{"requestId":"r3","stages":["input_accepted","turn_started"],"provider":"claude","observation":"supported"}},"mutation":{"requestId":"r3","replayed":false}}}' 0 || rc=$?
+  [ "$rc" = 0 ] || fail "a started receipt should return 0 from the ring, got $rc"
+  grep -qF -e '--wait-submit' "$dir/orca.log" || fail "the doorbell must ask for the receipt:"$'\n'"$(cat "$dir/orca.log")"
+  # A send that exits nonzero without naming a gone terminal (here a backend the
+  # dispatcher cannot source) is a failed ring too, never a gone endpoint.
+  rc=0; inbox_lib "$state" fm_task_inbox_ring nosuch-backend term-9 "$rec" fm-t1 || rc=$?
+  [ "$rc" = 2 ] || fail "a send that fails without terminal-gone should return 2 from the ring, got $rc"
+  pass "inbox: the ring keeps a failed Orca send as 2 and a started receipt as 0"
+}
+
 # A fake tmux whose pane is a Claude-style composer that keeps its content in
 # FM_FAKE_COMPOSER: literal input appends to it, capture renders it wrapped
 # between rules, and Enter submits it (logged as SUBMIT) unless
@@ -1185,6 +1253,8 @@ test_write_is_durable_and_exact
 test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
+test_ring_reports_a_gone_orca_terminal_as_gone
+test_ring_keeps_other_orca_failures_as_failed_rings
 test_ring_submits_its_own_stuck_doorbell
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack

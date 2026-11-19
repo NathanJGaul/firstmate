@@ -46,12 +46,32 @@ next=$(( $(cat "$COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
   printf '\n'
 } >> "$LOG"
 if [ "${1:-}" = status ] && [ "${FM_ORCA_STATUS_RESPONSE:-ready}" != sequence ]; then
+  # FM_ORCA_STATUS_RAW answers verbatim (with FM_ORCA_STATUS_EXIT); FM_ORCA_STATUS_CAPS
+  # lists runtime capabilities; neither set is the plain ready status.
+  if [ "${FM_ORCA_STATUS_RAW+set}" = set ]; then
+    printf '%s' "$FM_ORCA_STATUS_RAW"
+    exit "${FM_ORCA_STATUS_EXIT:-0}"
+  fi
+  if [ -n "${FM_ORCA_STATUS_CAPS:-}" ]; then
+    printf '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready","capabilities":%s}}}\n' "$FM_ORCA_STATUS_CAPS"
+    exit 0
+  fi
   printf '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}\n'
+  exit 0
+fi
+# A verb answered by name (by-<noun>-<verb>.out and .exit) does not use the call
+# count, so a whole-script run is not tied to the order of its calls.
+verb="${1:-}-${2:-}"
+if [ -f "$RESP/by-$verb.out" ] || [ -f "$RESP/by-$verb.exit" ]; then
+  [ ! -f "$RESP/by-$verb.out" ] || cat "$RESP/by-$verb.out"
+  [ ! -f "$RESP/by-$verb.exit" ] || exit "$(cat "$RESP/by-$verb.exit")"
   exit 0
 fi
 n=$next
 echo "$n" > "$COUNT_FILE"
 if [ -f "$RESP/$n.exit" ]; then
+  # An answer and a failing exit status together, as the real CLI gives on ok:false.
+  [ ! -f "$RESP/$n.out" ] || cat "$RESP/$n.out"
   exit "$(cat "$RESP/$n.exit")"
 fi
 [ -f "$RESP/$n.out" ] && cat "$RESP/$n.out"
@@ -1972,6 +1992,337 @@ test_remove_worktree_refuses_empty_id
 test_remove_worktree_asks_orca_to_delete_the_branch_safely
 test_remove_worktree_rejects_orca_error_json
 test_worktree_path_resolves_id
+# --- delivery receipts (specs/007-orca-delivery-receipts) ---------------------------------
+# The fake orca lists the receipt capability when FM_ORCA_STATUS_CAPS is set, and
+# can answer a verb with a fixed response (by-<noun>-<verb>.out/.exit) so a
+# whole-script run does not depend on the call count.
+
+RECEIPT_CAPS='["terminal.program-status.v1","terminal.prompt-delivery.v1"]'
+COMPOSER_EMPTY='{"ok":true,"result":{"terminal":{"tail":["╭───╮","│ > │","╰───╯"]}}}'
+COMPOSER_PENDING='{"ok":true,"result":{"terminal":{"tail":["╭─────────────────╮","│ > hello captain │","╰─────────────────╯"]}}}'
+COMPOSER_UNKNOWN='{"ok":true,"result":{"terminal":{"tail":["some earlier output","kunchen@mac firstmate $ "]}}}'
+ACCEPT_OK='{"ok":true,"result":{"send":{"handle":"term-123","accepted":true}}}'
+
+rc_prompt() {  # <request-id> <stages-json> <provider> <observation> [replayed]
+  printf '{"ok":true,"result":{"send":{"handle":"term-123","accepted":true,"bytesWritten":13,"prompt":{"requestId":"%s","stages":%s,"provider":"%s","observation":"%s"}},"mutation":{"requestId":"%s","replayed":%s}}}\n' \
+    "$1" "$2" "$3" "$4" "$1" "${5:-false}"
+}
+rc_started() { rc_prompt "$1" '["input_accepted","turn_started"]' claude supported "${2:-false}"; }
+rc_accepted() { rc_prompt "$1" '["input_accepted"]' claude supported "${2:-false}"; }
+rc_unsupported() { rc_prompt "$1" '["input_accepted"]' unsupported unsupported; }
+rc_gone() {  # <request-id>
+  printf '{"ok":false,"error":{"code":"terminal_not_writable","message":"terminal_not_writable Terminal prompt request ID: %s. Re-issue the exact command with --retry-request %s --wait-submit <seconds>; do not retry it without that ID."}}\n' "$1" "$1"
+}
+
+# receipt_run <terminal> <text> <retries>: the adapter against the fake, with the
+# receipt capability listed unless RECEIPT_NO_CAPS=1. Sets OUT, ERR, RC.
+receipt_run() {
+  local caps=$RECEIPT_CAPS
+  [ "${RECEIPT_NO_CAPS:-0}" != 1 ] || caps=
+  RC=0
+  OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_CAPS="$caps" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_text_submit "$1" "$2" "$3" 0.01 0.01' "$ROOT" "$1" "$2" "$3" 2>"$CASE_DIR/err" ) || RC=$?
+  ERR=$(cat "$CASE_DIR/err")
+}
+orca_sends() { grep -a -F $'orca\x1fterminal\x1fsend' "$LOG" || true; }
+orca_send_count() { orca_sends | grep -a -c -F -e "$1" || true; }
+# Enter-only sends (the shared Enter retry), and replays that carry a request id.
+orca_enter_only_count() { orca_send_count $'--text\x1f\x1f--enter'; }
+orca_replay_count() { orca_send_count $'--retry-request'; }
+orca_all_sends() { orca_sends | grep -a -c . || true; }
+
+test_has_capability_reads_the_status_list() {
+  local cap=terminal.prompt-delivery.v1 rc
+  has() {  # <env-assignment...> -> rc of fm_backend_orca_has_capability
+    # shellcheck disable=SC2016  # the single quotes are deliberate: $0 belongs to the inner bash
+    env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" "$@" \
+      bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_has_capability terminal.prompt-delivery.v1' "$ROOT"
+  }
+  orca_case caps
+  rc=0; has FM_ORCA_STATUS_CAPS="$RECEIPT_CAPS" || rc=$?
+  [ "$rc" -eq 0 ] || fail "a status list naming $cap should report the capability, got rc=$rc"
+  rc=0; has FM_ORCA_STATUS_CAPS='["terminal.program-status.v1"]' || rc=$?
+  [ "$rc" -ne 0 ] || fail "a status list without $cap must not report it"
+  rc=0; has FM_ORCA_STATUS_CAPS='["terminal.prompt-delivery.v10","x.terminal.prompt-delivery.v1"]' || rc=$?
+  [ "$rc" -ne 0 ] || fail "only an exact capability name may match, not a longer or prefixed one"
+  rc=0; has FM_ORCA_STATUS_RAW='{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}' || rc=$?
+  [ "$rc" -ne 0 ] || fail "a status with no capability list must not report the capability"
+  rc=0; has FM_ORCA_STATUS_RAW='not json at all' || rc=$?
+  [ "$rc" -ne 0 ] || fail "an unparseable status must not report the capability"
+  rc=0; has FM_ORCA_STATUS_RAW='' FM_ORCA_STATUS_EXIT=1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a failed status call must not report the capability"
+  pass "fm_backend_orca_has_capability: true only for an exact name in the status list; every other answer is not supported"
+}
+
+test_receipt_class_matrix() {
+  local got
+  cls() { printf '%s' "$1" | bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_receipt_class' "$ROOT"; }
+  expect() {  # <label> <json> <expected>
+    got=$(cls "$2")
+    [ "$got" = "$3" ] || fail "receipt class for $1: expected '$3', got '$got'"
+  }
+  expect "a started turn" "$(rc_started req-1)" $'started\treq-1'
+  expect "input accepted, no turn yet" "$(rc_accepted req-2)" $'accepted\treq-2'
+  expect "a plain shell" "$(rc_unsupported req-3)" $'unsupported\treq-3'
+  expect "an old host" "$(rc_prompt unsupported-old-host '["input_accepted"]' old-host unsupported)" $'unsupported\tunsupported-old-host'
+  expect "accepted with no prompt object" '{"ok":true,"result":{"send":{"handle":"t","accepted":true}}}' $'unsupported\t'
+  expect "input not accepted" '{"ok":true,"result":{"send":{"handle":"t","accepted":false,"bytesWritten":0}}}' $'failed\tnot-accepted'
+  expect "a closed or exited terminal" "$(rc_gone req-4)" $'gone\tterminal_not_writable'
+  expect "an unknown handle" '{"ok":false,"error":{"code":"terminal_handle_stale","message":"stale"}}' $'gone\tterminal_handle_stale'
+  expect "another runtime error" '{"ok":false,"error":{"code":"runtime_error","message":"boom"}}' $'failed\truntime_error'
+  expect "invalid JSON" 'not json' $'failed\tinvalid-json'
+  expect "empty output" '' $'failed\tinvalid-json'
+  expect "an accepted prompt with a started stage but no request id" '{"ok":true,"result":{"send":{"accepted":true,"prompt":{"stages":["input_accepted","turn_started"],"observation":"supported"}}}}' $'started\t'
+  expect "an accepted supported prompt with no request id" '{"ok":true,"result":{"send":{"accepted":true,"prompt":{"stages":["input_accepted"],"observation":"supported"}}}}' $'unsupported\t'
+  pass "fm_backend_orca_receipt_class: started, accepted, unsupported, gone, and failed answers each map to one class"
+}
+
+test_receipt_started_is_empty() {
+  orca_case rc-started
+  rc_started req-1 > "$RESP/1.out"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = empty ] || fail "a started receipt should report empty, got '$OUT'"
+  [ "$RC" -eq 0 ] || fail "a started receipt should exit 0, got $RC"
+  [ "$(orca_all_sends)" -eq 1 ] || fail "a started receipt needs exactly one send, got $(orca_all_sends)"
+  assert_contains "$(orca_sends)" $'--terminal\x1fterm-123\x1f--text\x1fhello captain\x1f--enter\x1f--wait-submit\x1f2\x1f--json' \
+    "the receipt send must carry the text, the enter flag, and the default 2 second wait"
+  [ "$(orca_log_count terminal read)" -eq 0 ] || fail "a started receipt must not read the composer"
+  assert_not_contains "$(cat "$LOG")" '--retry-request' "a first send carries no request id"
+  pass "fm_backend_orca_send_text_submit: a started receipt is delivery proof after one send and no composer read"
+}
+
+test_receipt_accepted_is_replayed_by_id() {
+  orca_case rc-replay
+  rc_accepted req-7 > "$RESP/1.out"
+  rc_started req-7 true > "$RESP/2.out"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = empty ] || fail "a replay that proves the turn should report empty, got '$OUT'"
+  [ "$(orca_all_sends)" -eq 2 ] || fail "one send and one replay expected, got $(orca_all_sends)"
+  [ "$(orca_replay_count)" -eq 1 ] || fail "exactly one send should carry a request id, got $(orca_replay_count)"
+  assert_contains "$(orca_sends | sed -n 2p)" $'--text\x1fhello captain\x1f--enter\x1f--wait-submit\x1f2\x1f--retry-request\x1freq-7' \
+    "the replay must carry the same text and the first receipt's request id"
+  [ "$(orca_enter_only_count)" -eq 0 ] || fail "a replay must not press Enter by itself"
+  pass "fm_backend_orca_send_text_submit: an unproven receipt is replayed by its request id with the same text"
+}
+
+test_receipt_exhausted_with_empty_composer_is_empty() {
+  orca_case rc-exhaust-empty
+  rc_accepted req-1 > "$RESP/1.out"
+  rc_accepted req-1 true > "$RESP/2.out"
+  rc_accepted req-1 true > "$RESP/3.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/4.out"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = empty ] || fail "an accepted input that left the composer should report empty, got '$OUT'"
+  [ "$(orca_all_sends)" -eq 3 ] || fail "the budget of 3 allows one send and two replays, got $(orca_all_sends) sends"
+  [ "$(orca_replay_count)" -eq 2 ] || fail "two replays expected, got $(orca_replay_count)"
+  [ "$(orca_log_count terminal read)" -eq 1 ] || fail "exactly one composer read after the budget, got $(orca_log_count terminal read)"
+  pass "fm_backend_orca_send_text_submit: a receipt unproven for the whole budget with an empty composer is delivered, with no unnumbered resend"
+}
+
+test_receipt_exhausted_with_pending_composer_retries_enter_only() {
+  orca_case rc-exhaust-pending
+  rc_accepted req-1 > "$RESP/1.out"
+  rc_accepted req-1 true > "$RESP/2.out"
+  printf '%s\n' "$COMPOSER_PENDING" > "$RESP/3.out"
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/4.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/5.out"
+  receipt_run term-123 "hello captain" 2
+  [ "$OUT" = empty ] || fail "a swallowed Enter retried to an empty composer should report empty, got '$OUT'"
+  [ "$(orca_enter_only_count)" -eq 1 ] || fail "exactly one Enter-only retry expected, got $(orca_enter_only_count)"
+  [ "$(orca_send_count $'--text\x1fhello captain')" -eq 2 ] || fail "the text must be sent only by the receipt send and its replay"
+  pass "fm_backend_orca_send_text_submit: a proven-pending composer after the receipts retries Enter only, never the text"
+}
+
+test_receipt_exhausted_with_unreadable_composer_is_pending() {
+  orca_case rc-exhaust-unknown
+  rc_accepted req-1 > "$RESP/1.out"
+  printf '%s\n' "$COMPOSER_UNKNOWN" > "$RESP/2.out"
+  receipt_run term-123 "hello captain" 1
+  [ "$OUT" = pending ] || fail "input Orca accepted but the screen cannot confirm should report pending, got '$OUT'"
+  [ "$RC" -eq 0 ] || fail "pending is not a send failure, got rc=$RC"
+  [ "$(orca_enter_only_count)" -eq 0 ] || fail "an unreadable composer must not be blindly Entered"
+  pass "fm_backend_orca_send_text_submit: accepted input with an unreadable composer is pending, never a failure"
+}
+
+test_receipt_unsupported_falls_back_to_the_composer() {
+  orca_case rc-unsupported-empty
+  rc_unsupported req-1 > "$RESP/1.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/2.out"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = empty ] || fail "an unsupported receipt with an empty composer should report empty, got '$OUT'"
+  [ "$(orca_replay_count)" -eq 0 ] || fail "an unsupported receipt has no observation to replay"
+  [ "$(orca_all_sends)" -eq 1 ] || fail "the text must be sent once, got $(orca_all_sends)"
+  orca_case rc-unsupported-pending
+  rc_unsupported req-1 > "$RESP/1.out"
+  printf '%s\n' "$COMPOSER_PENDING" > "$RESP/2.out"
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/3.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/4.out"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = empty ] || fail "an unsupported receipt with a swallowed Enter should end empty, got '$OUT'"
+  [ "$(orca_enter_only_count)" -eq 1 ] || fail "one Enter-only retry expected, got $(orca_enter_only_count)"
+  [ "$(orca_replay_count)" -eq 0 ] || fail "an unsupported receipt must never be replayed"
+  pass "fm_backend_orca_send_text_submit: an unsupported receipt falls back to the composer verdict without retyping or replaying"
+}
+
+test_receipt_gone_terminal_is_terminal_gone() {
+  orca_case rc-gone
+  rc_gone req-9 > "$RESP/1.out"
+  printf '1\n' > "$RESP/1.exit"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = terminal-gone ] || fail "a closed or exited terminal should report terminal-gone, got '$OUT'"
+  [ "$RC" -eq 1 ] || fail "terminal-gone must exit 1 so every caller reads a failed send, got $RC"
+  assert_contains "$ERR" term-123 "the failure must name the terminal"
+  assert_contains "$ERR" terminal_not_writable "the failure must carry the runtime's code"
+  assert_contains "$ERR" "nothing was delivered" "the failure must say nothing was delivered"
+  [ "$(orca_all_sends)" -eq 1 ] || fail "a gone terminal is not retried, got $(orca_all_sends) sends"
+  orca_case rc-gone-unknown
+  printf '{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal_handle_stale Terminal prompt request ID: r."}}\n' > "$RESP/1.out"
+  printf '1\n' > "$RESP/1.exit"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = terminal-gone ] || fail "a handle the runtime does not know should report terminal-gone, got '$OUT'"
+  assert_contains "$ERR" terminal_handle_stale "the failure must carry the runtime's code"
+  pass "fm_backend_orca_send_text_submit: a gone terminal prints terminal-gone, exits 1, and names the terminal and the runtime's code"
+}
+
+test_receipt_other_failures_stay_send_failed() {
+  orca_case rc-stale
+  printf '{"ok":false,"error":{"code":"runtime_error","message":"the runtime tripped"}}\n' > "$RESP/1.out"
+  printf '1\n' > "$RESP/1.exit"
+  receipt_run term-123 "hello" 3
+  [ "$OUT" = send-failed ] || fail "another runtime error is not a gone terminal, got '$OUT'"
+  [ "$RC" -eq 0 ] || fail "send-failed keeps the adapter's exit 0, got $RC"
+  assert_contains "$ERR" "the runtime tripped" "the runtime's message must reach stderr"
+  orca_case rc-garbage
+  printf 'segfault\n' > "$RESP/1.out"
+  printf '1\n' > "$RESP/1.exit"
+  receipt_run term-123 "hello" 3
+  [ "$OUT" = send-failed ] || fail "an unparseable failure should report send-failed, got '$OUT'"
+  orca_case rc-not-accepted
+  printf '{"ok":true,"result":{"send":{"handle":"term-123","accepted":false,"bytesWritten":0}}}\n' > "$RESP/1.out"
+  receipt_run term-123 "hello" 3
+  [ "$OUT" = send-failed ] || fail "input the runtime did not accept is not delivered, got '$OUT'"
+  pass "fm_backend_orca_send_text_submit: every failure other than a gone terminal stays send-failed"
+}
+
+test_receipt_wait_window_is_tunable() {
+  orca_case rc-wait
+  rc_started req-1 > "$RESP/1.out"
+  OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_CAPS="$RECEIPT_CAPS" FM_ORCA_SUBMIT_WAIT=5 \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_text_submit term-123 hello 3 0.01 0.01' "$ROOT" )
+  [ "$OUT" = empty ] || fail "got '$OUT'"
+  assert_contains "$(orca_sends)" $'--wait-submit\x1f5\x1f--json' "FM_ORCA_SUBMIT_WAIT must set the wait window"
+  orca_case rc-wait-bad
+  rc_started req-1 > "$RESP/1.out"
+  OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_CAPS="$RECEIPT_CAPS" FM_ORCA_SUBMIT_WAIT='2;rm -rf x' \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_text_submit term-123 hello 3 0.01 0.01' "$ROOT" )
+  assert_contains "$(orca_sends)" $'--wait-submit\x1f2\x1f--json' "a non-numeric window must fall back to the default"
+  pass "fm_backend_orca_send_text_submit: the wait window defaults to 2 seconds, is tunable, and ignores a non-numeric value"
+}
+
+test_receipt_text_is_one_argument() {
+  local text=$'--dash "dq" \'sq\' $(touch /nope)\nsecond line'
+  orca_case rc-text
+  rc_accepted req-1 > "$RESP/1.out"
+  rc_started req-1 true > "$RESP/2.out"
+  receipt_run term-123 "$text" 3
+  [ "$OUT" = empty ] || fail "got '$OUT'"
+  assert_contains "$(cat "$LOG")" $'--text\x1f'"$text"$'\x1f--enter\x1f--wait-submit\x1f2\x1f--json' "the send must carry the text as one argument"
+  assert_contains "$(cat "$LOG")" $'--text\x1f'"$text"$'\x1f--enter\x1f--wait-submit\x1f2\x1f--retry-request\x1freq-1' "the replay must carry the same text as one argument"
+  [ ! -e /nope ] || fail "the text was evaluated"
+  pass "fm_backend_orca_send_text_submit: the text, with quotes, a leading dash, and a newline, is one argument on the send and the replay"
+}
+
+test_failed_status_read_selects_the_current_path() {
+  orca_case rc-nocaps
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/1.out"
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/2.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/3.out"
+  RECEIPT_NO_CAPS=1 receipt_run term-123 "hello captain" 3
+  [ "$OUT" = empty ] || fail "got '$OUT'"
+  assert_not_contains "$(cat "$LOG")" '--wait-submit' "no capability means no receipt options"
+  assert_contains "$(orca_sends)" $'--text\x1fhello captain\x1f--json' "the literal send is unchanged"
+  assert_contains "$(orca_sends)" $'--text\x1f\x1f--enter\x1f--json' "the Enter send is unchanged"
+  orca_case rc-status-down
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/1.out"
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/2.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/3.out"
+  OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_RAW='' FM_ORCA_STATUS_EXIT=1 \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+  [ "$OUT" = empty ] || fail "an unreadable status must select the current path, got '$OUT'"
+  assert_not_contains "$(cat "$LOG")" '--wait-submit' "an unreadable status means no receipt options"
+  pass "fm_backend_orca_send_text_submit: without the capability, or when status cannot be read, the current send loop runs unchanged"
+}
+
+# Whole-script cases: bin/fm-send.sh against an Orca task record and the fake.
+orca_fm_send_case() {  # <case> -> sets SEND_STATE SEND_NEUTRAL; the fake answers by verb
+  local id=orcarcpt1
+  orca_case "$1"
+  SEND_ID=$id
+  SEND_STATE="$CASE_DIR/state"; mkdir -p "$SEND_STATE"
+  fm_write_meta "$SEND_STATE/$id.meta" \
+    "window=fm-$id" "endpoint_task_id=$id" "terminal=term-io" "worktree=$CASE_DIR" "project=$CASE_DIR" "harness=claude" "kind=scout" "backend=orca"
+  touch "$SEND_STATE/.last-watcher-beat"
+  SEND_NEUTRAL=$(neutral_fm_root "$CASE_DIR/neutral")
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/by-terminal-read.out"
+}
+orca_fm_send() {  # <text> -> sets SEND_OUT SEND_RC
+  SEND_RC=0
+  SEND_OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_CAPS="$RECEIPT_CAPS" \
+    FM_ROOT_OVERRIDE="$SEND_NEUTRAL" FM_HOME="$SEND_NEUTRAL" FM_STATE_OVERRIDE="$SEND_STATE" FM_SEND_SETTLE=0 FM_SEND_SLEEP=0.01 \
+    "$ROOT/bin/fm-send.sh" "fm-$SEND_ID" "$1" 2>&1 ) || SEND_RC=$?
+}
+
+test_fm_send_typed_uses_the_receipt_on_orca() {
+  orca_fm_send_case send-typed-receipt
+  rc_started req-1 > "$RESP/by-terminal-send.out"
+  orca_fm_send "/compact"
+  [ "$SEND_RC" -eq 0 ] || fail "a typed send confirmed by a started receipt should exit 0, got $SEND_RC: $SEND_OUT"
+  [ "$(orca_all_sends)" -eq 1 ] || fail "one receipt send expected, got $(orca_all_sends)"
+  assert_contains "$(orca_sends)" $'--text\x1f/compact\x1f--enter\x1f--wait-submit\x1f2\x1f--json' "the typed text must ride the receipt send"
+  [ "$(orca_enter_only_count)" -eq 0 ] || fail "no separate Enter is sent on the receipt path"
+  pass "fm-send (typed): an Orca send that the runtime proves started exits 0 on one receipt send"
+}
+
+test_fm_send_doorbell_uses_the_receipt_on_orca() {
+  orca_fm_send_case send-doorbell-receipt
+  rc_started req-1 > "$RESP/by-terminal-send.out"
+  orca_fm_send "please continue"
+  [ "$SEND_RC" -eq 0 ] || fail "an ordinary steer should exit 0, got $SEND_RC: $SEND_OUT"
+  [ -f "$SEND_STATE/$SEND_ID.inbox/001.msg" ] || fail "the steer must be recorded in the durable inbox"
+  assert_contains "$(orca_sends)" $'--text\x1f: Firstmate instruction waiting:' "the doorbell must ride the receipt send"
+  assert_contains "$(orca_sends)" $'--enter\x1f--wait-submit\x1f2' "the doorbell must request the receipt"
+  assert_not_contains "$SEND_OUT" "doorbell" "a delivered doorbell must print no warning"
+  pass "fm-send (doorbell): the Orca doorbell rides the receipt send and prints no warning"
+}
+
+test_fm_send_typed_names_a_gone_terminal() {
+  orca_fm_send_case send-typed-gone
+  rc_gone req-1 > "$RESP/by-terminal-send.out"
+  printf '1\n' > "$RESP/by-terminal-send.exit"
+  orca_fm_send "/compact"
+  [ "$SEND_RC" -ne 0 ] || fail "a typed send to a gone terminal must fail"
+  assert_contains "$SEND_OUT" "term-io" "the error must name the terminal"
+  assert_contains "$SEND_OUT" "is gone" "the error must say the terminal is gone"
+  assert_contains "$SEND_OUT" "nothing was delivered" "the error must say nothing was delivered"
+  assert_not_contains "$SEND_OUT" "delivery unconfirmed" "a gone terminal is not an unconfirmed delivery"
+  pass "fm-send (typed): a gone Orca terminal fails with an error that names the terminal and says nothing was delivered"
+}
+
+test_fm_send_without_the_capability_is_unchanged() {
+  orca_fm_send_case send-typed-nocaps
+  printf '%s\n' "$ACCEPT_OK" > "$RESP/by-terminal-send.out"
+  SEND_RC=0
+  SEND_OUT=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$SEND_NEUTRAL" FM_HOME="$SEND_NEUTRAL" FM_STATE_OVERRIDE="$SEND_STATE" FM_SEND_SETTLE=0 FM_SEND_SLEEP=0.01 \
+    "$ROOT/bin/fm-send.sh" "fm-$SEND_ID" "/compact" 2>&1 ) || SEND_RC=$?
+  [ "$SEND_RC" -eq 0 ] || fail "the current path should still deliver, got $SEND_RC: $SEND_OUT"
+  assert_not_contains "$(cat "$LOG")" '--wait-submit' "no capability means no receipt options"
+  assert_contains "$(orca_sends)" $'--text\x1f/compact\x1f--json' "the literal send is unchanged"
+  assert_contains "$(orca_sends)" $'--text\x1f\x1f--enter\x1f--json' "the Enter send is unchanged"
+  pass "fm-send (typed): without the receipt capability the Orca send is the current literal send and Enter"
+}
+
+
 test_dispatcher_sources_orca_and_routes_primitives
 test_json_get_ignores_undocumented_terminal_id_shapes
 test_worktree_and_terminal_helpers_parse_json
@@ -2012,3 +2363,20 @@ test_teardown_refuses_orca_worktree_without_terminal_handle
 test_secondmate_force_teardown_removes_orca_child_via_orca
 test_secondmate_force_teardown_refuses_orca_child_id_path_mismatch
 test_secondmate_force_teardown_refuses_partial_orca_child
+test_has_capability_reads_the_status_list
+test_receipt_class_matrix
+test_receipt_started_is_empty
+test_receipt_accepted_is_replayed_by_id
+test_receipt_exhausted_with_empty_composer_is_empty
+test_receipt_exhausted_with_pending_composer_retries_enter_only
+test_receipt_exhausted_with_unreadable_composer_is_pending
+test_receipt_unsupported_falls_back_to_the_composer
+test_receipt_gone_terminal_is_terminal_gone
+test_receipt_other_failures_stay_send_failed
+test_receipt_wait_window_is_tunable
+test_receipt_text_is_one_argument
+test_failed_status_read_selects_the_current_path
+test_fm_send_typed_uses_the_receipt_on_orca
+test_fm_send_doorbell_uses_the_receipt_on_orca
+test_fm_send_typed_names_a_gone_terminal
+test_fm_send_without_the_capability_is_unchanged

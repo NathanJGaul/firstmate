@@ -134,6 +134,17 @@ own() { orca_lab_assert_own_runtime "$DATA" "$CHILD" "$BIN/orca" || fail "the an
 start_runtime
 own
 
+# read helpers shared by both sections
+read_tail() { O terminal read --terminal "$1" --json | jq -r '.result.terminal.tail | join("\n")'; }
+wait_for_text() {  # <terminal> <text> [seconds]
+  local n=$(( ${3:-10} * 5 ))
+  while [ "$n" -gt 0 ]; do
+    case "$(read_tail "$1")" in *"$2"*) return 0 ;; esac
+    sleep 0.2; n=$((n - 1))
+  done
+  return 1
+}
+
 # --- the Orca-level assertions (report section 6.1) ----------------------------------
 
 run_orca_level() {
@@ -234,15 +245,6 @@ ok "A4: terminal list --worktree and worktree ps report the live terminal count 
 
 section "A5 Escape, Ctrl+U, interrupt, wait (unblocks slice 9: Escape and Ctrl+U delivery)"
 [ -n "$AUTO_T" ] || { AUTO_T=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-ctl --json | jq -r '.result.terminal.handle'); }
-read_tail() { O terminal read --terminal "$1" --json | jq -r '.result.terminal.tail | join("\n")'; }
-wait_for_text() {  # <terminal> <text> [seconds]
-  local n=$(( ${3:-10} * 5 ))
-  while [ "$n" -gt 0 ]; do
-    case "$(read_tail "$1")" in *"$2"*) return 0 ;; esac
-    sleep 0.2; n=$((n - 1))
-  done
-  return 1
-}
 own
 O terminal send --terminal "$AUTO_T" --text 'cat -v' --enter --json >/dev/null
 sleep 0.5
@@ -375,6 +377,37 @@ else
   finding "send --wait-submit returned no mutation.requestId, so no --retry-request replay could be tried"
 fi
 O terminal close --terminal "$AG2" --json >/dev/null
+
+# --- assertion 12: receipts for a plain shell, a closed terminal, and an exited shell (slice 11) -----------------
+
+section "A12 delivery receipts beyond a live agent (proves slice 11: receipts and dead-terminal detection)"
+own
+CLOSED_SEND=$(O terminal send --terminal "$AG2" --text 'fm-test-to-closed' --enter --wait-submit 1 --json 2>/dev/null || true)
+observe "send --enter --wait-submit to a CLOSED terminal: $(jq -c '{ok, code: .error.code, message: .error.message}' <<<"$CLOSED_SEND")"
+[ "$(jq -r '.ok' <<<"$CLOSED_SEND")" = false ] && [ "$(jq -r '.error.code // empty' <<<"$CLOSED_SEND")" = terminal_not_writable ] \
+  || fail "A12: a send to a closed terminal did not answer ok:false with error.code=terminal_not_writable"
+ok "A12: a send to a closed terminal answers ok:false with error.code=terminal_not_writable (the adapter's gone set)"
+PLAIN_T=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-plain --json | jq -r '.result.terminal.handle')
+[ -n "$PLAIN_T" ] || fail "A12: terminal create returned no handle"
+PLAIN_SEND=$(O terminal send --terminal "$PLAIN_T" --text 'echo fm-test-plain-receipt' --enter --wait-submit 1 --json)
+observe "send --enter --wait-submit to a plain shell: $(jq -c '{send: .result.send, mutation: .result.mutation, warnings: .result.warnings}' <<<"$PLAIN_SEND")"
+[ "$(jq -r '.result.send.accepted' <<<"$PLAIN_SEND")" = true ] && [ "$(jq -r '.result.send.prompt.observation' <<<"$PLAIN_SEND")" = unsupported ] \
+  || fail "A12: a plain shell did not answer accepted=true with prompt.observation=unsupported"
+ok "A12: a plain shell accepts the input and reports prompt.observation=unsupported (the adapter's composer fallback)"
+O terminal send --terminal "$PLAIN_T" --text exit --enter --json >/dev/null
+O terminal wait --terminal "$PLAIN_T" --for exit --timeout-ms 10000 --json >/dev/null 2>&1 || true
+EXITED_SEND=$(O terminal send --terminal "$PLAIN_T" --text 'fm-test-to-exited' --enter --wait-submit 1 --json 2>/dev/null || true)
+observe "send --enter --wait-submit to an EXITED shell: $(jq -c '{ok, code: .error.code, message: .error.message}' <<<"$EXITED_SEND")"
+[ "$(jq -r '.error.code // empty' <<<"$EXITED_SEND")" = terminal_not_writable ] \
+  || fail "A12: a send to an exited shell did not answer error.code=terminal_not_writable"
+ok "A12: a send to an exited shell answers error.code=terminal_not_writable"
+UNKNOWN_SEND=$(O terminal send --terminal term_00000000-0000-4000-8000-000000000000 --text 'fm-test-to-unknown' --enter --wait-submit 1 --json 2>/dev/null || true)
+observe "send --enter --wait-submit to a handle the runtime never issued: $(jq -c '{ok, code: .error.code, message: .error.message}' <<<"$UNKNOWN_SEND")"
+[ "$(jq -r '.error.code // empty' <<<"$UNKNOWN_SEND")" = terminal_handle_stale ] \
+  || fail "A12: a send to a handle the runtime never issued did not answer error.code=terminal_handle_stale"
+ok "A12: a send to a handle the runtime never issued answers error.code=terminal_handle_stale"
+notrun "A12 a started-turn receipt (stages include turn_started): the lab has no agent that starts a turn, so only input_accepted and unsupported receipts are observed; the started shape is taken from the Orca CLI's own documentation"
+O terminal close --terminal "$PLAIN_T" --json >/dev/null 2>&1 || true
 
 # --- assertion 9: close and removal, landed and unmerged branches (slices 3, 10) ------------------------------
 
@@ -536,6 +569,26 @@ BRIEF
     *) finding "fm-send's doorbell did not appear in the Orca terminal read (tail: $(printf '%s' "$DOORBELL" | tail -2 | tr '\n' '|' | cut -c1-200))" ;;
   esac
 
+  # delivery receipts through the adapter (slice 11): a live plain-shell terminal, then a closed one
+  fm_backend_orca_has_capability terminal.prompt-delivery.v1 \
+    || fail "F: the lab runtime does not list terminal.prompt-delivery.v1, so the receipt path cannot be exercised"
+  RX_T=$(O terminal create --worktree "id:$TASK_WID" --title fm-test-rx --json | jq -r '.result.terminal.handle')
+  [ -n "$RX_T" ] || fail "F: terminal create for the receipt probe returned no handle"
+  RX_V=$(fm_backend_send_text_submit orca "$RX_T" 'echo fm-test-live-receipt' 3 0.4 0.3 2>"$LAB/rx.err") || fail "F: a live-terminal send through the adapter failed: $(cat "$LAB/rx.err")"
+  observe "adapter send to a live plain-shell terminal: verdict=$RX_V (receipt path; a plain shell reports observation=unsupported, so the verdict is the composer's)"
+  case "$RX_V" in
+    send-failed|terminal-gone) fail "F: a live terminal reported $RX_V" ;;
+  esac
+  wait_for_text "$RX_T" 'fm-test-live-receipt' 10 || fail "F: the text sent through the receipt path never reached the live terminal"
+  ok "F: the adapter sends to a live Orca terminal through the receipt path and the text arrives (verdict $RX_V)"
+  O terminal close --terminal "$RX_T" --json >/dev/null
+  RX_RC=0
+  RX_V=$(fm_backend_send_text_submit orca "$RX_T" 'echo fm-test-dead-receipt' 3 0.4 0.3 2>"$LAB/rx.err") || RX_RC=$?
+  observe "adapter send to the CLOSED terminal: verdict=$RX_V rc=$RX_RC stderr=$(cut -c1-200 "$LAB/rx.err")"
+  [ "$RX_V" = terminal-gone ] && [ "$RX_RC" -ne 0 ] || fail "F: a send to a closed terminal did not report terminal-gone with a nonzero exit (verdict=$RX_V rc=$RX_RC)"
+  assert_contains "$(cat "$LAB/rx.err")" "$RX_T" "F: the failure does not name the terminal"
+  ok "F: the adapter reports a closed Orca terminal as terminal-gone with a nonzero exit and a message naming it"
+
   # send --key
   for key in Enter C-c Escape; do
     if kout=$(fm "$ROOT/bin/fm-send.sh" "$ID" --key "$key" 2>&1); then
@@ -567,6 +620,19 @@ BRIEF
   ok "F: teardown refuses a branch holding an unlanded commit and leaves everything in place"
   observe "unlanded refusal: $(printf '%s' "$out" | tail -2 | tr '\n' '|' | cut -c1-240)"
   git -C "$TASK_WT" reset -q --hard HEAD~1
+
+  # the task's own terminal goes away: a steer is still recorded durably and a typed send names the gone terminal
+  O terminal close --terminal "$TASK_T" --json >/dev/null
+  GONE_OUT=$(fm "$ROOT/bin/fm-send.sh" "$ID" 'fm-test-steer-to-gone' 2>&1) || fail "F: a steer to a closed terminal failed instead of recording durably: $GONE_OUT"
+  grep -rqF 'fm-test-steer-to-gone' "$FMHOME/state/$ID.inbox"/*.msg 2>/dev/null || fail "F: the steer to a closed terminal left no durable inbox record"
+  observe "fm-send ordinary steer to the closed task terminal: $(printf '%s' "$GONE_OUT" | tail -1 | cut -c1-240)"
+  assert_contains "$GONE_OUT" "has exited" "F: the doorbell to a closed terminal was not reported as gone"
+  ok "F: a steer to a closed task terminal is recorded durably and the doorbell is reported as gone, not as a failed ring"
+  if GONE_TYPED=$(fm "$ROOT/bin/fm-send.sh" "$ID" '/fm-test-typed' 2>&1); then fail "F: a typed send to a closed terminal succeeded: $GONE_TYPED"; fi
+  observe "fm-send typed send to the closed task terminal: $(printf '%s' "$GONE_TYPED" | tr '\n' '|' | cut -c1-300)"
+  assert_contains "$GONE_TYPED" "is gone" "F: the typed send's error does not say the terminal is gone"
+  assert_contains "$GONE_TYPED" "nothing was delivered" "F: the typed send's error does not say nothing was delivered"
+  ok "F: a typed send to a closed task terminal fails and says the terminal is gone and nothing was delivered"
 
   # clean teardown
   TASK_BRANCH=$(git -C "$TASK_WT" rev-parse --abbrev-ref HEAD)
