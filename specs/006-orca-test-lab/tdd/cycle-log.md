@@ -51,3 +51,12 @@ Deviation: A5, A6, U10, and U11 share one cycle; the red is the first failing as
   Skipping the terminal-host pid-record loop survives and is an equivalent mutant: the leftover pass terminates the same process, so the record loop only fixes the shutdown order.
 - unrelated observation: `sleep 120` processes owned by the operator's live Orca environment were running on the host during the runs; the leftover scan correctly ignored them.
 - refactor: none needed
+
+## Cycle 4 - resolver edge cases (U12), from verification finding 1
+
+Deviation: test-after for existing behavior. The resolver already handled these spellings (checked by hand during the audit), so the new cases pass on first run; this is a characterization cycle and the strength evidence is the mutants below, not a red.
+
+- test: `tests/fm-backend-orca-lab-guard.test.sh` U12 cases (relative link, chained link, link through the home directory, dot-dot after a link, symlinked sibling accepted)
+- first run: all green, `bin/fm-test-run.sh tests/fm-backend-orca-lab-guard.test.sh` exit 0
+- deliberate mutants, all killed: relative links resolved from the wrong base (U12 relative), dot-dot handled lexically (U3 dot-dot), absolute-link handling changed (U5)
+- refactor: none needed

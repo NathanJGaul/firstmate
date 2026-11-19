@@ -41,3 +41,7 @@
 ## Acceptance gates
 
 - [X] T017 Outer loop green: A1 to A6 pass in the guard test and A7 to A17 show their lines in a local live run
+
+## Phase 7: TDD remediation
+
+- [X] T018 [U1] [U5] [U12] Finding 1: add relative-symlink, chained-symlink, parent-symlink, and dot-dot-after-link cases to `tests/fm-backend-orca-lab-guard.test.sh`; run `bin/fm-test-run.sh tests/fm-backend-orca-lab-guard.test.sh` and a deliberate mutant of `orca_lab_resolve`

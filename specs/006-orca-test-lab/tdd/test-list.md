@@ -55,6 +55,7 @@ The live behaviors (A7 to A17) run only in the opt-in lane against the lane's ow
 | U9  | The signal helper refuses a pid that fails the proof and sends nothing | FR-007 | example | DONE | `tests/fm-backend-orca-lab-guard.test.sh` (case of the same id) |
 | U10 | The launcher script contains no other `ORCA_` assignment than the data directory | FR-004, FR-005 | example | DONE | `tests/fm-backend-orca-lab-guard.test.sh` (case of the same id) |
 | U11 | The leftover scan finds a process naming the lab directory and ignores one that does not | FR-008 | example | DONE | `tests/fm-backend-orca-lab-guard.test.sh` (case of the same id) |
+| U12 | Path resolution refuses relative, chained, parent-linked, and dot-dot-after-link spellings of the protected path and accepts a symlinked sibling that does not reach it | FR-002 | example | DONE | `tests/fm-backend-orca-lab-guard.test.sh` (case of the same id) |
 
 ## Out of scope
 
