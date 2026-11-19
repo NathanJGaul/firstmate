@@ -1245,6 +1245,46 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/008-orca-prompt-blocked-receipts/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-prompt-blocked-receipts/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
