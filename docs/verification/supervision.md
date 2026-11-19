@@ -568,7 +568,9 @@ Stop, rewake, and session start in the same lab: the `Stop` hook fired at the en
 The real watcher and real wake records were not exercised there, and a TUI-driven live end-to-end test for Code Mode does not exist yet.
 
 Not verified: Grok 1.0.77, Cursor, and pi-code loading `.claude/settings.json` with the new `onFailure` field.
-The Grok probe could not run because the installed Grok was not signed in, so unknown-field tolerance in those loaders rests on their documented Claude-compatible loading and is unconfirmed.
+Grok and Cursor could not be probed because neither installed client is signed in (`grok` answered `Not signed in`, `cursor-agent status` answered `Not logged in`), and no pi-code probe was run.
+The indirect evidence is that those loaders already read the tracked Stop entries, which carry `asyncRewake`, a Claude-only field none of them defines, and ran them: `turnend-guard.md` records that grok 1.0.0 and pi-code each ran the Stop auto-arm synchronously for lack of `asyncRewake`, and Cursor's Claude-compatibility map loads the same file.
+That shows these loaders tolerate an unknown hook field in general; it does not show tolerance of `onFailure` specifically, so the gap stays open until a signed-in probe records it.
 
 ## Watcher continuity
 
