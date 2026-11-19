@@ -1141,6 +1141,22 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/006-orca-test-lab/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
