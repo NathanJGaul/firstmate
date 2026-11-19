@@ -1326,6 +1326,9 @@
     },
     {
       "path": "specs/008-orca-lab-hardening/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/008-orca-endpoint-presence/analyze.md",
       "audience": "maintainer-verification"
     },
