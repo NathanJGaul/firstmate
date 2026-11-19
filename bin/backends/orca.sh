@@ -258,13 +258,29 @@ fm_backend_orca_repo_ensure() {  # <project-path>
   printf '%s' "$repo_id"
 }
 
-fm_backend_orca_worktree_create() {  # <project-path> <name>
-  local project=$1 name=$2 repo_id out wt_id wt_path terminal
+# fm_backend_orca_worktree_create: create the task's Orca worktree. An optional
+# <branch> names the git branch the worktree starts on (Orca uses it exactly as
+# given, with no user prefix, and gives a name that is already taken a numeric
+# suffix, so the caller must read the branch back) and an optional <base-branch>
+# is the ref it starts from. With neither, the call is the plain create Orca
+# names its own branch for.
+fm_backend_orca_worktree_create() {  # <project-path> <name> [<branch> [<base-branch>]]
+  local project=$1 name=$2 branch=${3:-} base=${4:-} repo_id out wt_id wt_path terminal
+  local create_args=()
   # The repo step below runs in a command substitution, so a CLI resolved there
   # would not reach this shell's own `orca worktree create`.
   fm_backend_orca_tool_check || return 1
   repo_id=$(fm_backend_orca_repo_ensure "$project") || return 1
-  out=$(orca worktree create --repo "id:$repo_id" --name "$name" --no-parent --setup skip --json) || return 1
+  create_args=(--repo "id:$repo_id" --name "$name")
+  [ -z "$branch" ] || create_args+=(--branch "$branch")
+  [ -z "$base" ] || create_args+=(--base-branch "$base")
+  out=$(orca worktree create "${create_args[@]}" --no-parent --setup skip --json) || {
+    # Orca prints its refusal as JSON on stdout, which the substitution above
+    # swallowed, so name the reason it gave (an unknown base ref, for one).
+    printf '%s' "$out" | fm_backend_orca_json_get worktree-id >/dev/null || true
+    echo "error: orca worktree create failed for $name" >&2
+    return 1
+  }
   wt_id=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-id) || {
     echo "error: orca worktree create did not return a worktree id for $name" >&2
     return 1

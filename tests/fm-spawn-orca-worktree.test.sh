@@ -60,16 +60,25 @@ case "$1 $2" in
     exit 0
     ;;
   "worktree create")
+    # Like the real runtime: --branch names the branch exactly, --base-branch
+    # is its start point, no --branch gets an Orca-made name, and
+    # FM_TEST_ORCA_SUFFIX=1 renames a "taken" branch with a numeric suffix.
     name=
+    branch=
+    base=
     prev=
     for a in "$@"; do
       [ "$prev" = --name ] && name=$a
+      [ "$prev" = --branch ] && branch=$a
+      [ "$prev" = --base-branch ] && base=$a
       prev=$a
     done
     wt="$DIR/orca-worktrees/$name"
     mkdir -p "$DIR/orca-worktrees"
-    git -C "$DIR/project" worktree add --quiet -b "orca-$name" "$wt" >&2 || exit 1
-    printf '{"ok":true,"result":{"worktree":{"id":"wt-%s","path":"%s"}}}\n' "$name" "$wt"
+    [ -n "$branch" ] || branch="orca-$name"
+    [ -z "${FM_TEST_ORCA_SUFFIX:-}" ] || branch="$branch-2"
+    git -C "$DIR/project" worktree add --quiet -b "$branch" "$wt" ${base:+"$base"} >&2 || exit 1
+    printf '{"ok":true,"result":{"worktree":{"id":"wt-%s","path":"%s","branch":"refs/heads/%s"}}}\n' "$name" "$wt" "$branch"
     exit 0
     ;;
   "terminal create")
@@ -168,6 +177,131 @@ EOF
   assert_contains "$out" "no recovery-grade agent-state classifier" \
     "the refusal should name the missing classifier, proving relaunch never reaches the worktree carve-out"
   pass "a relaunch against an Orca-backed task is refused before the RELAUNCH+orca worktree carve-out could run"
+}
+
+# orca_ship_case <name> <ship|scout> [<extra fm-spawn args>...]: spawn on the
+# fake Orca and leave ORCA_CASE_DIR, ORCA_CASE_HOME, ORCA_CASE_ID, ORCA_STATUS,
+# ORCA_OUT behind. ORCA_BRIEF_EXTRA is appended to the brief, and
+# ORCA_WITH_ORIGIN=1 gives the project an origin that carries release/1.
+orca_ship_case() {
+  local name=$1 kind=$2 case_dir home id fb args=()
+  shift 2
+  case_dir="$TMP_ROOT/$name"
+  home="$case_dir/home"
+  id="$name-a1"
+  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config" "$case_dir/user-home"
+  touch "$home/state/.last-watcher-beat"
+  printf 'codex\n' > "$home/config/crew-harness"
+  printf 'manual\n' > "$home/config/backlog-backend"
+  fm_git_init_commit "$case_dir/project"
+  if [ "${ORCA_WITH_ORIGIN:-0}" = 1 ]; then
+    fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
+    git -C "$case_dir/project" branch release/1
+    git -C "$case_dir/project" push -q origin release/1
+    if [ "${ORCA_DROP_BASE_REFS:-0}" = 1 ]; then
+      git -C "$case_dir/project" branch -D release/1 >/dev/null
+      git -C "$case_dir/project" update-ref -d refs/remotes/origin/release/1
+    fi
+  fi
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<BRIEF
+# Task
+## Captain's intent
+Exercise the Orca branch at create for $id.
+
+## Firstmate spec
+Confirm the branch is named when the worktree is created.
+${ORCA_BRIEF_EXTRA:-}
+BRIEF
+  fb=$(make_orca_fakebin "$case_dir")
+  if [ "$kind" = scout ]; then
+    args=(--scout)
+  else
+    args=(--mode no-mistakes --yolo off)
+  fi
+  ORCA_OUT=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$case_dir/user-home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_TEST_ORCA_DIR="$case_dir" FM_TEST_ORCA_SUFFIX="${ORCA_SUFFIX:-}" PATH="$fb:$PATH" \
+    "$SPAWN" "$id" "$case_dir/project" "${args[@]}" --backend orca "$@" 2>&1)
+  ORCA_STATUS=$?
+  ORCA_CASE_DIR=$case_dir
+  ORCA_CASE_HOME=$home
+  ORCA_CASE_ID=$id
+}
+
+# orca_create_args: the argument line of the fake Orca's one worktree create call.
+orca_create_args() {
+  grep -a '^worktree create ' "$ORCA_CASE_DIR/orca.log"
+}
+
+test_orca_ship_spawn_names_the_branch_at_create() {
+  local wt branch
+  orca_ship_case orca-branch-default ship
+  expect_code 0 "$ORCA_STATUS" "an Orca ship spawn should succeed"$'\n'"$ORCA_OUT"
+  assert_contains "$(orca_create_args)" "--branch fm/$ORCA_CASE_ID " "a default-prefix ship should create on fm/<id>"
+  wt=$(sed -n 's/^worktree=//p' "$ORCA_CASE_HOME/state/$ORCA_CASE_ID.meta")
+  branch=$(git -C "$wt" symbolic-ref --short HEAD)
+  [ "$branch" = "fm/$ORCA_CASE_ID" ] || fail "the worktree should be on fm/$ORCA_CASE_ID, got '$branch'"
+  assert_grep "branch=fm/$ORCA_CASE_ID" "$ORCA_CASE_HOME/state/$ORCA_CASE_ID.meta" "meta should record the same ship branch"
+
+  ORCA_BRIEF_EXTRA='Ship branch: team/orca-branch-prefix-a1' orca_ship_case orca-branch-prefix ship --branch-prefix team/
+  expect_code 0 "$ORCA_STATUS" "an Orca ship spawn with a prefix should succeed"$'\n'"$ORCA_OUT"
+  assert_contains "$(orca_create_args)" "--branch team/$ORCA_CASE_ID " "an explicit prefix should name team/<id>"
+  wt=$(sed -n 's/^worktree=//p' "$ORCA_CASE_HOME/state/$ORCA_CASE_ID.meta")
+  [ "$(git -C "$wt" symbolic-ref --short HEAD)" = "team/$ORCA_CASE_ID" ] || fail "the worktree should be on team/$ORCA_CASE_ID"
+
+  ORCA_BRIEF_EXTRA='Ship branch: orca-branch-bare-a1' orca_ship_case orca-branch-bare ship --branch-prefix ''
+  expect_code 0 "$ORCA_STATUS" "an Orca ship spawn with an empty prefix should succeed"$'\n'"$ORCA_OUT"
+  assert_contains "$(orca_create_args)" "--branch $ORCA_CASE_ID " "an empty prefix should name the bare id"
+  pass "fm-spawn.sh backend=orca: a ship's worktree is created on <prefix><id> and meta records it"
+}
+
+test_orca_ship_spawn_passes_the_base_branch_only_when_set() {
+  local wt
+  orca_ship_case orca-base-unset ship
+  expect_code 0 "$ORCA_STATUS" "an Orca ship spawn should succeed"$'\n'"$ORCA_OUT"
+  assert_not_contains "$(orca_create_args)" "--base-branch" "no base branch should mean no --base-branch"
+
+  # The task base is origin's branch, and Orca hands the ref to git as given, so
+  # the spawn fetches it and passes origin/<base>: a base that exists only on
+  # origin (no local branch, no remote-tracking ref yet) must still work.
+  ORCA_DROP_BASE_REFS=1 ORCA_WITH_ORIGIN=1 ORCA_BRIEF_EXTRA=$'\n# Setup\nYou are in a disposable git worktree of project, at a detached HEAD on a clean copy of its base branch.\nBase branch: release/1' \
+    orca_ship_case orca-base-set ship --base-branch release/1
+  expect_code 0 "$ORCA_STATUS" "an Orca ship spawn with an origin-only base branch should succeed"$'\n'"$ORCA_OUT"
+  assert_contains "$(orca_create_args)" "--base-branch origin/release/1 " "the task base branch should reach worktree create as origin/<base>"
+  wt=$(sed -n 's/^worktree=//p' "$ORCA_CASE_HOME/state/$ORCA_CASE_ID.meta")
+  [ "$(git -C "$wt" symbolic-ref --short HEAD)" = "fm/$ORCA_CASE_ID" ] || fail "the base-branch worktree should still be on the ship branch"
+  pass "fm-spawn.sh backend=orca: the task base branch is fetched and passed to worktree create as origin/<base>, only when one is set"
+}
+
+test_orca_spawn_refuses_an_unfetchable_base_branch() {
+  ORCA_WITH_ORIGIN=1 ORCA_BRIEF_EXTRA=$'\n# Setup\nYou are in a disposable git worktree of project, at a detached HEAD on a clean copy of its base branch.\nBase branch: no-such-base' \
+    orca_ship_case orca-base-missing ship --base-branch no-such-base
+  [ "$ORCA_STATUS" -ne 0 ] || fail "a base branch origin does not have should be refused"$'\n'"$ORCA_OUT"
+  assert_contains "$ORCA_OUT" "no-such-base" "the refusal should name the base branch"
+  assert_not_contains "$(cat "$ORCA_CASE_DIR/orca.log" 2>/dev/null)" "worktree create" "nothing should be created for an unfetchable base"
+  assert_absent "$ORCA_CASE_HOME/state/$ORCA_CASE_ID.meta" "a refused spawn should leave no task record"
+  pass "fm-spawn.sh backend=orca: a base branch origin cannot supply is refused before any worktree is created"
+}
+
+test_orca_scout_spawn_passes_no_branch() {
+  orca_ship_case orca-scout-nobranch scout
+  expect_code 0 "$ORCA_STATUS" "an Orca scout spawn should succeed"$'\n'"$ORCA_OUT"
+  assert_not_contains "$(orca_create_args)" "--branch" "a scout makes no branch, so create must not name one"
+  assert_not_contains "$(orca_create_args)" "--base-branch" "a scout with no base must not pass --base-branch"
+  pass "fm-spawn.sh backend=orca: a scout's worktree is created with no --branch"
+}
+
+test_orca_spawn_refuses_a_renamed_branch() {
+  ORCA_SUFFIX=1 orca_ship_case orca-branch-renamed ship
+  [ "$ORCA_STATUS" -ne 0 ] || fail "a worktree on another branch than requested should be refused"$'\n'"$ORCA_OUT"
+  assert_contains "$ORCA_OUT" "fm/$ORCA_CASE_ID" "the refusal should name the requested branch"
+  assert_contains "$ORCA_OUT" "fm/$ORCA_CASE_ID-2" "the refusal should name the branch Orca used"
+  assert_contains "$(cat "$ORCA_CASE_DIR/orca.log")" "worktree rm --worktree id:wt-fm-$ORCA_CASE_ID" \
+    "the worktree Orca made should be released"
+  assert_absent "$ORCA_CASE_HOME/state/$ORCA_CASE_ID.meta" "a refused spawn should leave no task record"
+  pass "fm-spawn.sh backend=orca: a worktree Orca put on another branch is refused and released"
 }
 
 # Every ORCA_ name an Orca 1.4.261 terminal exports (specs/005-orca-fleet-plumbing
@@ -282,5 +416,10 @@ test_orca_fresh_spawn_enters_the_worktree_it_created
 test_orca_relaunch_is_refused_before_the_worktree_carveout_could_run
 test_orca_allowlisted_launch_keeps_the_orca_floor
 test_orca_launch_without_an_allowlist_is_unfiltered
+test_orca_ship_spawn_names_the_branch_at_create
+test_orca_ship_spawn_passes_the_base_branch_only_when_set
+test_orca_spawn_refuses_an_unfetchable_base_branch
+test_orca_scout_spawn_passes_no_branch
+test_orca_spawn_refuses_a_renamed_branch
 
 echo "# all fm-spawn-orca-worktree tests passed"

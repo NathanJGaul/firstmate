@@ -681,12 +681,13 @@ $HERDR_SECTION
 
 # Setup
 $SETUP_BASE
+An Orca-managed worktree is created already on your ship branch \`$BRANCH\`; every other worktree starts at the detached HEAD described above.
 
 **Verify isolation before anything else.** Run \`pwd -P\` and \`git rev-parse --show-toplevel\`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout firstmate operates from.
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked [at=<epoch>]: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
-1. First action: create your branch: \`git checkout -b $BRANCH_Q --\`$SETUP2
+1. First action: get onto your branch, creating it unless you are already on it: \`[ "\$(git branch --show-current)" = $BRANCH_Q ] || git checkout -b $BRANCH_Q --\`$SETUP2
 Before implementation, read \`$FM_ROOT/.agents/skills/spec-kit-workflow/SKILL.md\` and follow its complete lifecycle.
 Verify \`.specify/\`, the enabled TDD extension, and \`.specify/memory/tdd-profile.md\` exist before starting feature work; if any is missing, perform project setup first and report any baseline limitation instead of guessing.
 Do not edit feature code before \`/speckit.specify\`, \`/speckit.plan\`, \`/speckit.tasks\`, and \`/speckit.tdd.plan\` have produced approved artifacts.

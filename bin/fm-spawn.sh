@@ -3976,8 +3976,25 @@ EOF
     T="$CMUX_WORKSPACE_ID:$CMUX_SURFACE_ID"
     ;;
   orca)
+    # A ship's branch is named when the worktree is created, so it starts on
+    # <prefix><id> rather than on a branch Orca invents. A scout makes no branch.
+    ORCA_CREATE_BRANCH=
+    ORCA_CREATE_BASE=
+    if [ "$RELAUNCH" -eq 0 ]; then
+      [ "$KIND" != ship ] || ORCA_CREATE_BRANCH=$BRANCH
+      if [ "$KIND" != secondmate ] && [ -n "$BASE_BRANCH" ]; then
+        # The task base is origin's branch, and Orca hands the ref to git as
+        # given, so fetch it and pass origin/<base>: a bare name would fail for
+        # a base that exists only on origin.
+        if ! git -C "$PROJ_ABS" fetch --quiet origin "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"; then
+          echo "error: could not fetch origin's '$BASE_BRANCH' for task $ID; refusing to create an Orca worktree from a base branch origin cannot supply" >&2
+          exit 1
+        fi
+        ORCA_CREATE_BASE=origin/$BASE_BRANCH
+      fi
+    fi
     set +e
-    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
+    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W" "$ORCA_CREATE_BRANCH" "$ORCA_CREATE_BASE")
     ORCA_WT_STATUS=$?
     set -e
     if [ "$ORCA_WT_STATUS" -ne 0 ]; then
@@ -3995,6 +4012,17 @@ EOF
       exit 1
     fi
     validate_spawn_worktree "orca worktree create" "$W"
+    if [ -n "$ORCA_CREATE_BRANCH" ]; then
+      # Orca gives a branch name that is already taken a numeric suffix, and an
+      # older runtime may ignore the flag, so a worktree on any other branch
+      # would leave the brief and the task record naming a branch the worker is
+      # not on. The abort cleanup releases the worktree Orca just made.
+      ORCA_ACTUAL_BRANCH=$(git -C "$WT" symbolic-ref --short -q HEAD 2>/dev/null || true)
+      if [ "$ORCA_ACTUAL_BRANCH" != "$ORCA_CREATE_BRANCH" ]; then
+        echo "error: orca worktree create put task $ID on branch '${ORCA_ACTUAL_BRANCH:-<detached>}' instead of the requested '$ORCA_CREATE_BRANCH' (Orca renames a branch name that is already taken); refusing to launch a worker on a branch its instructions and record do not name. Delete or rename the existing branch, or check the Orca version, then spawn again" >&2
+        exit 1
+      fi
+    fi
     if [ -z "$ORCA_TERMINAL" ]; then
       ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
     fi
