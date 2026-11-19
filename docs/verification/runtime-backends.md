@@ -1913,8 +1913,8 @@ tests/fm-bootstrap.test.sh
 
 The fake-Orca suite covers readiness, registration, create response parsing, metadata routing, popup-safe submit, and path-matched release refusal.
 It also covers adopting `result.startupTerminal` (titled once, no second terminal, `result.terminal` preferred, a create fallback for an unspawned or handle-less startup terminal, and cleanup of a pathless result) and the `--force --delete-branch` release argument.
-Those two behaviors are proven against the fake only.
-A live Orca run must still show one live terminal per task after spawn, and the Orca-made branch gone after a landed ship and kept after an unlanded one.
+The adoption of the terminal that `terminal list --worktree` reports (no response terminal, an empty list, an unreadable list, an unusable or foreign row, a pathless worktree, and a failed title) is covered the same way, and its live proof is recorded under the Linux live-lab entry below.
+The `startupTerminal` adoption is proven against the fake only, because the Linux headless runtime never returns one; the branch-deleting release was proven against the fake here and live in that entry.
 
 ### Linux, headless runtime 1.4.261
 
@@ -1942,7 +1942,7 @@ orca repo list --json                           one repository kind=git, one kin
 
 Inside Orca-created task worktrees, `git rev-parse --git-dir` printed `<project>/.git/worktrees/<name>` and `--git-common-dir` printed `<project>/.git`, and `git worktree list` in the project clone listed them, so Orca's command line creates linked git worktrees.
 Claude workspace-trust entries were registered for those worktree paths, so the structural test in `bin/fm-claude-trust.sh` accepts them.
-`orca worktree ps --json` reported `liveTerminalCount=2` for each task worktree and per-agent `state` and `hasLivePty`.
+`orca worktree ps --json` reported `liveTerminalCount=2` for each task worktree (before the spare-terminal fix) and per-agent `state` and `hasLivePty`.
 `orca terminal show --json` carried `agentIdentity` and `agentWait`, and `orca terminal read --json` carried `status` and `source`, so Orca exposes native agent state that Firstmate does not read.
 A repository registered as a folder has no git worktree for that structural test to accept.
 
@@ -1963,7 +1963,7 @@ FM_ORCA_LIVE_SECTIONS=firstmate FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.t
 
 The lane refuses an inherited `ORCA_USER_DATA_PATH` that is, contains, or lies inside the operator's Orca data, and Orca terminals export exactly that variable, so run it with the variable unset or pointing at a fresh empty directory.
 `FM_ORCA_LIVE_SECTIONS` selects `orca`, `firstmate`, or `all` (default).
-A passing run printed `passed=35` hard assertions and the findings below, left no lab process, directory, systemd scope, worktree, or branch, and left the operator's runtime running.
+A passing run printed `passed=36` hard assertions and the findings below, left no lab process, directory, systemd scope, worktree, or branch, and left the operator's runtime running.
 
 Runtime facts observed:
 
@@ -1979,6 +1979,8 @@ repo add             git repo -> result.repo.kind=git; a non-git folder is refus
 worktree create      result keys: catalogVersion, lineage, warnings, workspaceLineage, worktree; no startupTerminal, no terminal
                      worktree.id=<repo-id>::<path>, branch=refs/heads/<name>, default root <home>/orca/workspaces/<repo>/<name>
                      under a folder-kind repo: succeeds, path is the folder itself, id=<repo-id>::<path>::workspace:<uuid>
+terminal list        --worktree id:<id> -> result.terminals[] rows {handle, worktreeId, worktreePath, orphaned, connected, writable, title, preview, tabId, leafId, ptyId, executionHostId},
+                     result.totalCount, result.truncated; the new worktree's terminal is listed on the first poll after worktree create
 terminal create      result.terminal keys: processId, handle, tabId, paneKey, ptyId, worktreeId, title, surface=background, warning, ...
 terminal send        without --enter: raw bytes, {accepted, bytesWritten}; with --enter: also prompt{requestId, stages, provider, observation} and mutation{requestId, replayed}
                      --retry-request <id> replays: mutation.replayed=true and the input was not repeated
@@ -1993,8 +1995,8 @@ Per assertion, the slice each one proves or unblocks, and what it observed:
 | --- | --- | --- |
 | 1 status, version, capabilities | held; version and a 306-entry capability list are reported, including `terminal.prompt-delivery.v1`, `terminal.program-status.v1`, `worktree.remove-branch-policy.v1`, and `terminal.create-idempotency.v2` | unblocks the version and capability gate (P2-C) |
 | 2 repo kind and folder | held; the folder-kind create observation is a finding below | proves the folder-kind refusal (merged P1-C) live |
-| 3 worktree create shape | held; linked git worktree inside the lab; no startup terminal and no terminal in the response | startup-terminal adoption (merged P1-A) has nothing to adopt here |
-| 4 live terminal count | one terminal already exists after create; a second appears after the adapter's fallback create | startup-terminal adoption (merged P1-A) |
+| 3 worktree create shape | held; linked git worktree inside the lab; no startup terminal and no terminal in the response | the adapter adopts the listed terminal instead (spare-terminal fix) |
+| 4 live terminal count | one terminal already exists after create and is the one `terminal list --worktree` reports | the adapter adopts it, so a spawned task holds exactly one (spare-terminal fix) |
 | 5 control bytes | Escape (`\x1b`) and Ctrl+U (`\x15`) sent without `--enter` reach a `cat -v` shell; `--interrupt` delivers Ctrl+C; `terminal wait` behaves as above | unblocks Escape and Ctrl+U delivery (P2-A) |
 | 6 read status and source | shell and a full-screen program both read `status=running`; `--screen` returns the rendered viewport and shows the full-screen program's text | unblocks viewport capture (P2-F) and agent-state work (P2-B) |
 | 7 fake agent | a command named for a recognized harness gets `agentIdentity` and has its command line rewritten; `worktree ps` agents stays empty; identity is still reported 12 s after the agent exits and cleared only after a later `terminal read`; `terminal create` reports a `processId` that is a lab-owned process | informs agent-state proof (P2-B): identity cannot prove "no agent", a pid is exposed on create |
@@ -2012,10 +2014,24 @@ Firstmate-level checks, all against the lab runtime:
 - `fm-teardown` refused a dirty worktree and a branch holding an unlanded commit, leaving the terminal, worktree, and record in place, and a clean teardown then removed the worktree, terminal, branch, and record.
 - The final inventory found zero leftover terminals, non-main worktrees, branches, and lab processes besides the runtime and its terminal host, which the lab then stopped.
 
+Spare-terminal result, observed on 2026-11-19 with the same lab after the adapter began adopting `terminal list --worktree` rows:
+
+```text
+env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh
+# observe: after fm-spawn: terminal list totalCount=1, worktree ps liveTerminalCount=1, recorded terminal=<the listed handle>
+ok - F: after fm-spawn the task worktree holds exactly one live terminal, and it is the recorded one (worktree ps liveTerminalCount=1)
+# observe: the adopted terminal's title: fm-test-orca-live
+ok - F: the final inventory finds zero leftover terminals, worktrees, branches, and processes ...
+# summary: passed=36 findings=3
+```
+
+The same assertion run against the previous adapter failed with `after fm-spawn the task worktree holds 2 listed and 2 live terminals, not exactly 1`, so the assertion distinguishes the fix.
+The first poll of `terminal list --worktree` after `worktree create` already reported the terminal on three runs, so the adapter lists once and adds no retry.
+
 Findings, where a real shape contradicts what a merged or held slice assumes:
 
-- `worktree create` returns neither `startupTerminal` nor `terminal` on this runtime, although a terminal already exists, so `fm_backend_orca_worktree_create` adopts nothing and falls back to `terminal create`, and each spawned task ends with two live terminals instead of one.
-  Follow-up: adopt the existing terminal from `terminal list --worktree` before creating one.
+- `worktree create` returns neither `startupTerminal` nor `terminal` on this runtime, although a terminal already exists.
+  Resolved: `fm_backend_orca_worktree_create` adopts that terminal from `terminal list --worktree` (see the spare-terminal result above); before the fix every spawned task ended with two live terminals.
 - `worktree create` under a folder-kind repo succeeds and returns the folder itself, so without the adapter's folder refusal a task would run in the operator's own folder.
 - A command whose name Orca recognizes as an agent has its command line rewritten (`--plugin-dir` is appended), and `agentIdentity` stays set after the agent exits until a later `terminal read` refreshes it, while `worktree ps` `agents[]` stayed empty throughout, so neither proves "no agent".
 - `terminal create` returns `processId`, which was a live lab-owned process: the pid the held agent-state slice listed as not exposed is exposed on create.

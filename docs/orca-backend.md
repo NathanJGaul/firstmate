@@ -55,10 +55,12 @@ Orca returns `orca_worktree_id=` as that composite of the Orca repo id and the w
 ## Current lifecycle and safety
 
 Spawn registers the repository, creates an independent worktree, installs harness hooks, records metadata, and launches the selected harness.
-The task's one terminal is the terminal Orca starts with the worktree: `result.terminal.handle`, or `result.startupTerminal.handle` when Orca reports that terminal as spawned.
+The task's one terminal is the terminal Orca starts with the worktree.
+Spawn adopts it from `result.terminal.handle`, or `result.startupTerminal.handle` when Orca reports that terminal as spawned.
+When the creation response names neither, as on the Linux headless runtime, spawn adopts the terminal that `orca terminal list --worktree id:<id>` reports for the new worktree: the first row that has a handle, is not orphaned, is not unwritable, and is not another worktree's.
 Spawn titles the adopted terminal with the task name and creates no second terminal.
 A failed title does not fail the spawn.
-Only when Orca reports neither does spawn create one titled terminal explicitly.
+Only when Orca names no terminal and lists none for the worktree, or the list cannot be read, does spawn create one titled terminal explicitly.
 Exact command flags and response parsing are owned by `bin/backends/orca.sh` and script help.
 
 `fm-peek.sh` reads with `orca terminal read`.
@@ -92,8 +94,8 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - Secondmate spawns are unsupported.
 - Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
 - A receipt proves Orca accepted input and, for a recognized agent, that its turn started; it does not prove which agent runs in a live terminal, so `fm_backend_agent_state` stays unverified for Orca.
-- The adapter reads only verified response fields: the worktree id and path, and a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned. It rejects other response shapes.
-- The branch-deleting release is proven live, and the startup-terminal adoption never fires on the Linux headless runtime because its worktree create names no startup terminal, so each task ends with two live terminals; `verification/runtime-backends.md` records the lab findings.
+- The adapter reads only verified response fields: the worktree id and path, a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned, and the `result.terminals[]` rows of `terminal list --worktree`. It rejects other response shapes.
+- The branch-deleting release and the one-terminal-per-task adoption are proven live on the Linux headless runtime: after spawn, `worktree ps` reports `liveTerminalCount=1`, and teardown leaves no terminal behind; `verification/runtime-backends.md` records the lab results.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
   That check refuses any path that is not a linked git worktree, so it could never accept a project Orca registered as a folder.
 

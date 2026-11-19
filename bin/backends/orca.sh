@@ -71,7 +71,7 @@ process.exit(1);
 '
 }
 
-fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id repo-kind
+fm_backend_orca_json_get() {  # <field> [<worktree-id>] ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle listed-terminal-handle repo-id repo-kind
   # Terminal handles are accepted only from known terminal result shapes:
   # result.terminal or a root terminal object with .handle, plus, for
   # worktree-terminal-handle only, the result.startupTerminal that Orca 1.4.261
@@ -80,10 +80,15 @@ fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path term
   # Orca does not report it spawned:false. Undocumented result.id and
   # result.worktree.terminal shapes are ignored until a real Orca smoke run
   # proves them.
-  local field=$1
+  # listed-terminal-handle reads a `terminal list --worktree` result, the shape
+  # observed live on Orca 1.4.261: result.terminals[] rows. It takes the first
+  # row with a string handle that is not orphaned, is not reported unwritable,
+  # and, when the row names its worktree, names <worktree-id>.
+  local field=$1 want_worktree=${2:-}
   node -e '
 const fs = require("fs");
 const field = process.argv[1];
+const wantWorktree = process.argv[2] || "";
 const data = JSON.parse(fs.readFileSync(0, "utf8"));
 if (data.ok === false) {
   const msg = data.error && (data.error.message || data.error.code);
@@ -108,11 +113,18 @@ if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
 if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
 if (field === "worktree-terminal-handle") v = handle(explicitTerm) || handle(startupTerm) || "";
+if (field === "listed-terminal-handle") {
+  const rows = Array.isArray(r.terminals) ? r.terminals : [];
+  const row = rows.find((t) => t && typeof t.handle === "string" && t.handle !== ""
+    && t.orphaned !== true && t.writable !== false
+    && (t.worktreeId === undefined || t.worktreeId === null || t.worktreeId === wantWorktree));
+  v = row ? row.handle : "";
+}
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (field === "repo-kind") v = scalar(repo.kind);
 if (!v) process.exit(1);
 process.stdout.write(String(v));
-' "$field"
+' "$field" "$want_worktree"
 }
 
 fm_backend_orca_json_ok() {
@@ -184,6 +196,10 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
     return 1
   }
   terminal=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-terminal-handle 2>/dev/null || true)
+  # Orca 1.4.261's Linux headless runtime names no terminal in the response
+  # although it already started one, so a terminal the response does not name
+  # is looked for in the worktree's own terminal list before one is created.
+  [ -n "$terminal" ] || terminal=$(fm_backend_orca_terminal_list_adopt "$wt_id")
   wt_path=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-path) || {
     echo "error: orca worktree create did not return a path for $name" >&2
     [ -z "$terminal" ] || fm_backend_orca_kill "$terminal" >/dev/null 2>&1 || true
@@ -204,6 +220,18 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
   [ -z "$terminal" ] || fm_backend_orca_terminal_rename "$terminal" "$name" >/dev/null 2>&1 || true
   printf '%s\t%s' "$wt_id" "$wt_path"
   [ -z "$terminal" ] || printf '\t%s' "$terminal"
+}
+
+# fm_backend_orca_terminal_list_adopt: print the handle of the terminal Orca
+# already started for <worktree-id>, or nothing. It never fails: a list that
+# cannot be read means "no terminal found", so the caller creates one exactly
+# as it did before this lookup existed. Only a row of this worktree's own list
+# is ever returned, so a task can never adopt, title, or close another
+# worktree's terminal.
+fm_backend_orca_terminal_list_adopt() {  # <worktree-id>
+  local worktree_id=$1 out
+  out=$(orca terminal list --worktree "id:$worktree_id" --json 2>/dev/null) || return 0
+  printf '%s' "$out" | fm_backend_orca_json_get listed-terminal-handle "$worktree_id" 2>/dev/null || true
 }
 
 fm_backend_orca_terminal_rename() {  # <terminal-id> <title>
