@@ -67,6 +67,21 @@ if [ -f "$RESP/by-$verb.out" ] || [ -f "$RESP/by-$verb.exit" ]; then
   [ ! -f "$RESP/by-$verb.exit" ] || exit "$(cat "$RESP/by-$verb.exit")"
   exit 0
 fi
+# `terminal list` is answered from its own keyed files and never advances the
+# numbered sequence, so a case's numbered responses keep their meaning whether
+# or not the adapter lists a worktree's terminals. With no keyed file the
+# worktree holds no terminal.
+if [ "${1:-}" = terminal ] && [ "${2:-}" = list ]; then
+  if [ -f "$RESP/terminal-list.exit" ]; then
+    exit "$(cat "$RESP/terminal-list.exit")"
+  fi
+  if [ -f "$RESP/terminal-list.out" ]; then
+    cat "$RESP/terminal-list.out"
+  else
+    printf '{"ok":true,"result":{"terminals":[],"totalCount":0,"truncated":false}}\n'
+  fi
+  exit 0
+fi
 n=$next
 echo "$n" > "$COUNT_FILE"
 if [ -f "$RESP/$n.exit" ]; then
@@ -1949,6 +1964,220 @@ test_json_get_terminal_handle_field_ignores_startup_terminal() {
   pass "fm_backend_orca_json_get: terminal-handle (terminal create results) ignores result.startupTerminal"
 }
 
+# orca_list_json: an Orca `terminal list --worktree` result holding the given
+# row objects, in the shape observed live on Orca 1.4.261.
+orca_list_json() {  # <row-json>...
+  local rows=
+  while [ "$#" -gt 0 ]; do
+    rows="${rows:+$rows,}$1"
+    shift
+  done
+  printf '{"ok":true,"result":{"terminals":[%s],"hostScope":{"hostIds":["local"],"omittedHostIds":[]},"totalCount":1,"truncated":false}}\n' "$rows"
+}
+
+# listed_handle: run `fm_backend_orca_json_get listed-terminal-handle <id>` over
+# a terminal list result; prints the handle and returns the parser's status.
+listed_handle() {  # <worktree-id> <list-json>
+  printf '%s' "$2" | bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_json_get listed-terminal-handle "$1"' "$ROOT" "$1"
+}
+
+test_json_get_listed_terminal_reads_the_first_handle() {
+  local out
+  out=$(listed_handle wt-a "$(orca_list_json \
+    '{"handle":"term-first","worktreeId":"wt-a","orphaned":false,"connected":true,"writable":true}' \
+    '{"handle":"term-second","worktreeId":"wt-a","orphaned":false,"writable":true}')")
+  [ "$out" = term-first ] || fail "listed-terminal-handle should read the first usable row, got '$out'"
+  pass "fm_backend_orca_json_get: listed-terminal-handle reads the first listed terminal"
+}
+
+test_json_get_listed_terminal_skips_unusable_rows() {
+  local out status
+  out=$(listed_handle wt-a "$(orca_list_json \
+    '{"handle":"term-orphan","worktreeId":"wt-a","orphaned":true,"writable":true}' \
+    '{"handle":"term-ro","worktreeId":"wt-a","orphaned":false,"writable":false}' \
+    '{"handle":"term-other","worktreeId":"wt-b","orphaned":false,"writable":true}' \
+    '{"handle":"","worktreeId":"wt-a"}' \
+    '{"worktreeId":"wt-a"}' \
+    '{"handle":"term-good","worktreeId":"wt-a"}')")
+  [ "$out" = term-good ] || fail "listed-terminal-handle should skip orphaned, unwritable, other-worktree, and handle-less rows, got '$out'"
+  out=$(listed_handle wt-a "$(orca_list_json '{"handle":"term-nowt"}')")
+  [ "$out" = term-nowt ] || fail "a row that names no worktree is the filtered worktree's, got '$out'"
+  status=0
+  out=$(listed_handle wt-a "$(orca_list_json \
+    '{"handle":"term-orphan","worktreeId":"wt-a","orphaned":true}' \
+    '{"handle":"term-other","worktreeId":"wt-b"}')") || status=$?
+  [ "$status" -ne 0 ] && [ -z "$out" ] || fail "listed-terminal-handle should find nothing when every row is unusable, got '$out' (status $status)"
+  status=0
+  out=$(listed_handle wt-a '{"ok":true,"result":{"terminals":[],"totalCount":0}}') || status=$?
+  [ "$status" -ne 0 ] && [ -z "$out" ] || fail "listed-terminal-handle should find nothing in an empty list, got '$out'"
+  status=0
+  out=$(listed_handle wt-a '{"ok":false,"error":{"code":"x","message":"boom"}}' 2>/dev/null) || status=$?
+  [ "$status" -ne 0 ] && [ -z "$out" ] || fail "listed-terminal-handle should find nothing in an error result, got '$out'"
+  pass "fm_backend_orca_json_get: listed-terminal-handle skips orphaned, unwritable, other-worktree, and handle-less terminals"
+}
+
+# orca_listed_row: one `terminal list` row for the worktree a case created
+# (the id run_orca_worktree_create and run_orca_spawn give it).
+orca_listed_row() {  # <case> <handle>
+  printf '{"handle":"%s","worktreeId":"wt-%s::/orca/wt-%s","orphaned":false,"connected":true,"writable":true}' "$2" "$1" "$1"
+}
+
+test_worktree_create_adopts_the_listed_terminal_as_the_third_field() {
+  local expect id
+  id="wt-create-list-adopt::/orca/wt-create-list-adopt"
+  run_orca_worktree_create create-list-adopt none /tmp/orca-wt \
+    "terminal-list=$(orca_list_json "$(orca_listed_row create-list-adopt term-listed)")"
+  expect="$id"$'\t/tmp/orca-wt\tterm-listed'
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with a listed terminal"$'\n'"$CREATE_OUT"
+  [ "$CREATE_OUT" = "$expect" ] || fail "worktree create should print id, path, and the listed handle, got '$CREATE_OUT'"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''list'$'\x1f''--worktree'$'\x1f'"id:$id"$'\x1f''--json' \
+    "worktree create should list the new worktree's terminals by exact id"
+  [ "$(orca_log_count terminal create)" = 0 ] || fail "worktree create must not create a terminal when one is listed"
+  pass "fm_backend_orca_worktree_create: adopts the listed terminal when the response names none"
+}
+
+test_worktree_create_titles_the_listed_terminal() {
+  run_orca_worktree_create create-list-title none /tmp/orca-wt \
+    "terminal-list=$(orca_list_json "$(orca_listed_row create-list-title term-listed)")"
+  expect_code 0 "$CREATE_RC" "worktree create should succeed with a listed terminal"$'\n'"$CREATE_OUT"
+  [ "$(orca_log_count terminal rename)" = 1 ] \
+    || fail "worktree create should title the listed terminal exactly once"$'\n'"$(tr '\037' ' ' < "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-listed'$'\x1f''--title'$'\x1f''fm-task'$'\x1f''--json' \
+    "worktree create should title the listed terminal with the task name"
+  pass "fm_backend_orca_worktree_create: titles the listed terminal with the task name"
+}
+
+test_spawn_adopts_the_listed_terminal_when_the_response_names_none() {
+  local id=orcalistadopt1
+  run_orca_spawn spawn-list-adopt "$id" none \
+    "terminal-list=$(orca_list_json "$(orca_listed_row spawn-list-adopt term-listed)")"
+  expect_code 0 "$SPAWN_RC" "spawn should adopt the listed terminal"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-listed" "$SPAWN_STATE/$id.meta" "meta should record the listed terminal"
+  [ "$(orca_log_count terminal create)" = 0 ] || fail "spawn must not create a terminal when Orca lists one"
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "spawn should title the listed terminal exactly once"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''rename'$'\x1f''--terminal'$'\x1f''term-listed'$'\x1f''--title'$'\x1f'"fm-$id"$'\x1f''--json' \
+    "the listed terminal should be titled with the task name"
+  pass "fm-spawn.sh --backend orca: adopts the listed terminal and creates no second terminal when the response names none"
+}
+
+test_spawn_does_not_list_terminals_when_the_response_names_one() {
+  local shape id n=0
+  for shape in terminal startup both; do
+    n=$((n + 1))
+    id="orcanolistz$n"
+    run_orca_spawn "spawn-nolist-$shape" "$id" "$shape" \
+      "terminal-list=$(orca_list_json "$(orca_listed_row "spawn-nolist-$shape" term-listed)")"
+    expect_code 0 "$SPAWN_RC" "spawn should succeed with the $shape result"$'\n'"$SPAWN_OUT"
+    [ "$(orca_log_count terminal list)" = 0 ] || fail "spawn must not list terminals when the response names one ($shape)"
+    ! grep -q "terminal=term-listed" "$SPAWN_STATE/$id.meta" || fail "the listed terminal must not win over the response's own ($shape)"
+  done
+  pass "fm-spawn.sh --backend orca: a terminal named by the response is adopted without listing terminals"
+}
+
+test_spawn_creates_one_terminal_when_the_list_is_empty() {
+  local id=orcalistempty1
+  run_orca_spawn spawn-list-empty "$id" none "4=$ORCA_TERMINAL_CREATE_RESPONSE"
+  expect_code 0 "$SPAWN_RC" "spawn should fall back to creating a terminal"$'\n'"$SPAWN_OUT"
+  [ "$(orca_log_count terminal list)" = 1 ] || fail "spawn should look for the worktree's terminal before creating one"
+  [ "$(orca_log_count terminal create)" = 1 ] || fail "spawn should create exactly one terminal when the list is empty"
+  assert_grep "terminal=term-created" "$SPAWN_STATE/$id.meta" "meta should record the created terminal"
+  pass "fm-spawn.sh --backend orca: creates exactly one terminal when Orca lists none for the worktree"
+}
+
+test_spawn_creates_a_terminal_when_the_list_cannot_be_read() {
+  local id n=0 mode
+  for mode in 'exit:1' '{"ok":false,"error":{"code":"runtime_unavailable","message":"no runtime"}}' 'not json at all'; do
+    n=$((n + 1))
+    id="orcalistbadz$n"
+    run_orca_spawn "spawn-list-bad-$n" "$id" none "terminal-list=$mode" "4=$ORCA_TERMINAL_CREATE_RESPONSE"
+    expect_code 0 "$SPAWN_RC" "an unreadable list ($mode) must not fail the spawn"$'\n'"$SPAWN_OUT"
+    [ "$(orca_log_count terminal create)" = 1 ] || fail "spawn should create exactly one terminal when the list is unreadable ($mode)"
+    assert_grep "terminal=term-created" "$SPAWN_STATE/$id.meta" "meta should record the created terminal ($mode)"
+  done
+  pass "fm-spawn.sh --backend orca: an unreadable terminal list falls back to creating one terminal"
+}
+
+test_spawn_creates_a_terminal_when_no_listed_terminal_is_usable() {
+  local id=orcalistunusable1 c=spawn-list-unusable
+  run_orca_spawn "$c" "$id" none "4=$ORCA_TERMINAL_CREATE_RESPONSE" \
+    "terminal-list=$(orca_list_json \
+      "{\"handle\":\"term-orphan\",\"worktreeId\":\"wt-$c::/orca/wt-$c\",\"orphaned\":true,\"writable\":true}" \
+      "{\"handle\":\"term-ro\",\"worktreeId\":\"wt-$c::/orca/wt-$c\",\"orphaned\":false,\"writable\":false}" \
+      '{"handle":"term-foreign","worktreeId":"someone-else::/elsewhere","orphaned":false,"writable":true}')"
+  expect_code 0 "$SPAWN_RC" "spawn should fall back to creating a terminal"$'\n'"$SPAWN_OUT"
+  [ "$(orca_log_count terminal create)" = 1 ] || fail "spawn should create exactly one terminal when no listed terminal is usable"
+  assert_grep "terminal=term-created" "$SPAWN_STATE/$id.meta" "meta should record the created terminal"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a foreign or unusable terminal must never be titled"
+  pass "fm-spawn.sh --backend orca: creates a terminal when the list holds only unusable or foreign terminals"
+}
+
+test_spawn_with_a_pathless_listed_terminal_closes_and_releases_everything() {
+  local id=orcapathlesslist1 c=spawn-pathless-list
+  SPAWN_OMIT_PATH=1 run_orca_spawn "$c" "$id" none \
+    "terminal-list=$(orca_list_json "$(orca_listed_row "$c" term-listed)")"
+  [ "$SPAWN_RC" -ne 0 ] || fail "spawn should fail when Orca omits the worktree path"
+  assert_contains "$SPAWN_OUT" "orca worktree create did not return a path" "spawn should explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-listed'$'\x1f''--json' \
+    "spawn should close the listed terminal of a pathless worktree"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f'"id:wt-$c::/orca/wt-$c" \
+    "spawn should release the pathless worktree"
+  [ "$(orca_log_count terminal rename)" = 0 ] || fail "a worktree being released must not have its terminal titled"
+  pass "fm-spawn.sh --backend orca: a pathless worktree's listed terminal is closed and the worktree released"
+}
+
+test_spawn_succeeds_when_titling_the_listed_terminal_fails() {
+  local id=orcalistrenamefail1 c=spawn-list-rename-fails
+  run_orca_spawn "$c" "$id" none 4=exit:1 \
+    "terminal-list=$(orca_list_json "$(orca_listed_row "$c" term-listed)")"
+  [ "$(orca_log_count terminal rename)" = 1 ] || fail "the rename should have been attempted"
+  expect_code 0 "$SPAWN_RC" "a failed title must not fail the spawn"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-listed" "$SPAWN_STATE/$id.meta" "meta should still record the listed terminal"
+  [ "$(orca_log_count terminal create)" = 0 ] || fail "a failed title must not trigger a second terminal"
+  pass "fm-spawn.sh --backend orca: a failed title of the listed terminal does not fail the spawn"
+}
+
+# A task whose terminal was adopted from the list is torn down through the same
+# path as any other: exactly the recorded handle is closed, and the worktree is
+# released afterwards.
+test_teardown_closes_exactly_the_adopted_listed_terminal() {
+  local id=orcalistteardown1 c=spawn-list-teardown next out rc neutral
+  run_orca_spawn "$c" "$id" none \
+    "terminal-list=$(orca_list_json "$(orca_listed_row "$c" term-listed)")"
+  expect_code 0 "$SPAWN_RC" "spawn should adopt the listed terminal"$'\n'"$SPAWN_OUT"
+  assert_grep "terminal=term-listed" "$SPAWN_STATE/$id.meta" "meta should record the listed terminal"
+  : > "$LOG"
+  next=$(( $(cat "$RESP/.count") + 1 ))
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-%s::/orca/wt-%s","path":"%s"}}}\n' "$c" "$c" "$SPAWN_WT" > "$RESP/$next.out"
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$SPAWN_STATE" FM_DATA_OVERRIDE="$TMP_ROOT/$c-data" FM_CONFIG_OVERRIDE="$TMP_ROOT/$c-config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "teardown of an adopted-terminal task should succeed"$'\n'"$out"
+  [ "$(orca_log_count terminal close)" = 1 ] || fail "teardown should close exactly one terminal"$'\n'"$(tr '\037' ' ' < "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-listed'$'\x1f''--json' \
+    "teardown should close the recorded, adopted terminal"
+  [ "$(orca_log_count terminal list)" = 0 ] || fail "teardown must not list terminals; it closes only the recorded one"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f'"id:wt-$c::/orca/wt-$c" \
+    "teardown should release the worktree"
+  assert_absent "$SPAWN_STATE/$id.meta" "teardown should remove the task metadata"
+  pass "fm-teardown.sh backend=orca: closes exactly the terminal that spawn adopted from the list"
+}
+
+test_json_get_listed_terminal_reads_the_first_handle
+test_json_get_listed_terminal_skips_unusable_rows
+test_worktree_create_adopts_the_listed_terminal_as_the_third_field
+test_worktree_create_titles_the_listed_terminal
+test_spawn_adopts_the_listed_terminal_when_the_response_names_none
+test_spawn_does_not_list_terminals_when_the_response_names_one
+test_spawn_creates_one_terminal_when_the_list_is_empty
+test_spawn_creates_a_terminal_when_the_list_cannot_be_read
+test_spawn_creates_a_terminal_when_no_listed_terminal_is_usable
+test_spawn_with_a_pathless_listed_terminal_closes_and_releases_everything
+test_spawn_succeeds_when_titling_the_listed_terminal_fails
+test_teardown_closes_exactly_the_adopted_listed_terminal
 test_spawn_adopts_startup_terminal_without_creating_another
 test_spawn_adopts_the_terminal_shape_and_prefers_it_over_a_startup_terminal
 test_spawn_titles_a_terminal_reported_in_the_terminal_shape
