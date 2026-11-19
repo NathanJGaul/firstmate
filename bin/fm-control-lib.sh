@@ -288,12 +288,14 @@ fm_control_backend_supports_key() {  # <backend> <key>
   return 1
 }
 
-# Whether <backend> has a recovery-grade agent-state classifier. Only tmux and
-# herdr implement fm_backend_agent_state; zellij, orca, and cmux cannot prove
-# an agent stopped (Orca reports `missing` for an absent endpoint but never
-# `dead`, and `unverified` for a live one), so no reading of theirs can. The control
-# plane refuses a stop-proving verb there instead of reporting an unprovable
-# transition as success.
+# Whether <backend> has a recovery-grade agent-state classifier the control
+# plane trusts to prove an agent stopped. Only tmux and herdr are admitted;
+# zellij and cmux report `unverified`. Orca now reads `alive`, `dead`, and
+# `ambiguous` from the local process table (fm_backend_orca_agent_state), but
+# exit, relaunch, reclaim, and secondmate restart stay refused on it until the
+# reclaim slice proves them live, so Orca is deliberately not admitted here. The
+# control plane refuses a stop-proving verb there instead of reporting an
+# unprovable transition as success.
 fm_control_backend_state_verified() {  # <backend>
   case "${1-}" in
     tmux|herdr) return 0 ;;

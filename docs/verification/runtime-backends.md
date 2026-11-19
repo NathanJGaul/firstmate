@@ -2133,6 +2133,32 @@ Findings:
 Not covered: a terminal on a paired remote runtime (a stale answer from the local runtime for another server's handle), and any process-level classification of a live terminal.
 Refresh this section with the lab commands above.
 
+#### Local process classifier (2026-11-19)
+
+Observed with the same lab on Orca 1.4.261 (`passed=58 findings=2` for a full run, `passed=37 findings=3` for the Orca-level section), run with `HOME` pinned to a throwaway directory and every `ORCA_*` variable stripped, on Linux.
+`tests/fm-backend-orca.test.sh` proves the scan, the classification, and the verdicts against a fake `orca` and a fake process table laid out like `/proc`; step A14 of the lab proves them against the real runtime and the real process table.
+
+```text
+processes carrying ORCA_TERMINAL_HANDLE=<handle> (scan rows: pid, comm, argv0, args)
+  fresh terminal, idle shell          one bash (/usr/bin/bash --rcfile <lab data>/shell-wrappers/.../rcfile)         agent state: dead
+  a copy of sleep named claude typed  the bash plus one process with comm=claude, argv0=<lab>/fake/claude              agent state: alive
+  after SIGKILL of that process       the bash alone; terminal show still connected=true writable=true                 agent state: dead
+  after terminal close                terminal show connected=false writable=false (endpoint verdict, no scan)          agent state: missing
+  ORCA_ENVIRONMENT set                                                                                                 agent state: unverified
+```
+
+Findings:
+
+- Every process in the terminal carried the handle, including a harness-named binary typed into the shell, and Orca did not rewrite that command (it rewrites only a `terminal create --command` launch).
+- The killed agent left a present terminal (`connected:true`), so only the process table separates `dead` from a live agent.
+- `systemd --user` and its `(sd-pam)` helper belong to the same user and refuse an `environ` read with `EACCES`, so a refused read is opaque; tallying it as unreadable made the first version read `unreadable` for an idle shell.
+- The full lab's Firstmate-level section needed a real binary named `claude` as its stand-in harness: `sh -c cat` reads `ambiguous`, and `fm-control interrupt` refuses an endpoint it cannot classify.
+  The steps for `fm-control exit` and `relaunch` still refuse on Orca.
+- `fm_backend_agent_state` of an idle shell in step A13 changed from `unverified` (recorded in the endpoint-presence entry above, before this classifier existed) to `dead`.
+
+Not covered: macOS and any host without `/proc` (read `unverified`), a runtime on a paired remote host, and a real Claude harness (a renamed `sleep` was used, so the real process name of the installed harness is not observed here).
+Refresh this section with the lab commands above.
+
 Not run, and what stays unknown:
 
 - Assertion 11, the browser bridge: the lab runtime reports browser automation unavailable, and a real browser session belongs to the operator's desktop, which the lab must not touch.
