@@ -1109,6 +1109,54 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/006-orca-test-lab/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/006-orca-test-lab/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },

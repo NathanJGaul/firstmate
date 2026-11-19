@@ -1345,7 +1345,7 @@ test_orca_close_failure_refuses_even_under_force() {
   set +e
   env -u TMUX -u TMUX_PANE \
     FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
-    PATH="$dir/fakebin:$orca_free" "$TEARDOWN" "$id" --force \
+    HOME="$dir/orca-free-home" ORCA_CLI_BIN_DIR='' PATH="$dir/fakebin:$orca_free" "$TEARDOWN" "$id" --force \
     > "$dir/orca-forced.out" 2> "$dir/orca-forced.err"
   rc=$?
   set -e
@@ -1367,7 +1367,7 @@ test_orca_close_failure_refuses_even_under_force() {
   set +e
   env -u TMUX -u TMUX_PANE \
     FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
-    PATH="$dir/fakebin:$orca_free" "$TEARDOWN" "$id" \
+    HOME="$dir/orca-free-home" ORCA_CLI_BIN_DIR='' PATH="$dir/fakebin:$orca_free" "$TEARDOWN" "$id" \
     > "$dir/orca-unforced.out" 2> "$dir/orca-unforced.err"
   rc=$?
   set -e
