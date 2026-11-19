@@ -1442,6 +1442,46 @@
     },
     {
       "path": "specs/009-code-mode-guard-fixes/tdd/verification.md",
+        "audience": "maintainer-verification"
+      },
+      {
+      "path": "specs/009-orca-process-classifier/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-process-classifier/tdd/verification.md",
       "audience": "maintainer-verification"
     },
     {

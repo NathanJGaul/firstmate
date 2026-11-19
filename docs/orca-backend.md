@@ -81,6 +81,13 @@ Orca exposes native agent state through `orca worktree ps`, `orca terminal show`
 The one field it reads from `terminal show` is the terminal's own presence record: the cheap endpoint-presence check, the session-start digest's `endpoint:` line, and `fm-crew-state.sh` treat a terminal as present only when Orca reports it connected and writable.
 An exited shell, a closed terminal, and a handle the runtime answers `terminal_handle_stale` for read as gone, even though `terminal read` still answers successfully for the first two.
 Any other answer, including a stopped runtime, an unparseable reply, or a record that contradicts itself, reads as unreadable rather than gone, so a failed read never licenses recovery.
+What runs inside a present terminal is proven from the local process table, never from Orca's native agent state, which keeps reporting an exited agent as present with its last state for as long as the terminal's shell lives.
+Every process an Orca terminal starts carries `ORCA_TERMINAL_HANDLE=<handle>` in its environment, so `fm_backend_agent_state` scans the process table for the exact handle, adds every descendant of a process that carries it, and classifies each process with the shared harness classifier in `bin/fm-agent-process-lib.sh`.
+A verified harness reads `alive`, a terminal holding only shells reads `dead`, and anything else reads `ambiguous`, with a short settle that resamples only `ambiguous` so a prompt helper in an idle shell is not mistaken for a stranger's process.
+`ORCA_ENVIRONMENT`, `ORCA_PAIRING_CODE`, or `ORCA_REMOTE_PAIRING` in the environment may point the CLI at a runtime on another host, a host with no `/proc` (macOS) has no table to read, and a handle that no local process carries means the runtime is not on this host, so each of those reads `unverified` rather than guessing.
+A process table that cannot be listed, or a process that cannot be placed in the tree or classified while no harness was found, reads `unreadable`.
+A process of the current user whose environment the kernel refuses to show, as `systemd --user` is on a desktop, is opaque and does not make a negative verdict unreadable.
+Because `fm-control interrupt` refuses an endpoint that reads `dead`, `missing`, or `ambiguous`, as it already does on tmux and Herdr, a stand-in process that no harness classifier recognizes cannot be interrupted on Orca.
 Each harness adapter's semantic lifecycle supplies worker state instead, and for Claude that is the hooks Firstmate installs.
 Grok alone retains its isolated rendered-tail fallback.
 
@@ -104,7 +111,10 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - Before any spawn mutates repository state, Firstmate reads `appVersion` and the capability list from `orca status --json` and refuses a runtime whose version is below 1.4.261, the lowest runtime proven against this adapter.
   A runtime that reports no readable version is not refused, but it reports no capability either, so nothing gated on one is enabled for it.
   A task already running is not re-checked, so only a new spawn meets the floor.
-- A receipt and a present endpoint prove Orca accepted input and, for a recognized agent, that its turn started; neither proves which process runs in a live terminal, so `fm_backend_agent_state` reports `missing` for an absent terminal, `unreadable` for a read that failed, and `unverified` for every live terminal, and the control plane's exit and relaunch verbs stay refused on Orca.
+- A receipt and a present endpoint prove Orca accepted input and, for a recognized agent, that its turn started; they do not prove which process runs in a live terminal.
+  `fm_backend_agent_state` proves that from the local process table only: `alive`, `dead`, or `ambiguous` on the host that runs the runtime, `missing` for an absent terminal, `unreadable` for a read that failed, and `unverified` whenever the runtime may be on another host or no local process carries the handle.
+  The control plane's exit, relaunch, and secondmate restart verbs stay refused on Orca until the reclaim slice proves them live.
+- A harness that daemonizes away from the terminal's process tree and also cleans its environment cannot be found by the scan and would read `dead`; Firstmate's launch line keeps `ORCA_TERMINAL_HANDLE` in the launch environment and runs the harness in the shell's tree, so a worker it launched is always visible.
 - The adapter reads only verified response fields: the worktree id and path, a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned, and the `result.terminals[]` rows of `terminal list --worktree`. It rejects other response shapes.
 - The branch-deleting release and the one-terminal-per-task adoption are proven live on the Linux headless runtime: after spawn, `worktree ps` reports `liveTerminalCount=1`, and teardown leaves no terminal behind; `verification/runtime-backends.md` records the lab results.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
@@ -117,7 +127,7 @@ These are the captain's current calls, and each holds until the capability it na
 - Long-running or high-value ships belong on Herdr until Orca relaunch lands.
   Orca suits scouts and short ships that are cheap to redo.
 - Orca delivers `interrupt` through `bin/fm-control.sh` for every harness whose interrupt is Escape or Ctrl+C, but refuses `exit` and `relaunch` today, so a dead Orca worker cannot be recovered through `bin/fm-control.sh` or `bin/fm-spawn.sh --relaunch`.
-  Both wait on a recovery-grade agent-state proof that Orca does not yet have.
+  Both wait on the reclaim slice, which has to prove them live on top of the local process-table agent state described above.
   An interrupt on Orca proves only that the endpoint still exists, and reports `cancel=unconfirmed` unless the harness has its own acknowledgement.
   A harness that must see its screen between interrupt presses, such as Devin, is still refused, because Orca has no verified viewport read.
   [`agent-control.md`](agent-control.md) owns the reasons.

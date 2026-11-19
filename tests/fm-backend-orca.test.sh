@@ -2983,7 +2983,8 @@ test_agent_state_missing_unverified_unreadable() {
   local got
   as() {  # <function> -> the backend verdict for term-es
     # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
-    env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    env -u ORCA_ENVIRONMENT -u ORCA_PAIRING_CODE -u ORCA_REMOTE_PAIRING \
+      PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_PROC_ROOT="$CASE_DIR/no-proc" \
       bash -c '. "$0/bin/fm-backend.sh"; "$1" orca term-es' "$ROOT" "$1" 2>/dev/null
   }
   orca_case agent-state-verdicts
@@ -2995,7 +2996,7 @@ test_agent_state_missing_unverified_unreadable() {
   es_answer "$(es_closed)"
   got=$(as fm_backend_agent_state); [ "$got" = missing ] || fail "a closed Orca terminal should be missing, got '$got'"
   es_answer "$(es_live)"
-  got=$(as fm_backend_agent_state); [ "$got" = unverified ] || fail "a live Orca terminal has no process classifier yet and should be unverified, got '$got'"
+  got=$(as fm_backend_agent_state); [ "$got" = unverified ] || fail "a live Orca terminal that no local process carries the handle of should be unverified, got '$got'"
   got=$(as fm_backend_agent_alive); [ "$got" = unknown ] || fail "a live Orca terminal should fold to unknown, got '$got'"
   es_answer 'not json'
   got=$(as fm_backend_agent_state); [ "$got" = unreadable ] || fail "an unreadable Orca answer should be unreadable, got '$got'"
@@ -3061,6 +3062,415 @@ test_crew_state_does_not_call_an_unreadable_orca_endpoint_gone() {
   pass "fm-crew-state: an unreadable Orca answer is unreachable, never gone"
 }
 
+
+# --- local process classifier (specs/009-orca-process-classifier) ------------
+#
+# The fake process table is a temporary directory laid out like /proc and
+# selected through FM_ORCA_PROC_ROOT: <pid>/environ (NUL separated), comm,
+# cmdline (NUL separated) and stat. Every fake process is owned by the user
+# running the test, which is the only owner the scan reads.
+
+# pt_new: a fresh empty process table in $PT.
+pt_new() {
+  PT="$CASE_DIR/proc"
+  rm -rf "$PT"
+  mkdir -p "$PT"
+}
+# pt_proc <pid> <ppid> <comm> <argv0> <handle-or-empty> [state] [args...]
+pt_proc() {
+  local pid=$1 ppid=$2 comm=$3 argv0=$4 handle=$5 state=${6:-S} d
+  shift 6 2>/dev/null || shift $#
+  d="$PT/$pid"
+  mkdir -p "$d"
+  if [ -n "$handle" ]; then
+    printf 'PATH=/usr/bin\0ORCA_TERMINAL_HANDLE=%s\0HOME=/home/x\0' "$handle" > "$d/environ"
+  else
+    printf 'PATH=/usr/bin\0HOME=/home/x\0' > "$d/environ"
+  fi
+  printf '%s\n' "$comm" > "$d/comm"
+  { printf '%s\0' "$argv0"; for a in "$@"; do printf '%s\0' "$a"; done; } > "$d/cmdline"
+  printf '%s (%s) %s %s 1 1 0 -1 0\n' "$pid" "$comm" "$state" "$ppid" > "$d/stat"
+}
+
+# ps_run <function> [args...]: run an adapter function against the fake orca
+# answering from es_answer and the fake process table in $PT. Selecting a
+# non-local runtime or any ORCA_* routing variable is the caller's to add.
+ps_run() {
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  env -u ORCA_ENVIRONMENT -u ORCA_PAIRING_CODE -u ORCA_REMOTE_PAIRING \
+    PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ORCA_PROC_ROOT="$PT" FM_BACKEND_ORCA_PROCESS_SETTLE_POLLS="${PS_SETTLE:-1}" \
+    "${PS_EXTRA_ENV[@]}" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source orca; "$@"' "$ROOT" "$@" 2>/dev/null
+}
+PS_EXTRA_ENV=(FM_PS_UNUSED=1)
+ps_agent_state() { ps_run fm_backend_agent_state orca "${1:-term-es}"; }
+ps_expect() {  # <label> <expected> [terminal]
+  local got
+  got=$(ps_agent_state "${3:-term-es}")
+  [ "$got" = "$2" ] || fail "agent state for $1: expected '$2', got '$got'"
+}
+
+test_agent_state_alive_for_a_harness_process() {
+  orca_case ps-alive
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 claude claude term-es S --dangerously-skip-permissions
+  ps_expect "a shell with a harness process carrying the handle" alive
+  [ "$(ps_run fm_backend_agent_alive orca term-es)" = alive ] || fail "fm_backend_agent_alive should be alive for a harness process"
+  pt_new
+  pt_proc 100 1 bash bash term-es
+  pt_proc 101 100 codex codex term-es
+  ps_expect "a codex process" alive
+  pass "fm_backend_agent_state: a present terminal running a harness process reads alive"
+}
+
+test_agent_state_alive_for_a_descendant_harness() {
+  orca_case ps-alive-descendant
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  # a launcher that re-executed the harness with a cleaned environment: the
+  # harness no longer carries the handle but still descends from the shell.
+  pt_proc 101 100 sh sh ''
+  pt_proc 102 101 claude claude ''
+  ps_expect "a harness below a process carrying the handle" alive
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 200 1 zsh zsh term-other
+  pt_proc 201 200 claude claude ''
+  ps_expect "a harness below another terminal's shell is not this terminal's" dead
+  pass "fm_backend_agent_state: a harness below a handle-carrying process reads alive, one below another handle does not"
+}
+
+test_agent_state_alive_for_an_argv0_harness() {
+  orca_case ps-alive-argv0
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  # a node-bundled harness: the kernel name is a bare node, argv[0] names the harness.
+  pt_proc 101 100 node pi term-es
+  ps_expect "a bare node whose argv[0] is a harness" alive
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 node node term-es S server.js
+  ps_expect "a bare node that is not a harness" ambiguous
+  pass "fm_backend_agent_state: a harness identified by argv[0] reads alive and a stranger's node does not"
+}
+
+test_agent_state_dead_for_only_shells() {
+  orca_case ps-dead
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  ps_expect "one shell" dead
+  [ "$(ps_run fm_backend_agent_alive orca term-es)" = dead ] || fail "fm_backend_agent_alive should be dead for a shell-only terminal"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 bash bash term-es
+  pt_proc 102 101 -zsh -zsh ''
+  ps_expect "nested shells" dead
+  # the exited agent is a zombie child of the shell until it is reaped
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 claude claude '' Z
+  : > "$PT/101/environ"; : > "$PT/101/cmdline"
+  ps_expect "a zombie harness" dead
+  pass "fm_backend_agent_state: only shells reads dead, and a zombie harness does not count"
+}
+
+test_agent_state_ambiguous_for_another_process() {
+  orca_case ps-ambiguous
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 vim vim term-es
+  ps_expect "a shell and an editor" ambiguous
+  [ "$(ps_run fm_backend_agent_alive orca term-es)" = unknown ] || fail "fm_backend_agent_alive should be unknown when ambiguous"
+  pass "fm_backend_agent_state: a process that is neither harness nor shell reads ambiguous"
+}
+
+test_agent_state_unverified_for_a_non_local_runtime() {
+  local v got
+  orca_case ps-non-local
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 claude claude term-es
+  for v in ORCA_ENVIRONMENT ORCA_PAIRING_CODE ORCA_REMOTE_PAIRING; do
+    # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+    got=$(env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_PROC_ROOT="$PT" "$v"=somewhere \
+      bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state orca term-es' "$ROOT" 2>/dev/null)
+    [ "$got" = unverified ] || fail "with $v set the runtime may be remote and the state should be unverified, got '$got'"
+  done
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  got=$(env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_PROC_ROOT="$PT" ORCA_ENVIRONMENT= \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state orca term-es' "$ROOT" 2>/dev/null)
+  [ "$got" = alive ] || fail "an empty ORCA_ENVIRONMENT selects nothing, expected alive, got '$got'"
+  pass "fm_backend_agent_state: a selected non-local Orca runtime reads unverified and the process table is not trusted"
+}
+
+test_agent_state_unverified_without_attribution() {
+  orca_case ps-unattributed
+  es_answer "$(es_live)"
+  # no process table at all
+  pt_new
+  rm -rf "$PT"
+  ps_expect "a host with no process table" unverified
+  # a table in which no process carries the handle: the runtime is not on this host
+  pt_new
+  pt_proc 100 1 zsh zsh term-other
+  pt_proc 101 100 claude claude term-other
+  ps_expect "a handle that no local process carries" unverified
+  pt_new
+  pt_proc 100 1 zsh zsh term-es0
+  ps_expect "a handle that is only a prefix of another" unverified
+  pass "fm_backend_agent_state: no process table or no local carrier of the handle reads unverified"
+}
+
+test_agent_state_unreadable_matrix() {
+  orca_case ps-unreadable
+  es_answer "$(es_live)"
+  # a root that exists but cannot be listed
+  pt_new
+  rm -rf "$PT"; : > "$PT"
+  ps_expect "a process table that cannot be listed" unreadable
+  # an own process whose environment cannot be read, no harness found
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 zsh zsh term-es
+  rm -f "$PT/101/environ"; mkdir "$PT/101/environ"
+  ps_expect "an unreadable own process and only shells" unreadable
+  # the same unreadable process beside a harness: positive evidence wins
+  pt_proc 102 100 claude claude term-es
+  ps_expect "an unreadable own process beside a harness" alive
+  # a process that vanished mid-read is not unreadable
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 zsh zsh term-es
+  rm -f "$PT/101/environ"
+  ps_expect "a process that vanished during the scan" dead
+  pass "fm_backend_agent_state: an unlistable table or an unreadable own process reads unreadable unless a harness was found"
+}
+
+test_agent_state_endpoint_verdicts_do_not_read_the_table() {
+  orca_case ps-endpoint-first
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 claude claude term-es
+  es_answer "$(es_exited)"; ps_expect "an exited terminal with a harness in the table" missing
+  es_answer "$(es_closed)"; ps_expect "a closed terminal with a harness in the table" missing
+  es_answer "$ES_STALE" 1; ps_expect "a stale handle with a harness in the table" missing
+  es_answer 'not json'; ps_expect "an unreadable endpoint answer with a harness in the table" unreadable
+  pass "fm_backend_agent_state: a missing or unreadable endpoint keeps its verdict whatever the process table holds"
+}
+
+test_agent_state_makes_one_orca_call_and_uses_no_native_state() {
+  local calls
+  orca_case ps-one-call
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  ps_agent_state term-es >/dev/null
+  calls=$(grep -a -c . "$LOG" || true)
+  [ "$calls" -eq 1 ] || fail "the classifier should make exactly the one presence read, made $calls: $(cat "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1fterminal\x1fshow\x1f--terminal\x1fterm-es\x1f--json' "the only orca call should be the presence terminal show"
+  assert_not_contains "$(cat "$LOG")" "worktree" "native worktree state must not be read"
+  assert_not_contains "$(cat "$LOG")" "agent" "native agent state must not be read"
+  pass "fm_backend_agent_state: the classifier adds no orca call beyond the presence read"
+}
+
+test_a_dead_orca_endpoint_does_not_unlock_the_control_plane() {
+  local got
+  orca_case ps-control-refused
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 belongs to the inner bash
+  got=$(env -u ORCA_ENVIRONMENT PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_PROC_ROOT="$PT" \
+    bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; if fm_control_backend_state_verified orca; then echo verified; else echo refused; fi; fm_backend_agent_state orca term-es' "$ROOT" 2>/dev/null | tr '\n' ' ')
+  [ "$got" = "refused dead" ] || fail "a dead Orca endpoint must leave the stop-proving verbs refused, got '$got'"
+  pass "fm-control-lib: a dead Orca endpoint verdict leaves exit and relaunch refused"
+}
+
+# scan units: the adapter's own row output, read directly.
+ps_scan() {  # <terminal> -> the raw scan rows
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_PROC_ROOT="$PT" "${PS_SCAN_ENV[@]}" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_process_scan "$1"' "$ROOT" "$1" 2>/dev/null
+}
+PS_SCAN_ENV=(FM_PS_UNUSED=1)
+
+test_process_scan_matches_the_exact_handle() {
+  local out
+  orca_case scan-exact
+  pt_new
+  pt_proc 100 1 zsh zsh term-1
+  pt_proc 101 1 zsh zsh term-10
+  pt_proc 102 1 zsh zsh term-1x
+  out=$(ps_scan term-1)
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "ok 0" ] || fail "the scan header should be 'ok 0', got: $out"
+  [ "$(printf '%s\n' "$out" | tail -n +2 | grep -c .)" -eq 1 ] || fail "only the exact handle should match, got: $out"
+  assert_contains "$out" $'100\tzsh\tzsh\t' "the exact handle's shell should be listed"
+  pass "fm_backend_orca_process_scan: the handle is matched as a whole environment entry"
+}
+
+test_process_scan_includes_descendants() {
+  local out
+  orca_case scan-descendants
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 sh sh ''
+  pt_proc 102 101 sleep sleep ''
+  pt_proc 200 1 zsh zsh term-other
+  pt_proc 201 200 sleep sleep ''
+  out=$(ps_scan term-es)
+  assert_contains "$out" $'100\tzsh' "the carrier should be listed"
+  assert_contains "$out" $'101\tsh' "a child should be listed"
+  assert_contains "$out" $'102\tsleep' "a grandchild should be listed"
+  assert_not_contains "$out" $'200\t' "another handle's shell must not be listed"
+  assert_not_contains "$out" $'201\t' "another handle's child must not be listed"
+  pass "fm_backend_orca_process_scan: every descendant of a carrier is listed and another handle's tree is not"
+}
+
+test_process_scan_drops_zombies_self_and_vanished() {
+  local out h
+  orca_case scan-drops
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 claude claude term-es Z
+  pt_proc 102 100 claude claude term-es X
+  pt_proc 103 100 sleep sleep term-es
+  rm -f "$PT/103/comm"
+  out=$(ps_scan term-es)
+  assert_not_contains "$out" $'101\t' "a zombie must not be listed"
+  assert_not_contains "$out" $'102\t' "a dead process must not be listed"
+  assert_not_contains "$out" $'103\t' "a process whose files vanished must not be listed"
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "ok 0" ] || fail "a vanished process is not an unreadable one, got: $out"
+  # the scanner's own pid, on the real process table, from a caller that carries the handle itself
+  h="term-self-$$"
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  out=$(env PATH="$FB:$PATH" ORCA_TERMINAL_HANDLE="$h" FM_ORCA_PROC_ROOT=/proc \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_process_scan "$1"' "$ROOT" "$h" 2>/dev/null)
+  [ "$(printf '%s\n' "$out" | tail -n +2 | grep -c .)" -ge 1 ] || fail "the caller carrying the handle should be listed on the real table, got: $out"
+  assert_not_contains "$out" $'\tnode\t' "the scanner's own node process must never be listed"
+  pass "fm_backend_orca_process_scan: zombies, dead processes, vanished processes, and the scanner itself are dropped"
+}
+
+test_process_scan_skips_other_users() {
+  local out
+  orca_case scan-other-user
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 zsh zsh term-es
+  rm -f "$PT/101/environ"; mkdir "$PT/101/environ"
+  PS_SCAN_ENV=(FM_ORCA_PROC_UID=$(( $(id -u) + 1 )))
+  out=$(ps_scan term-es)
+  PS_SCAN_ENV=(FM_PS_UNUSED=1)
+  [ "$out" = "ok 0" ] || fail "processes of another user are neither listed nor unreadable, got: $out"
+  pass "fm_backend_orca_process_scan: a process of another user is skipped without a read or a tally"
+}
+
+test_process_scan_opaque_environment_is_reached_through_the_tree() {
+  local out
+  orca_case scan-opaque
+  es_answer "$(es_live)"
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "fm_backend_orca_process_scan: opaque environment case skipped (root can read every environment)"
+    return 0
+  fi
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  # a helper whose environment the kernel refuses to show (as systemd --user is on a desktop)
+  pt_proc 101 100 sh sh ''
+  chmod 000 "$PT/101/environ"
+  pt_proc 102 101 claude claude ''
+  out=$(ps_scan term-es)
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "ok 0" ] || fail "a refused environment is opaque, not tallied, got: $out"
+  assert_contains "$out" $'102\tclaude' "a harness below an opaque process should still be listed"
+  ps_expect "a harness below a process whose environment is refused" alive
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 200 1 systemd systemd ''
+  chmod 000 "$PT/200/environ"
+  ps_expect "an unrelated process whose environment is refused" dead
+  pass "fm_backend_orca_process_scan: a refused environment is opaque, reached through the tree, and never blocks a negative verdict"
+}
+
+test_process_scan_status_and_tally() {
+  local out
+  orca_case scan-status
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 zsh zsh term-es
+  rm -f "$PT/101/environ"; mkdir "$PT/101/environ"
+  out=$(ps_scan term-es)
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "ok 1" ] || fail "an unreadable own process should be tallied, got: $out"
+  assert_contains "$out" $'100\tzsh' "the readable carrier should still be listed"
+  pt_new; rm -rf "$PT"
+  [ "$(ps_scan term-es)" = "unsupported 0" ] || fail "a missing process table should be unsupported, got: $(ps_scan term-es)"
+  pt_new; rm -rf "$PT"; : > "$PT"
+  [ "$(ps_scan term-es)" = "unreadable 0" ] || fail "an unlistable process table should be unreadable, got: $(ps_scan term-es)"
+  pass "fm_backend_orca_process_scan: status is ok, unsupported, or unreadable and an unreadable own process is tallied"
+}
+
+test_process_scan_sanitizes_fields() {
+  local out
+  orca_case scan-sanitize
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 'we	ird' 'a	b' term-es S 'x
+y'
+  out=$(ps_scan term-es)
+  [ "$(printf '%s\n' "$out" | tail -n +2 | grep -c .)" -eq 2 ] || fail "a tab or newline in a field must not add or split a row, got: $out"
+  [ "$(printf '%s\n' "$out" | sed -n 3p | awk -F'\t' '{print NF}')" -eq 4 ] || fail "every row should have exactly four fields, got: $out"
+  pass "fm_backend_orca_process_scan: control characters in a field cannot break a row"
+}
+
+test_process_state_precedence() {
+  local got
+  ps_state() { ps_run fm_backend_orca_process_state term-es; }
+  orca_case ps-precedence
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 vim vim term-es
+  pt_proc 102 100 claude claude term-es
+  got=$(ps_state); [ "$got" = agent ] || fail "an agent beside another process should be agent, got '$got'"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 101 100 vim vim term-es
+  got=$(ps_state); [ "$got" = other ] || fail "a shell and another process should be other, got '$got'"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  got=$(ps_state); [ "$got" = shell ] || fail "only shells should be shell, got '$got'"
+  pt_new
+  pt_proc 100 1 zsh zsh term-other
+  got=$(ps_state); [ "$got" = none ] || fail "no carrier should be none, got '$got'"
+  pt_new; rm -rf "$PT"
+  got=$(ps_state); [ "$got" = unsupported ] || fail "no table should be unsupported, got '$got'"
+  pass "fm_backend_orca_process_state: agent beats everything, then unreadable, none, shell, other"
+}
+
+test_process_state_settles_a_transient_other() {
+  local got
+  orca_case ps-settle
+  es_answer "$(es_live)"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 500 100 starship starship term-es
+  ( sleep 0.4; rm -rf "$PT/500" ) &
+  got=$(PS_SETTLE=30 ps_run fm_backend_orca_process_state term-es)
+  wait
+  [ "$got" = shell ] || fail "a prompt helper that exits inside the settle window should settle to shell, got '$got'"
+  pt_new
+  pt_proc 100 1 zsh zsh term-es
+  pt_proc 500 100 vim vim term-es
+  got=$(PS_SETTLE=3 ps_run fm_backend_orca_process_state term-es)
+  [ "$got" = other ] || fail "a process that stays should remain other after the window, got '$got'"
+  pass "fm_backend_orca_process_state: only other is resampled, and an exhausted window keeps it"
+}
 
 test_dispatcher_sources_orca_and_routes_primitives
 test_json_get_ignores_undocumented_terminal_id_shapes
@@ -3136,3 +3546,23 @@ test_worktree_create_passes_branch_and_base
 test_worktree_create_without_branch_is_unchanged
 test_forced_unlanded_ship_teardown_keeps_the_branch
 test_worktree_create_failure_names_orca_s_reason
+test_agent_state_alive_for_a_harness_process
+test_agent_state_alive_for_a_descendant_harness
+test_agent_state_alive_for_an_argv0_harness
+test_agent_state_dead_for_only_shells
+test_agent_state_ambiguous_for_another_process
+test_agent_state_unverified_for_a_non_local_runtime
+test_agent_state_unverified_without_attribution
+test_agent_state_unreadable_matrix
+test_agent_state_endpoint_verdicts_do_not_read_the_table
+test_agent_state_makes_one_orca_call_and_uses_no_native_state
+test_a_dead_orca_endpoint_does_not_unlock_the_control_plane
+test_process_scan_matches_the_exact_handle
+test_process_scan_includes_descendants
+test_process_scan_drops_zombies_self_and_vanished
+test_process_scan_skips_other_users
+test_process_scan_status_and_tally
+test_process_scan_opaque_environment_is_reached_through_the_tree
+test_process_scan_sanitizes_fields
+test_process_state_precedence
+test_process_state_settles_a_transient_other

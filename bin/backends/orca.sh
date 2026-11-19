@@ -23,6 +23,13 @@
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../fm-composer-lib.sh"
 
+# Backend-neutral harness-process identity (agent|shell|other), the same
+# classifier the tmux and Herdr adapters use, so a harness one backend reads as
+# alive can never read as an agent-free pane on another. Owned by
+# bin/fm-agent-process-lib.sh; the Orca process classifier below is its caller.
+# shellcheck source=bin/fm-agent-process-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/../fm-agent-process-lib.sh"
+
 # fm_backend_orca_tool_check: make the `orca` CLI runnable by name, or refuse.
 # Orca's own terminals put its CLI shim directory on PATH, but a restarted
 # primary, a daemon, or a worker usually runs outside one, so the CLI is looked
@@ -435,17 +442,238 @@ out("unreadable");
   esac
 }
 
+# fm_backend_orca_process_scan: one READ-ONLY scan of the local process table
+# for the processes of one Orca terminal, as raw rows for
+# fm_backend_orca_process_state to classify. Every process an Orca terminal
+# starts carries ORCA_TERMINAL_HANDLE=<handle> in its environment (the PTY shell
+# and everything below it), so the process table answers what runs in the
+# terminal without asking Orca. Orca's own agent state cannot: `worktree ps`,
+# `terminal show`, and `agent list|show` keep reporting an agent as present with
+# its last state for as long as the terminal's shell lives, including after the
+# agent was killed with SIGKILL (docs/verification/runtime-backends.md), so no
+# native state is read here and no `orca` call is made.
+#
+# The first output line is "<status> <unreadable-count>", status being
+#   ok          - the table was listed.
+#   unsupported - the host has no process table at all (no /proc: macOS).
+#   unreadable  - the table exists but cannot be listed.
+# <unreadable-count> counts processes the scan could not place in the tree or
+# classify (a stat, a command line, or an environment that failed for a reason
+# other than vanishing or a refused read), which a negative verdict must not be
+# built over. Each following
+# line is one process as tab-separated "pid comm argv0 args", control characters
+# in a field replaced by a space so one process is always one row.
+#
+# A process is listed when its environment holds the EXACT entry (so term_1
+# never matches term_10) or when any ancestor's does: a harness launched through
+# a launcher that re-executes it with a cleaned environment no longer carries the
+# handle itself but still descends from the shell that does, and missing it would
+# read the terminal as agent-free. The parent links come from every process's
+# world-readable stat, whoever owns it, so a descendant below a process whose
+# environment is hidden (a setcap helper, a sandbox) is still found; only a
+# process of the current user can be a carrier, because only its environment is
+# read, and the runtime's terminal processes are that user's. An own process
+# whose environment is refused (EACCES or EPERM, as `systemd --user` is on a
+# normal desktop) is opaque: it can be reached through the tree but cannot be
+# shown to be a carrier, and is not tallied, since tallying it would make every
+# negative verdict unreachable. A zombie, the scanner's own pid (a caller running
+# inside the terminal being classified carries the handle too), and a process that
+# vanishes while the table is read are not running processes and are dropped.
+# The table location is $FM_ORCA_PROC_ROOT (default /proc) and the owning uid
+# $FM_ORCA_PROC_UID (default the caller's), both only so tests can lay out a fake
+# table.
+fm_backend_orca_process_scan() {  # <terminal-id>
+  local terminal=$1
+  node -e '
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[1];
+const want = "ORCA_TERMINAL_HANDLE=" + process.argv[2];
+const uid = process.argv[3] === "" ? process.getuid() : Number(process.argv[3]);
+const gone = (e) => e && (e.code === "ENOENT" || e.code === "ESRCH");
+let names;
+try {
+  names = fs.readdirSync(root);
+} catch (e) {
+  process.stdout.write((e && e.code === "ENOENT" ? "unsupported" : "unreadable") + " 0\n");
+  process.exit(0);
+}
+let unreadable = 0;
+const procs = new Map();
+const carriers = [];
+const denied = (e) => e && (e.code === "EACCES" || e.code === "EPERM");
+for (const n of names) {
+  if (!/^[0-9]+$/.test(n)) continue;
+  const pid = Number(n);
+  if (pid === process.pid) continue;
+  const dir = path.join(root, n);
+  let st;
+  try { st = fs.statSync(dir); } catch (e) { continue; }
+  const own = st.uid === uid;
+  let stat;
+  try { stat = fs.readFileSync(path.join(dir, "stat"), "latin1"); } catch (e) { if (own && !gone(e)) unreadable++; continue; }
+  const close = stat.lastIndexOf(")");
+  const rest = close < 0 ? [] : stat.slice(close + 1).trim().split(/\s+/);
+  const ppid = Number(rest[1]);
+  if (!/^[A-Za-z]$/.test(rest[0] || "") || !Number.isInteger(ppid)) { if (own) unreadable++; continue; }
+  if (rest[0] === "Z" || rest[0] === "X" || rest[0] === "x") continue;
+  if (own) {
+    let env = null;
+    try { env = fs.readFileSync(path.join(dir, "environ")); } catch (e) {
+      if (gone(e)) continue;
+      if (!denied(e)) unreadable++;
+    }
+    if (env && env.toString("latin1").split("\0").indexOf(want) >= 0) carriers.push(pid);
+  }
+  procs.set(pid, { ppid, dir });
+}
+const children = new Map();
+for (const [pid, p] of procs) {
+  if (!children.has(p.ppid)) children.set(p.ppid, []);
+  children.get(p.ppid).push(pid);
+}
+const kept = new Set(carriers);
+const queue = carriers.slice();
+while (queue.length) {
+  for (const c of children.get(queue.shift()) || []) {
+    if (!kept.has(c)) { kept.add(c); queue.push(c); }
+  }
+}
+const clean = (s) => s.replace(/[\u0000-\u001f\u007f]/g, " ");
+const rows = [];
+for (const pid of Array.from(kept).sort((a, b) => a - b)) {
+  const dir = procs.get(pid).dir;
+  let comm, cmdline;
+  try {
+    comm = fs.readFileSync(path.join(dir, "comm"), "utf8").replace(/\n$/, "");
+    cmdline = fs.readFileSync(path.join(dir, "cmdline"), "utf8");
+  } catch (e) { if (!gone(e)) unreadable++; continue; }
+  const parts = cmdline.split("\0");
+  if (parts.length && parts[parts.length - 1] === "") parts.pop();
+  rows.push([pid, clean(comm), clean(parts[0] || ""), clean(parts.join(" ")).slice(0, 4096)].join("\t"));
+}
+process.stdout.write("ok " + unreadable + "\n" + rows.map((r) => r + "\n").join(""));
+' "${FM_ORCA_PROC_ROOT:-/proc}" "$terminal" "${FM_ORCA_PROC_UID:-}" 2>/dev/null
+}
+
+# fm_backend_orca_process_state_sample: one instantaneous reading of the
+# terminal's processes, for fm_backend_orca_process_state, which owns the
+# contract. Each listed process is classified by the shared
+# fm_agent_process_classify (kernel name, argv[0], and the node-bundle harness
+# rules); the Gemini rule reads a live process by pid, so the pid is passed only
+# when the table is the real /proc, never for a fake one.
+fm_backend_orca_process_state_sample() {  # <terminal-id>
+  local out header status unreadable row pid rest comm argv0 args pidarg
+  local shells=0 others=0 rows=0
+  out=$(fm_backend_orca_process_scan "$1") || { printf 'unreadable'; return 0; }
+  header=${out%%$'\n'*}
+  status=${header%% *}
+  unreadable=${header#* }
+  case "$status" in
+    ok) ;;
+    unsupported) printf 'unsupported'; return 0 ;;
+    *) printf 'unreadable'; return 0 ;;
+  esac
+  case "$unreadable" in ''|*[!0-9]*) printf 'unreadable'; return 0 ;; esac
+  case "${FM_ORCA_PROC_ROOT:-/proc}" in /proc) pidarg=1 ;; *) pidarg= ;; esac
+  case "$out" in
+    *$'\n'*) rest=${out#*$'\n'} ;;
+    *) rest= ;;
+  esac
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    rows=$((rows + 1))
+    pid=${row%%$'\t'*}
+    row=${row#*$'\t'}
+    comm=${row%%$'\t'*}
+    row=${row#*$'\t'}
+    argv0=${row%%$'\t'*}
+    args=${row#*$'\t'}
+    case "$(fm_agent_process_classify "$comm" "$argv0" "$args" "${pidarg:+$pid}")" in
+      agent) printf 'agent'; return 0 ;;
+      shell) shells=$((shells + 1)) ;;
+      *) others=$((others + 1)) ;;
+    esac
+  done <<EOF
+$rest
+EOF
+  # No harness was found. Positive evidence needs no further proof, but every
+  # negative reading must not have been built over a process the scan could not
+  # read, since that process might be the agent.
+  [ "$unreadable" -eq 0 ] || { printf 'unreadable'; return 0; }
+  [ "$rows" -gt 0 ] || { printf 'none'; return 0; }
+  if [ "$others" -eq 0 ]; then printf 'shell'; else printf 'other'; fi
+}
+
+# fm_backend_orca_process_state: what runs in one Orca terminal on THIS host,
+# from the process table alone, printed as exactly one of
+#   agent       - a listed process is a verified harness.
+#   shell       - at least one process was listed and every one is a shell:
+#                 positive proof the terminal is agent-free.
+#   other       - something was listed that is neither (an editor, a tool, a
+#                 stranger's node): not a shell-only terminal.
+#   none        - no process on this host carries the handle. A live local
+#                 terminal always has at least its shell carrying it, so this
+#                 means the runtime is not on this host or its processes are not
+#                 visible, never that the terminal is empty.
+#   unsupported - this host has no process table.
+#   unreadable  - the table could not be listed, or a process of the current
+#                 user could not be read and no harness was found.
+# `other` alone is resampled for a bounded settle (FM_BACKEND_ORCA_PROCESS_SETTLE_POLLS
+# samples, default 5, 0.1s apart) and the first non-`other` reading wins: an
+# idle shell transiently hosts prompt helpers, the same shape the Herdr adapter
+# settles. Only an exhausted window keeps `other`.
+fm_backend_orca_process_state() {  # <terminal-id>
+  local attempt=0 max=${FM_BACKEND_ORCA_PROCESS_SETTLE_POLLS:-5} verdict
+  case "$max" in ''|*[!0-9]*) max=5 ;; esac
+  while :; do
+    verdict=$(fm_backend_orca_process_state_sample "$1")
+    [ "$verdict" = other ] || break
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt "$max" ] || break
+    sleep 0.1
+  done
+  printf '%s' "$verdict"
+}
+
+# fm_backend_orca_runtime_is_local: whether the `orca` calls this adapter makes
+# address the runtime on this host. The CLI addresses a paired remote runtime
+# when ORCA_ENVIRONMENT, ORCA_PAIRING_CODE, or ORCA_REMOTE_PAIRING is set (the
+# adapter never passes --environment), and a process table only proves anything
+# about the machine it is read on. Any non-empty value counts as remote, even
+# one that might name this host: a false `unverified` only declines to act.
+fm_backend_orca_runtime_is_local() {
+  [ -z "${ORCA_ENVIRONMENT:-}" ] && [ -z "${ORCA_PAIRING_CODE:-}" ] && [ -z "${ORCA_REMOTE_PAIRING:-}" ]
+}
+
 # fm_backend_orca_agent_state: the recovery-grade verdict for an Orca endpoint
 # (the contract is fm_backend_agent_state's in bin/fm-backend.sh). Endpoint
-# presence is all Orca can prove today: an authoritatively absent terminal is
-# `missing`, a failed or self-contradicting read is `unreadable`, and a present
-# terminal is `unverified` because nothing here yet proves what process runs in
-# it (the process classifier is a later slice), so no `dead` and no `alive`.
+# presence comes first and keeps its own verdicts: an authoritatively absent
+# terminal is `missing` and a failed or self-contradicting read is `unreadable`,
+# neither reading the process table. For a present terminal the verdict is
+# proven at process level on this host only, never from Orca's native agent
+# state, which keeps reporting an exited agent as present:
+#   alive      - a verified harness process runs in the terminal.
+#   dead       - only shells do (the terminal is present, the agent is gone).
+#   ambiguous  - something runs that is neither a harness nor a shell.
+#   unverified - the runtime may be on another host, this host has no process
+#                table, or no local process carries the handle.
+#   unreadable - the process table could not be read.
+# `dead` and `missing` license recovery; this slice leaves the control plane
+# refusing exit, relaunch, and reclaim (fm_control_backend_state_verified).
 fm_backend_orca_agent_state() {  # <terminal-id>
   case "$(fm_backend_orca_endpoint_state "$1")" in
-    present) printf 'unverified' ;;
-    missing) printf 'missing' ;;
-    *) printf 'unreadable' ;;
+    present) ;;
+    missing) printf 'missing'; return 0 ;;
+    *) printf 'unreadable'; return 0 ;;
+  esac
+  fm_backend_orca_runtime_is_local || { printf 'unverified'; return 0; }
+  case "$(fm_backend_orca_process_state "$1")" in
+    agent) printf 'alive' ;;
+    shell) printf 'dead' ;;
+    other) printf 'ambiguous' ;;
+    unreadable) printf 'unreadable' ;;
+    *) printf 'unverified' ;;
   esac
 }
 

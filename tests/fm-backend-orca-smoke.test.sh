@@ -512,11 +512,15 @@ O terminal close --terminal "$EP_CLOSE" --json >/dev/null
 EP_STALE=term_00000000-0000-4000-8000-000000000000
 # The adapter and the backend dispatcher, run as the repo's own scripts against the lab runtime
 # (the launcher is first on PATH, and its ORCA_* variables are stripped).
+# An inherited ORCA_ENVIRONMENT, ORCA_PAIRING_CODE, or ORCA_REMOTE_PAIRING would make the
+# adapter treat the runtime as remote (agent state reads unverified), so the lab strips them.
 ep_adapter() {  # <fn> <terminal> [args...]
-  bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source orca; shift; "$@"' _ "$ROOT" "$@"
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $1 and $2 belong to the inner bash
+  env -u ORCA_ENVIRONMENT -u ORCA_PAIRING_CODE -u ORCA_REMOTE_PAIRING \
+    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source orca; shift; "$@"' _ "$ROOT" "$@"
 }
 for kind in LIVE EXIT CLOSE STALE; do
-  case "$kind" in LIVE) h=$EP_LIVE; want_conn=true; want_state=present; want_agent=unverified; want_exists=0 ;;
+  case "$kind" in LIVE) h=$EP_LIVE; want_conn=true; want_state=present; want_agent=dead; want_exists=0 ;;
     EXIT) h=$EP_EXIT; want_conn=false; want_state=missing; want_agent=missing; want_exists=1 ;;
     CLOSE) h=$EP_CLOSE; want_conn=false; want_state=missing; want_agent=missing; want_exists=1 ;;
     STALE) h=$EP_STALE; want_conn=stale; want_state=missing; want_agent=missing; want_exists=1 ;;
@@ -539,7 +543,7 @@ for kind in LIVE EXIT CLOSE STALE; do
   got=$(ep_adapter fm_backend_agent_state orca "$h")
   [ "$got" = "$want_agent" ] || fail "A13 $kind: fm_backend_agent_state was '$got', expected $want_agent"
 done
-ok "A13: the live terminal reads present/unverified; the exited, closed, and never-issued handles read missing, and fm_backend_target_exists follows"
+ok "A13: the live terminal reads present (its idle shell reads dead since slice N2b); the exited, closed, and never-issued handles read missing, and fm_backend_target_exists follows"
 if [ "$(jq -r '.ok' <<<"$(O terminal read --terminal "$EP_EXIT" --limit 1 --json)")" = true ]; then
   observe "premise of the old defect holds on this runtime: terminal read still answers ok:true (status=$(O terminal read --terminal "$EP_EXIT" --limit 1 --json | jq -r '.result.terminal.status')) for an exited terminal, so a read-based presence check calls it present"
 else
@@ -547,6 +551,55 @@ else
 fi
 O terminal close --terminal "$EP_LIVE" --json >/dev/null 2>&1 || true
 O terminal close --terminal "$EP_EXIT" --json >/dev/null 2>&1 || true
+
+# --- assertion 14: the local process classifier (slice N2b) -----------------------------------------------------
+
+section "A14 local process classifier (proves slice N2b: a harness-named binary reads alive, killed it reads dead, a closed terminal reads missing)"
+own
+# A REAL binary whose process name is claude: a copy of sleep, so the classifier sees an ELF process
+# named for a harness rather than a bash script (whose process name is bash). It is typed into the
+# terminal's shell, the way the adapter launches a harness.
+cp "$(command -v sleep)" "$LAB/fake/claude" || fail "A14: cannot create the renamed sleep binary"
+chmod +x "$LAB/fake/claude" || fail "A14: cannot make the renamed sleep binary executable"
+PC_T=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-pc --json | jq -r '.result.terminal.handle // empty')
+[ -n "$PC_T" ] || fail "A14: terminal create returned no handle"
+pc_state() { ep_adapter fm_backend_agent_state orca "$PC_T"; }
+pc_wait_state() {  # <state> [seconds]: poll the adapter until it reads <state>
+  local n=$(( ${2:-10} * 5 ))
+  while [ "$n" -gt 0 ]; do
+    [ "$(pc_state)" = "$1" ] && return 0
+    sleep 0.2; n=$((n - 1))
+  done
+  return 1
+}
+[ "$(pc_state)" = dead ] || fail "A14: a fresh shell-only terminal should read dead, got '$(pc_state)'"
+observe "A14 shell only: scan=$(ep_adapter fm_backend_orca_process_scan "$PC_T" | tr '\n\t' '|/' | cut -c1-200)"
+O terminal send --terminal "$PC_T" --text "$LAB/fake/claude 600" --enter --json >/dev/null
+pc_wait_state alive 10 || fail "A14: the renamed sleep binary named claude never read alive (state '$(pc_state)'; scan: $(ep_adapter fm_backend_orca_process_scan "$PC_T" | tr '\n\t' '|/' | cut -c1-300))"
+PC_ROWS=$(ep_adapter fm_backend_orca_process_scan "$PC_T")
+PC_PID=$(printf '%s\n' "$PC_ROWS" | awk -F'\t' '$2 == "claude" { print $1; exit }')
+[ -n "$PC_PID" ] || fail "A14: the scan listed no process named claude: $PC_ROWS"
+observe "A14 alive: scan=$(printf '%s' "$PC_ROWS" | tr '\n\t' '|/' | cut -c1-300)"
+orca_lab_pid_owned "$PC_PID" "$DATA" || fail "A14: the process named claude (pid $PC_PID) is not provably the lab's"
+rc=0; ep_adapter fm_backend_target_exists orca "$PC_T" fm-test || rc=$?
+[ "$rc" -eq 0 ] || fail "A14: a terminal running the binary should still be present"
+[ "$(ep_adapter fm_backend_agent_alive orca "$PC_T")" = alive ] || fail "A14: fm_backend_agent_alive should be alive while the binary runs"
+# shellcheck disable=SC2016  # the single quotes are deliberate: $1 and $2 belong to the inner bash
+[ "$(env ORCA_ENVIRONMENT=elsewhere bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state orca "$2"' _ "$ROOT" "$PC_T")" = unverified ] \
+  || fail "A14: with a runtime selected through ORCA_ENVIRONMENT the state should be unverified"
+orca_lab_signal KILL "$PC_PID" "$DATA" || fail "A14: could not SIGKILL the lab-owned process named claude"
+pc_wait_state dead 10 || fail "A14: after SIGKILL the terminal never read dead (state '$(pc_state)'; scan: $(ep_adapter fm_backend_orca_process_scan "$PC_T" | tr '\n\t' '|/' | cut -c1-300))"
+observe "A14 dead: scan=$(ep_adapter fm_backend_orca_process_scan "$PC_T" | tr '\n\t' '|/' | cut -c1-200)"
+PC_SHOW=$(O terminal show --terminal "$PC_T" --json)
+observe "A14 native state after SIGKILL: terminal show agentIdentity=$(jq -r '.result.terminal.agentIdentity // "none"' <<<"$PC_SHOW") connected=$(jq -r '.result.terminal.connected' <<<"$PC_SHOW") writable=$(jq -r '.result.terminal.writable' <<<"$PC_SHOW"); worktree ps agents=$(O worktree ps --json | jq -c --arg id "$WT_A_ID" '[.result.worktrees[] | select(.worktreeId == $id) | .agents]')"
+[ "$(jq -r '.result.terminal.connected' <<<"$PC_SHOW")" = true ] || fail "A14: the terminal should still be connected after the agent was killed"
+[ "$(ep_adapter fm_backend_agent_alive orca "$PC_T")" = dead ] || fail "A14: fm_backend_agent_alive should be dead after the SIGKILL"
+rc=0; ep_adapter fm_backend_target_exists orca "$PC_T" fm-test || rc=$?
+[ "$rc" -eq 0 ] || fail "A14: the terminal is still present after the agent was killed"
+own
+O terminal close --terminal "$PC_T" --json >/dev/null
+[ "$(pc_state)" = missing ] || fail "A14: a closed terminal should read missing, got '$(pc_state)'"
+ok "A14: a real binary named claude reads alive, dead after SIGKILL (the terminal stays present), unverified through ORCA_ENVIRONMENT, and missing once the terminal is closed"
 
 # --- assertion 9: close and removal, landed and unmerged branches (slices 3, 10) ------------------------------
 
@@ -669,8 +722,13 @@ BRIEF
   [ "$(fm_backend_orca_repo_ensure "$SCRATCH")" = "$REPO_ID" ] || fail "F: repo_ensure did not return the registered git repo id"
   ok "F: fm_backend_orca_repo_ensure returns the registered id for the git repo"
 
-  # spawn
-  out=$(fm "$ROOT/bin/fm-spawn.sh" "$ID" "$SCRATCH" --mode local-only --yolo off --backend orca --harness 'sh -c cat' 2>&1) \
+  # spawn. The raw harness is a REAL binary named claude (a copy of sleep): since slice N2b
+  # the adapter classifies the processes in a terminal, so a stand-in such as `cat` would read
+  # ambiguous and fm-control would rightly refuse to interrupt it. The terminal's line
+  # discipline still echoes what is typed into it, which the steer and key checks below read.
+  mkdir -p "$LAB/fake"
+  [ -x "$LAB/fake/claude" ] || { cp "$(command -v sleep)" "$LAB/fake/claude" && chmod +x "$LAB/fake/claude"; } || fail "F: cannot create the renamed sleep binary"
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$ID" "$SCRATCH" --mode local-only --yolo off --backend orca --harness "$LAB/fake/claude 3000" 2>&1) \
     || fail "F: fm-spawn --backend orca failed: $out"
   assert_contains "$out" "spawned $ID" "F: spawn did not report success"
   META=$FMHOME/state/$ID.meta
@@ -710,7 +768,7 @@ BRIEF
   sleep 1
   DOORBELL=$(O terminal read --terminal "$TASK_T" --json | jq -r '.result.terminal.tail | join("\n")')
   case "$DOORBELL" in
-    *inbox*|*INBOX*) ok "F: fm-send rang the doorbell into the Orca terminal (an inbox line reached the cat harness)" ;;
+    *inbox*|*INBOX*) ok "F: fm-send rang the doorbell into the Orca terminal (an inbox line reached the task terminal)" ;;
     *) finding "fm-send's doorbell did not appear in the Orca terminal read (tail: $(printf '%s' "$DOORBELL" | tail -2 | tr '\n' '|' | cut -c1-200))" ;;
   esac
 

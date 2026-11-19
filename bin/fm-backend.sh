@@ -1058,13 +1058,18 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # which verifies a registered agent against `pane process-info` and the real
 # process table, so a registration Herdr kept over a shell-only pane reads
 # `dead` here (issue #4115) - then maps a positively stopped session server to
-# `missing` only in this recovery-grade view. The Orca adapter proves endpoint
-# presence only (fm_backend_orca_agent_state): an exited, closed, or unknown
-# terminal is `missing`, a failed or self-contradicting read is `unreadable`, and
-# a present terminal stays `unverified` until a process classifier exists, so it
-# never prints `alive` or `dead`. Zellij remains unverified because its
-# secondmate ghost-tab and agent-process recovery path has not been empirically
-# validated. Orca and cmux do not support secondmate spawns.
+# `missing` only in this recovery-grade view. The Orca adapter reads endpoint
+# presence first (fm_backend_orca_agent_state): an exited, closed, or unknown
+# terminal is `missing` and a failed or self-contradicting read is `unreadable`.
+# For a present terminal it scans the LOCAL process table for the processes that
+# carry the terminal's handle and classifies them with the shared classifier:
+# `alive` for a harness, `dead` for shells only, `ambiguous` for anything else;
+# a runtime that may be on another host, a host with no process table, or a
+# handle no local process carries stays `unverified`, and an unreadable table
+# is `unreadable`. Orca's native agent state is never read as proof, because it
+# keeps reporting an exited agent as present. Zellij remains unverified because
+# its secondmate ghost-tab and agent-process recovery path has not been
+# empirically validated. Orca and cmux do not support secondmate spawns.
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
