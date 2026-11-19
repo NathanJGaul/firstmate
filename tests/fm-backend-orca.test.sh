@@ -2149,12 +2149,9 @@ test_teardown_closes_exactly_the_adopted_listed_terminal() {
   next=$(( $(cat "$RESP/.count") + 1 ))
   printf '{"ok":true,"result":{"worktree":{"id":"wt-%s::/orca/wt-%s","path":"%s"}}}\n' "$c" "$c" "$SPAWN_WT" > "$RESP/$next.out"
   neutral=$(neutral_fm_root "$CASE_DIR/neutral")
-  set +e
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$SPAWN_STATE" FM_DATA_OVERRIDE="$TMP_ROOT/$c-data" FM_CONFIG_OVERRIDE="$TMP_ROOT/$c-config" \
-    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
-  rc=$?
-  set -e
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 ) && rc=0 || rc=$?
   expect_code 0 "$rc" "teardown of an adopted-terminal task should succeed"$'\n'"$out"
   [ "$(orca_log_count terminal close)" = 1 ] || fail "teardown should close exactly one terminal"$'\n'"$(tr '\037' ' ' < "$LOG")"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-listed'$'\x1f''--json' \
