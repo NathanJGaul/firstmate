@@ -2110,6 +2110,29 @@ hook-less agent (no hook events reported)
 Still unobserved: the dialog of a real Claude harness (the fake prints the dialog text only), and `terminal.send-approval-guard.v1`.
 Refresh this section by running the lab as described in its header with `FM_ORCA_LIVE_E2E=1 FM_ORCA_LIVE_SECTIONS=orca` and a pinned `HOME`.
 
+#### Endpoint presence and the `missing` verdict (2026-11-19)
+
+Observed with the same lab on Orca 1.4.261 (`passed=44 findings=5` for a full run, `passed=28 findings=4` for the Orca-level section), run with `HOME` pinned to a throwaway directory and every `ORCA_*` variable stripped.
+`tests/fm-backend-orca.test.sh`, `tests/fm-session-start.test.sh`, and `tests/fm-crew-state.test.sh` prove the verdicts and the callers against fake answers of these shapes; step A13 of the lab proves the real answers.
+
+```text
+terminal show --terminal <h> --json    result.terminal{handle, connected, writable, exitCause, ...}; no status field
+  live shell                           connected=true, writable=true, no exitCause
+  shell that exited (exit)             connected=false, writable=false, exitCause{kind:"exited", exitCode:0}
+  closed terminal                      connected=false, writable=false, exitCause{kind:"operator_close"}
+  handle the runtime never issued      ok:false, error.code=terminal_handle_stale, exit status 1
+terminal read --terminal <h> --json    live: ok:true, status=running; exited and closed: ok:true, status=exited; unknown: terminal_handle_stale
+```
+
+Findings:
+
+- `terminal read` answers `ok:true` for an exited and for a closed terminal, so the previous presence check (a successful tail read) called a dead terminal present, and the session-start digest printed `endpoint: alive` for it.
+  The adapter's presence read is now one `terminal show`: present needs connected and writable, missing is both false or `terminal_handle_stale`, and every other answer is unreadable.
+- Through the repo's own scripts against the lab runtime, `fm_backend_target_exists orca` succeeded for the live terminal only, and `fm_backend_agent_state orca` printed `unverified` for it and `missing` for the exited, closed, and never-issued handles.
+
+Not covered: a terminal on a paired remote runtime (a stale answer from the local runtime for another server's handle), and any process-level classification of a live terminal.
+Refresh this section with the lab commands above.
+
 Not run, and what stays unknown:
 
 - Assertion 11, the browser bridge: the lab runtime reports browser automation unavailable, and a real browser session belongs to the operator's desktop, which the lab must not touch.

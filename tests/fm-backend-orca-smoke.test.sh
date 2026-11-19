@@ -497,6 +497,57 @@ O terminal close --terminal "$TRUST_T" --json >/dev/null 2>&1 || true
 notrun "A12 a started-turn receipt (stages include turn_started): the lab has no agent that starts a turn, so only input_accepted and unsupported receipts are observed; the started shape is taken from the Orca CLI's own documentation"
 O terminal close --terminal "$PLAIN_T" --json >/dev/null 2>&1 || true
 
+# --- assertion 13: endpoint presence and the missing verdict (slice N2a) ----------------------------------------
+
+section "A13 endpoint presence (proves slice N2a: a dead terminal is no longer present)"
+own
+EP_LIVE=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-ep-live --json | jq -r '.result.terminal.handle')
+EP_EXIT=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-ep-exit --json | jq -r '.result.terminal.handle')
+EP_CLOSE=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-ep-close --json | jq -r '.result.terminal.handle')
+[ -n "$EP_LIVE" ] && [ -n "$EP_EXIT" ] && [ -n "$EP_CLOSE" ] || fail "A13: terminal create returned no handle"
+O terminal send --terminal "$EP_EXIT" --text exit --enter --json >/dev/null
+O terminal wait --terminal "$EP_EXIT" --for exit --timeout-ms 10000 --json >/dev/null 2>&1 || true
+own
+O terminal close --terminal "$EP_CLOSE" --json >/dev/null
+EP_STALE=term_00000000-0000-4000-8000-000000000000
+# The adapter and the backend dispatcher, run as the repo's own scripts against the lab runtime
+# (the launcher is first on PATH, and its ORCA_* variables are stripped).
+ep_adapter() {  # <fn> <terminal> [args...]
+  bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source orca; shift; "$@"' _ "$ROOT" "$@"
+}
+for kind in LIVE EXIT CLOSE STALE; do
+  case "$kind" in LIVE) h=$EP_LIVE; want_conn=true; want_state=present; want_agent=unverified; want_exists=0 ;;
+    EXIT) h=$EP_EXIT; want_conn=false; want_state=missing; want_agent=missing; want_exists=1 ;;
+    CLOSE) h=$EP_CLOSE; want_conn=false; want_state=missing; want_agent=missing; want_exists=1 ;;
+    STALE) h=$EP_STALE; want_conn=stale; want_state=missing; want_agent=missing; want_exists=1 ;;
+  esac
+  SHOW=$(O terminal show --terminal "$h" --json 2>/dev/null || true)
+  READ=$(O terminal read --terminal "$h" --limit 1 --json 2>/dev/null || true)
+  if [ "$want_conn" = stale ]; then
+    [ "$(jq -r '.error.code // empty' <<<"$SHOW")" = terminal_handle_stale ] \
+      || fail "A13: terminal show of a handle the runtime never issued did not answer terminal_handle_stale: $SHOW"
+  else
+    [ "$(jq -r '.result.terminal.connected' <<<"$SHOW")" = "$want_conn" ] && [ "$(jq -r '.result.terminal.writable' <<<"$SHOW")" = "$want_conn" ] \
+      || fail "A13 $kind: terminal show did not report connected=writable=$want_conn: $(jq -c '.result.terminal | {connected, writable, exitCause}' <<<"$SHOW")"
+  fi
+  observe "A13 $kind: show=$(jq -c 'if .ok then .result.terminal | {connected, writable, exitCause, status} else {error: .error.code} end' <<<"$SHOW") read=$(jq -c 'if .ok then {ok, status: .result.terminal.status} else {ok, error: .error.code} end' <<<"$READ")"
+  got=$(ep_adapter fm_backend_orca_endpoint_state "$h")
+  [ "$got" = "$want_state" ] || fail "A13 $kind: the adapter's endpoint state was '$got', expected $want_state"
+  rc=0; ep_adapter fm_backend_target_exists orca "$h" fm-test || rc=$?
+  { [ "$want_exists" -eq 0 ] && [ "$rc" -eq 0 ]; } || { [ "$want_exists" -ne 0 ] && [ "$rc" -ne 0 ]; } \
+    || fail "A13 $kind: fm_backend_target_exists returned $rc, expected ${want_exists} (0 means present)"
+  got=$(ep_adapter fm_backend_agent_state orca "$h")
+  [ "$got" = "$want_agent" ] || fail "A13 $kind: fm_backend_agent_state was '$got', expected $want_agent"
+done
+ok "A13: the live terminal reads present/unverified; the exited, closed, and never-issued handles read missing, and fm_backend_target_exists follows"
+if [ "$(jq -r '.ok' <<<"$(O terminal read --terminal "$EP_EXIT" --limit 1 --json)")" = true ]; then
+  observe "premise of the old defect holds on this runtime: terminal read still answers ok:true (status=$(O terminal read --terminal "$EP_EXIT" --limit 1 --json | jq -r '.result.terminal.status')) for an exited terminal, so a read-based presence check calls it present"
+else
+  finding "terminal read no longer answers ok:true for an exited terminal on this runtime; the presence defect's premise changed"
+fi
+O terminal close --terminal "$EP_LIVE" --json >/dev/null 2>&1 || true
+O terminal close --terminal "$EP_EXIT" --json >/dev/null 2>&1 || true
+
 # --- assertion 9: close and removal, landed and unmerged branches (slices 3, 10) ------------------------------
 
 section "A9 close and worktree rm (unblocks slice 3, proves merged slice P1-B)"

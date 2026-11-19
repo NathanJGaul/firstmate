@@ -369,6 +369,70 @@ fm_backend_orca_capture() {  # <terminal-id> <lines>
   fm_backend_orca_json_text "$out"
 }
 
+# fm_backend_orca_endpoint_state: one READ-ONLY presence read of a recorded
+# terminal, printing exactly one of
+#   present    - the runtime answered and the terminal is connected and writable.
+#   missing    - the runtime positively says the terminal is gone: connected and
+#                writable are both false (an exited shell or a closed terminal,
+#                each with an exitCause), or it answers terminal_handle_stale for
+#                a handle it does not know.
+#   unreadable - anything else: no CLI, a stopped runtime, invalid JSON, another
+#                error code, or a record that contradicts itself.
+# It is a single `terminal show`, never a `terminal read`: `read` answers ok:true
+# with status:"exited" for an exited or closed terminal, which is why the old
+# presence check counted a dead terminal as alive, and it also pulls scrollback
+# this check does not need. `show` carries no status field, so a `status` that
+# does appear must agree with the record or the answer is unreadable. Only a
+# positive answer from the runtime proves absence; a failed read never does.
+# The CLI's exit status is ignored on purpose: Orca prints its ok:false JSON and
+# exits 1 for a stale handle, so the JSON decides. The terminal is always named
+# explicitly, so an inherited ORCA_TERMINAL_HANDLE can never redirect the read.
+fm_backend_orca_endpoint_state() {  # <terminal-id>
+  local terminal=$1 out verdict
+  fm_backend_orca_tool_check || { printf 'unreadable'; return 0; }
+  out=$(orca terminal show --terminal "$terminal" --json 2>/dev/null) || true
+  verdict=$(printf '%s' "$out" | node -e '
+const fs = require("fs");
+const want = process.argv[1];
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  process.stdout.write("unreadable");
+  process.exit(0);
+}
+function out(v) { process.stdout.write(v); process.exit(0); }
+if (!data || typeof data !== "object") out("unreadable");
+if (data.ok === false) {
+  out(data.error && data.error.code === "terminal_handle_stale" ? "missing" : "unreadable");
+}
+const t = data.ok === true && data.result ? data.result.terminal : null;
+if (!t || typeof t !== "object" || t.handle !== want) out("unreadable");
+const status = t.status;
+if (t.connected === true && t.writable === true) out(status === undefined || status === "running" ? "present" : "unreadable");
+if (t.connected === false && t.writable === false) out(status === undefined || status === "exited" ? "missing" : "unreadable");
+out("unreadable");
+' "$terminal" 2>/dev/null) || verdict=
+  case "$verdict" in
+    present|missing) printf '%s' "$verdict" ;;
+    *) printf 'unreadable' ;;
+  esac
+}
+
+# fm_backend_orca_agent_state: the recovery-grade verdict for an Orca endpoint
+# (the contract is fm_backend_agent_state's in bin/fm-backend.sh). Endpoint
+# presence is all Orca can prove today: an authoritatively absent terminal is
+# `missing`, a failed or self-contradicting read is `unreadable`, and a present
+# terminal is `unverified` because nothing here yet proves what process runs in
+# it (the process classifier is a later slice), so no `dead` and no `alive`.
+fm_backend_orca_agent_state() {  # <terminal-id>
+  case "$(fm_backend_orca_endpoint_state "$1")" in
+    present) printf 'unverified' ;;
+    missing) printf 'missing' ;;
+    *) printf 'unreadable' ;;
+  esac
+}
+
 fm_backend_orca_json_text() {  # <json>
   printf '%s' "$1" | node -e '
 const fs = require("fs");

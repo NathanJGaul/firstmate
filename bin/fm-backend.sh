@@ -994,8 +994,11 @@ fm_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
 # server as a side effect via fm_backend_herdr_server_ensure - fine for an
 # operation that is about to use the pane, wrong for a passive liveness
 # probe). A gone tmux window or an unqueryable herdr pane (server down, pane
-# closed), missing zellij pane, or unreadable Orca terminal simply fails, which
-# IS "does not exist" for this purpose.
+# closed), missing zellij pane, or Orca terminal that is not connected and
+# writable (exited, closed, unknown, or unreadable) simply fails, which IS
+# "does not exist" for this purpose. Orca reads the terminal's own record
+# (fm_backend_orca_endpoint_state), never a tail read: `terminal read` answers
+# ok:true for an exited or closed terminal.
 # Mirrors fm-crew-state.sh's pane_readable check; exists here as one shared
 # primitive so callers that only need a fast alive/dead read (recovery
 # digests, the session-start fleet digest) do not re-derive it inline.
@@ -1026,7 +1029,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       ;;
     orca)
       fm_backend_source orca || return 1
-      fm_backend_orca_capture "$target" 1 >/dev/null 2>&1
+      [ "$(fm_backend_orca_endpoint_state "$target")" = present ]
       ;;
     cmux)
       fm_backend_source cmux || return 1
@@ -1055,15 +1058,20 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # which verifies a registered agent against `pane process-info` and the real
 # process table, so a registration Herdr kept over a shell-only pane reads
 # `dead` here (issue #4115) - then maps a positively stopped session server to
-# `missing` only in this recovery-grade view. Zellij remains unverified because
-# its secondmate ghost-tab and agent-process recovery path has not been
-# empirically validated. Orca and cmux do not support secondmate spawns.
+# `missing` only in this recovery-grade view. The Orca adapter proves endpoint
+# presence only (fm_backend_orca_agent_state): an exited, closed, or unknown
+# terminal is `missing`, a failed or self-contradicting read is `unreadable`, and
+# a present terminal stays `unverified` until a process classifier exists, so it
+# never prints `alive` or `dead`. Zellij remains unverified because its
+# secondmate ghost-tab and agent-process recovery path has not been empirically
+# validated. Orca and cmux do not support secondmate spawns.
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
   case "$backend" in
     tmux) fm_backend_tmux_agent_state "$target" ;;
     herdr) fm_backend_herdr_agent_state "$target" ;;
+    orca) fm_backend_orca_agent_state "$target" ;;
     *) printf 'unverified' ;;
   esac
 }

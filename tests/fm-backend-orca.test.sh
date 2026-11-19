@@ -1300,7 +1300,11 @@ test_peek_and_crew_state_fail_closed_on_orca_error_json() {
   assert_contains "$out" "state: unknown" "crew-state should not treat an Orca read error as a live endpoint"
   assert_contains "$out" "backend target gone: term-stale" "crew-state should report the stale Orca terminal as gone"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''read'$'\x1f''--terminal'$'\x1f''term-stale' \
-    "fm-peek/fm-crew-state did not read the recorded Orca terminal"
+    "fm-peek did not read the recorded Orca terminal"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''show'$'\x1f''--terminal'$'\x1f''term-stale' \
+    "fm-crew-state did not read the recorded Orca terminal's endpoint record"
+  [ "$(grep -a -c -F $'orca\x1fterminal\x1fshow' "$LOG")" -eq 1 ] \
+    || fail "fm-crew-state should read the Orca endpoint record once, log: $(cat "$LOG")"
   pass "fm-peek/fm-crew-state: Orca read error JSON fails closed"
 }
 
@@ -2755,6 +2759,209 @@ test_fm_send_without_the_capability_is_unchanged() {
 }
 
 
+# --- endpoint presence (specs/008-orca-endpoint-presence) --------------------
+#
+# Real `terminal show` answers recorded in the isolated lab (Orca 1.4.261):
+# a live shell is connected and writable; an exited shell and a closed terminal
+# are neither, with an exitCause; a handle the runtime never issued answers
+# ok:false terminal_handle_stale and exits 1.
+
+es_live() { printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":true,"writable":true,"agentWait":null,"executionHostId":"local"}}}\n' "${1:-term-es}"; }
+es_exited() { printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":false,"writable":false,"exitCause":{"kind":"exited","exitCode":0},"executionHostId":"local"}}}\n' "${1:-term-es}"; }
+es_closed() { printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":false,"writable":false,"exitCause":{"kind":"operator_close"},"executionHostId":"local"}}}\n' "${1:-term-es}"; }
+ES_STALE='{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal_handle_stale","data":{"nextSteps":["Terminal handles belong to the Orca server that issued them."]}}}'
+
+# es_answer <body> [exit]: the fake answers every `terminal show` with it. It
+# also answers `terminal read` the way the real runtime does for the same
+# terminal (ok:true with status running for a live one, ok:true with status
+# exited for an exited or closed one - the answer that made the old presence
+# read call a dead terminal present - and the stale error), so a presence read
+# that still went through `terminal read` is told apart from one that did not.
+es_answer() {
+  local read_body
+  rm -f "$RESP"/by-terminal-show.* "$RESP"/by-terminal-read.*
+  printf '%s\n' "$1" > "$RESP/by-terminal-show.out"
+  [ -z "${2:-}" ] || printf '%s\n' "$2" > "$RESP/by-terminal-show.exit"
+  case "$1" in
+    *'"connected":true'*) read_body='{"ok":true,"result":{"terminal":{"handle":"term-es","status":"running","tail":["idle prompt"]}}}' ;;
+    *'"connected":false'*) read_body='{"ok":true,"result":{"terminal":{"handle":"term-es","status":"exited","tail":[]}}}' ;;
+    *terminal_handle_stale*) read_body=$1 ;;
+    *) read_body='' ;;
+  esac
+  [ -z "$read_body" ] || printf '%s\n' "$read_body" > "$RESP/by-terminal-read.out"
+  [ "${2:-}" != 1 ] || [ -z "$read_body" ] || printf '1\n' > "$RESP/by-terminal-read.exit"
+}
+es_state() {  # <terminal> -> the adapter's endpoint verdict
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_endpoint_state "$1"' "$ROOT" "${1:-term-es}" 2>/dev/null
+}
+es_expect() {  # <label> <expected>
+  local got
+  got=$(es_state term-es)
+  [ "$got" = "$2" ] || fail "endpoint state for $1: expected '$2', got '$got'"
+}
+
+test_endpoint_state_four_states() {
+  orca_case endpoint-four
+  es_answer "$(es_live)"; es_expect "a live terminal" present
+  es_answer "$(es_exited)"; es_expect "an exited shell" missing
+  es_answer "$(es_closed)"; es_expect "a closed terminal" missing
+  es_answer "$ES_STALE" 1; es_expect "a handle the runtime does not know" missing
+  es_answer "$(es_live)" 1; es_expect "a live answer carried with a failing exit status" present
+  pass "fm_backend_orca_endpoint_state: live is present; exited, closed, and stale are missing"
+}
+
+test_endpoint_state_unreadable_matrix() {
+  orca_case endpoint-unreadable
+  es_answer '{"ok":true,"result":{"terminal":{"handle":"term-es","connected":true,"writable":false}}}'
+  es_expect "connected but not writable" unreadable
+  es_answer '{"ok":true,"result":{"terminal":{"handle":"term-es","connected":false,"writable":true}}}'
+  es_expect "writable but not connected" unreadable
+  es_answer "$(es_live term-other)"; es_expect "an answer about another handle" unreadable
+  es_answer '{"ok":true,"result":{"terminal":{"handle":"term-es","connected":true,"writable":true,"status":"exited"}}}'
+  es_expect "a live record contradicted by status exited" unreadable
+  es_answer '{"ok":true,"result":{"terminal":{"handle":"term-es","connected":false,"writable":false,"status":"running"}}}'
+  es_expect "a dead record contradicted by status running" unreadable
+  es_answer '{"ok":false,"error":{"code":"runtime_error","message":"boom"}}' 1; es_expect "another error code" unreadable
+  es_answer '{"ok":false}' 1; es_expect "an error with no code" unreadable
+  es_answer '{"ok":true,"result":{}}'; es_expect "an answer with no terminal record" unreadable
+  es_answer '{"ok":true,"result":{"terminal":{"handle":"term-es"}}}'; es_expect "a record with no connected or writable" unreadable
+  es_answer '{"ok":true,"result":{"terminal":{"handle":"term-es","connected":"true","writable":"true"}}}'
+  es_expect "string booleans" unreadable
+  es_answer 'not json'; es_expect "invalid JSON" unreadable
+  es_answer '' 1; es_expect "empty output and a failing CLI" unreadable
+  pass "fm_backend_orca_endpoint_state: every other answer is unreadable, never missing"
+}
+
+test_endpoint_state_is_one_read_only_call() {
+  local lines
+  orca_case endpoint-one-call
+  es_answer "$(es_live term-es)"
+  es_state term-es >/dev/null
+  lines=$(grep -a -c . "$LOG" || true)
+  [ "$lines" -eq 1 ] || fail "an endpoint read should make exactly one orca call, made $lines: $(cat "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1fterminal\x1fshow\x1f--terminal\x1fterm-es\x1f--json' \
+    "the endpoint read should be one explicit-terminal terminal show"
+  pass "fm_backend_orca_endpoint_state: one read-only terminal show naming the terminal"
+}
+
+test_endpoint_state_without_the_cli_is_unreadable() {
+  local home got
+  orca_case endpoint-no-cli
+  home="$CASE_DIR/home"; mkdir -p "$home"
+  orca_free_path
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  got=$(env -u ORCA_CLI_BIN_DIR HOME="$home" PATH="$ORCA_FREE_PATH_CACHE" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_endpoint_state term-es' "$ROOT" 2>/dev/null)
+  [ "$got" = unreadable ] || fail "with no orca CLI the endpoint read should be unreadable, got '$got'"
+  pass "fm_backend_orca_endpoint_state: no reachable orca CLI is unreadable, not missing"
+}
+
+test_target_exists_reads_the_four_endpoint_states() {
+  local rc
+  te() {  # -> rc of fm_backend_target_exists orca term-es
+    # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+    env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+      bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_exists orca term-es fm-task' "$ROOT"
+  }
+  orca_case target-exists-states
+  es_answer "$(es_live)"; rc=0; te || rc=$?
+  [ "$rc" -eq 0 ] || fail "a live terminal should exist, got rc=$rc"
+  es_answer "$(es_exited)"; rc=0; te || rc=$?
+  [ "$rc" -ne 0 ] || fail "an exited shell must not read as present"
+  es_answer "$(es_closed)"; rc=0; te || rc=$?
+  [ "$rc" -ne 0 ] || fail "a closed terminal must not read as present"
+  es_answer "$ES_STALE" 1; rc=0; te || rc=$?
+  [ "$rc" -ne 0 ] || fail "a stale handle must not read as present"
+  es_answer 'not json'; rc=0; te || rc=$?
+  [ "$rc" -ne 0 ] || fail "an unreadable answer must not read as present"
+  pass "fm_backend_target_exists: Orca presence needs a connected, writable terminal"
+}
+
+test_agent_state_missing_unverified_unreadable() {
+  local got
+  as() {  # <function> -> the backend verdict for term-es
+    # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+    env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+      bash -c '. "$0/bin/fm-backend.sh"; "$1" orca term-es' "$ROOT" "$1" 2>/dev/null
+  }
+  orca_case agent-state-verdicts
+  es_answer "$(es_exited)"
+  got=$(as fm_backend_agent_state); [ "$got" = missing ] || fail "an exited Orca terminal should be missing, got '$got'"
+  got=$(as fm_backend_agent_alive); [ "$got" = dead ] || fail "a missing Orca endpoint should fold to dead, got '$got'"
+  es_answer "$ES_STALE" 1
+  got=$(as fm_backend_agent_state); [ "$got" = missing ] || fail "a stale Orca handle should be missing, got '$got'"
+  es_answer "$(es_closed)"
+  got=$(as fm_backend_agent_state); [ "$got" = missing ] || fail "a closed Orca terminal should be missing, got '$got'"
+  es_answer "$(es_live)"
+  got=$(as fm_backend_agent_state); [ "$got" = unverified ] || fail "a live Orca terminal has no process classifier yet and should be unverified, got '$got'"
+  got=$(as fm_backend_agent_alive); [ "$got" = unknown ] || fail "a live Orca terminal should fold to unknown, got '$got'"
+  es_answer 'not json'
+  got=$(as fm_backend_agent_state); [ "$got" = unreadable ] || fail "an unreadable Orca answer should be unreadable, got '$got'"
+  got=$(as fm_backend_agent_alive); [ "$got" = unknown ] || fail "an unreadable Orca answer should fold to unknown, got '$got'"
+  pass "fm_backend_agent_state: Orca reports missing, unverified, and unreadable"
+}
+
+test_a_missing_orca_endpoint_does_not_unlock_the_control_plane() {
+  local got
+  orca_case control-stays-refused
+  es_answer "$(es_exited)"
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
+  got=$(env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; if fm_control_backend_state_verified orca; then echo verified; else echo refused; fi; fm_backend_agent_state orca term-es' "$ROOT" 2>/dev/null | tr '\n' ' ')
+  [ "$got" = "refused missing" ] || fail "a missing Orca endpoint must leave the stop-proving verbs refused, got '$got'"
+  pass "fm-control-lib: a missing Orca endpoint verdict leaves exit and relaunch refused"
+}
+
+# crew state: the no-run fallback reads Orca presence through target_exists.
+orca_crew_state_case() {  # <case> <terminal>  -> sets CS_STATE CS_NEUTRAL
+  local wt id=orcacspz$RANDOM
+  CS_ID=$id
+  wt="$TMP_ROOT/$1-wt"
+  fm_git_init_commit "$wt"
+  CS_STATE="$TMP_ROOT/$1-state"; mkdir -p "$CS_STATE"
+  fm_write_meta "$CS_STATE/$id.meta" \
+    "window=fm-$id" "endpoint_task_id=$id" "terminal=$2" "worktree=$wt" "project=$wt" "harness=claude" "kind=scout" "backend=orca"
+  touch "$CS_STATE/.last-watcher-beat"
+  orca_case "$1"
+}
+orca_crew_state() {
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$CS_STATE" "$ROOT/bin/fm-crew-state.sh" "$CS_ID" 2>&1
+}
+
+test_crew_state_reports_a_dead_orca_endpoint_gone() {
+  local out
+  orca_crew_state_case crew-state-dead term-es
+  # es_answer also gives the successful tail read that Orca returns for an exited terminal.
+  es_answer "$(es_exited)"
+  out=$(orca_crew_state)
+  assert_contains "$out" "state: unknown" "crew-state should not claim a state for an exited Orca terminal"
+  assert_contains "$out" "backend target gone: term-es" "crew-state should report an exited Orca terminal as gone"
+  es_answer "$(es_closed)"
+  assert_contains "$(orca_crew_state)" "backend target gone: term-es" "crew-state should report a closed Orca terminal as gone"
+  es_answer "$ES_STALE" 1
+  assert_contains "$(orca_crew_state)" "backend target gone: term-es" "crew-state should report a stale Orca handle as gone"
+  es_answer "$(es_live)"
+  out=$(orca_crew_state)
+  assert_not_contains "$out" "backend target gone" "a live Orca terminal must not be reported gone"
+  pass "fm-crew-state: an exited, closed, or stale Orca terminal is gone; a live one is not"
+}
+
+test_crew_state_does_not_call_an_unreadable_orca_endpoint_gone() {
+  local out
+  orca_crew_state_case crew-state-unreadable term-es
+  es_answer 'not json'
+  printf '{"ok":true,"result":{"terminal":{"handle":"term-es","status":"running","tail":["x"]}}}\n' > "$RESP/by-terminal-read.out"
+  out=$(orca_crew_state)
+  assert_contains "$out" "state: unknown" "crew-state should stay unknown for an unreadable Orca answer"
+  assert_contains "$out" "orca endpoint state: unreadable" "crew-state should name the unreadable endpoint state"
+  assert_not_contains "$out" "backend target gone" "an unreadable Orca answer is not proof the terminal is gone"
+  pass "fm-crew-state: an unreadable Orca answer is unreachable, never gone"
+}
+
+
 test_dispatcher_sources_orca_and_routes_primitives
 test_json_get_ignores_undocumented_terminal_id_shapes
 test_worktree_and_terminal_helpers_parse_json
@@ -2816,3 +3023,12 @@ test_fm_send_doorbell_uses_the_receipt_on_orca
 test_fm_send_typed_names_a_gone_terminal
 test_fm_send_typed_names_a_blocked_prompt
 test_fm_send_without_the_capability_is_unchanged
+test_endpoint_state_four_states
+test_endpoint_state_unreadable_matrix
+test_endpoint_state_is_one_read_only_call
+test_endpoint_state_without_the_cli_is_unreadable
+test_target_exists_reads_the_four_endpoint_states
+test_agent_state_missing_unverified_unreadable
+test_a_missing_orca_endpoint_does_not_unlock_the_control_plane
+test_crew_state_reports_a_dead_orca_endpoint_gone
+test_crew_state_does_not_call_an_unreadable_orca_endpoint_gone
