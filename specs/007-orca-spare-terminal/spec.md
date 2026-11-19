@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-19
 
-**Status**: Draft
+**Status**: Implemented
 
 **Input**: Stop each Orca task from ending with two live terminals (slice P1-A of the Orca evaluation plan, re-planned from the live findings of the Linux test lab).
 

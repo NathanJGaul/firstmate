@@ -16,7 +16,7 @@ Method notes:
 
 - `tests/fm-backend-orca.test.sh` has no per-test selector, so each red below was observed by running only the named test function through a scratch wrapper that sources the same file; nothing in the wrapper is committed.
 - The shared fake Orca now answers `terminal list` from keyed files without advancing the numbered response sequence, so every existing numbered case keeps its meaning.
-- One commit per cycle holds the tests and the adapter change together.
+- The three cycles share one commit with the adapter change, so the red evidence lives in this log rather than in separate commits.
 
 ## Cycle 1: U1-U5 the parser reads a usable row of a `terminal list` result
 

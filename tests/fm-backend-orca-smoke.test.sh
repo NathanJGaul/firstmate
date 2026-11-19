@@ -229,14 +229,17 @@ STARTUP=$(jq -c '.result.startupTerminal // empty' <<<"$WT_A")
 EXPLICIT=$(jq -c '.result.terminal // empty' <<<"$WT_A")
 if [ -n "$STARTUP" ]; then observe "worktree create returned result.startupTerminal: $STARTUP"
 elif [ -n "$EXPLICIT" ]; then observe "worktree create returned result.terminal: $EXPLICIT"
-else finding "worktree create (--setup skip --no-parent) returned NEITHER result.startupTerminal NOR result.terminal, so the adapter's startup-terminal adoption has nothing to adopt on this runtime"; fi
+else observe "worktree create (--setup skip --no-parent) returned NEITHER result.startupTerminal NOR result.terminal, so the adapter adopts the terminal Orca already started from terminal list --worktree"; fi
 sleep 1
 TL=$(O terminal list --worktree "id:$WT_A_ID" --json)
 PS=$(O worktree ps --json)
 LIVE=$(jq -r --arg id "$WT_A_ID" '.result.worktrees[] | select(.worktreeId == $id) | .liveTerminalCount' <<<"$PS")
 observe "after worktree create alone: terminal list totalCount=$(jq -r '.result.totalCount' <<<"$TL"), worktree ps liveTerminalCount=$LIVE"
+observe "terminal list result keys: $(jq -c '.result | keys' <<<"$TL"); row keys: $(jq -c '.result.terminals[0] | keys' <<<"$TL")"
+[ "$(jq -r --arg id "$WT_A_ID" '[.result.terminals[] | select(.worktreeId == $id)] | length' <<<"$TL")" = "$LIVE" ] \
+  || fail "A4: terminal list --worktree reported rows that are not all this worktree's (the adapter's adoption relies on that scoping)"
 if [ "$LIVE" -ge 1 ]; then
-  finding "Orca already holds $LIVE live terminal(s) for the new worktree although the create response named none; an adapter that then runs 'terminal create' ends with $((LIVE + 1)) terminals for one task"
+  observe "Orca already holds $LIVE live terminal(s) for the new worktree although the create response named none; the adapter adopts the listed one, so a task ends with exactly one"
 fi
 AUTO_T=$(jq -r '.result.terminals[0].handle // empty' <<<"$TL")
 ok "A4: terminal list --worktree and worktree ps report the live terminal count for the new worktree"
@@ -546,11 +549,10 @@ BRIEF
   NT=$(O terminal list --worktree "id:$TASK_WID" --json | jq -r '.result.totalCount')
   LIVE_AFTER=$(O worktree ps --json | jq -r --arg id "$TASK_WID" '.result.worktrees[] | select(.worktreeId == $id) | .liveTerminalCount')
   observe "after fm-spawn: terminal list totalCount=$NT, worktree ps liveTerminalCount=$LIVE_AFTER, recorded terminal=$TASK_T"
-  if [ "$NT" -gt 1 ]; then
-    finding "after fm-spawn the task worktree holds $NT live terminals, not 1: the startup-terminal adoption (merged slice P1-A) never fires because this runtime's worktree create names no startup terminal, so the adapter's fallback 'terminal create' leaves a spare terminal; the live target is liveTerminalCount=1"
-  else
-    ok "F: after fm-spawn the task worktree holds exactly one live terminal"
-  fi
+  [ "$NT" = 1 ] && [ "$LIVE_AFTER" = 1 ] || fail "F: after fm-spawn the task worktree holds $NT listed and $LIVE_AFTER live terminals, not exactly 1 (a spare terminal leaked)"
+  [ "$(O terminal list --worktree "id:$TASK_WID" --json | jq -r '.result.terminals[0].handle')" = "$TASK_T" ] || fail "F: the one live terminal is not the terminal recorded in the task record ($TASK_T)"
+  ok "F: after fm-spawn the task worktree holds exactly one live terminal, and it is the recorded one (worktree ps liveTerminalCount=1)"
+  observe "the adopted terminal's title: $(O terminal list --worktree "id:$TASK_WID" --json | jq -r '.result.terminals[0].title')"
 
   # peek
   peek=$(fm "$ROOT/bin/fm-peek.sh" "$ID" 40 2>&1) || fail "F: fm-peek failed: $peek"
