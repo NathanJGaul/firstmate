@@ -1942,7 +1942,7 @@ orca repo list --json                           one repository kind=git, one kin
 
 Inside Orca-created task worktrees, `git rev-parse --git-dir` printed `<project>/.git/worktrees/<name>` and `--git-common-dir` printed `<project>/.git`, and `git worktree list` in the project clone listed them, so Orca's command line creates linked git worktrees.
 Claude workspace-trust entries were registered for those worktree paths, so the structural test in `bin/fm-claude-trust.sh` accepts them.
-`orca worktree ps --json` reported `liveTerminalCount=2` for each task worktree and per-agent `state` and `hasLivePty`.
+`orca worktree ps --json` reported `liveTerminalCount=2` for each task worktree (before the spare-terminal fix) and per-agent `state` and `hasLivePty`.
 `orca terminal show --json` carried `agentIdentity` and `agentWait`, and `orca terminal read --json` carried `status` and `source`, so Orca exposes native agent state that Firstmate does not read.
 A repository registered as a folder has no git worktree for that structural test to accept.
 
@@ -2031,7 +2031,7 @@ The first poll of `terminal list --worktree` after `worktree create` already rep
 Findings, where a real shape contradicts what a merged or held slice assumes:
 
 - `worktree create` returns neither `startupTerminal` nor `terminal` on this runtime, although a terminal already exists.
-  Resolved: `fm_backend_orca_worktree_create` adopts that terminal from `terminal list --worktree` (see the spare-terminal result below); before the fix every spawned task ended with two live terminals.
+  Resolved: `fm_backend_orca_worktree_create` adopts that terminal from `terminal list --worktree` (see the spare-terminal result above); before the fix every spawned task ended with two live terminals.
 - `worktree create` under a folder-kind repo succeeds and returns the folder itself, so without the adapter's folder refusal a task would run in the operator's own folder.
 - A command whose name Orca recognizes as an agent has its command line rewritten (`--plugin-dir` is appended), and `agentIdentity` stays set after the agent exits until a later `terminal read` refreshes it, while `worktree ps` `agents[]` stayed empty throughout, so neither proves "no agent".
 - `terminal create` returns `processId`, which was a live lab-owned process: the pid the held agent-state slice listed as not exposed is exposed on create.
