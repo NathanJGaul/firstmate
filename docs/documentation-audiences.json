@@ -1157,6 +1157,46 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/007-orca-delivery-receipts/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/007-orca-delivery-receipts/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
