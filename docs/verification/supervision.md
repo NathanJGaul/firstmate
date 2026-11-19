@@ -506,6 +506,70 @@ The timeout hook trapped `TERM`, backgrounded `sleep 300`, waited, and on `TERM`
 | Control, exit 2 before the timeout | started +2, exited 2 at +12 | `Stop hook feedback` followed by the requested reply |
 | Timeout, exit 2 from the `TERM` handler | started +2, `TERM` and exit 2 at +32 | no `Stop hook feedback` and no reply, still idle at +111 |
 
+### Claude Code Code Mode, 2026-11-19
+
+This supports the Code Mode statements in `harness/claude.md`, `turnend-guard.md`, and `cd-guard.md`.
+It was measured on Claude Code 2.1.328 (native build, release manifest signature and binary checksum verified) in a hermetic lab: `env -i`, a scratch `HOME` and `CLAUDE_CONFIG_DIR`, `DISABLE_UPDATES=1`, a private tmux socket, a throwaway login, and Haiku 5.5, with no change to the operator's `~/.claude`.
+The operator's installed client reported `2.1.316 (Claude Code)` throughout and was not upgraded.
+The lab drove the interactive TUI under tmux, because `-p` does not run Code Mode.
+Its scripts were discarded with the scout's worktree; the commands and outputs that support the current guarantees follow.
+
+Start and version floor:
+
+```text
+CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude --model haiku --dangerously-skip-permissions
+Version:           2.1.328
+Code Mode:         on (experimental) · CLAUDE_CODE_EXPERIMENTAL_CODE_MODE in the shell environment
+```
+
+On 2.1.316 the same variable started a normal session with no banner and no `Code Mode` line in `/status`.
+With `-p` and the variable set, the session ran as ordinary print mode (`{"result":"OK6P","num_turns":1}`).
+On a fresh config directory the first Code Mode launch asked for confirmation with the cursor on "No, start without it".
+Enter declined, nothing was recorded, and the next launch asked again; accepting stores `codeModeCaveatsAcceptedV1` in the config directory's `.claude.json`.
+`bin/fm-spawn.sh` printed `spawned` while a worker sat on that dialog.
+
+Hook failure, one `PreToolUse` `Bash` command hook under `--setting-sources user,local`, one `echo` call:
+
+| Hook | Code Mode off, 2.1.328 | Code Mode on, 2.1.328 |
+| --- | --- | --- |
+| command cannot start (`/nonexistent/hook.sh`, status 127) | ran, non-blocking notice | refused: `the hook failed, so this call was not run` |
+| timeout (`sleep 8` with `timeout: 2`) | ran | refused: `the hook did not finish, so this call was not run` |
+| exits 1 | ran | ran |
+| exits 2 with stderr | not measured | blocks (`blocked-by-hook`) |
+| status 127 with `"onFailure":"continue"` | not measured | ran |
+| timeout with `"onFailure":"continue"` | not measured | ran |
+
+The 2.1.316 column of the same lab ran the status 127 and timeout cases to completion as well.
+The tracked PreToolUse commands set no `timeout`, and a missing or non-executable script is exactly the 126 or 127 case; `tests/fm-cd-pretool-check.test.sh` pins that shape portably.
+
+The cwd wrapper, one code block printing `pwd` in sequence:
+
+```text
+a plain                 /.../runs/cwdtest
+b with .cwd("sub")      /.../runs/cwdtest/sub
+c plain, afterwards     /.../runs/cwdtest          <- the wrapper did not persist
+d tools.Bash cd sub     /.../runs/cwdtest/sub
+e plain, afterwards     /.../runs/cwdtest/sub      <- an explicit cd persisted
+```
+
+`` $`pwd`.cwd('projects') `` reached the hooks as `cd 'projects' && pwd` and was denied `[persistent-cd]`; `tools.Bash({command:'(cd projects && pwd)'})` and `git -C projects status` ran.
+The hooks cannot tell the wrapper from a model-written persistent `cd` by command text or call id alone, which is why `cd-guard.md` teaches instead of exempting.
+
+Resume:
+
+| Case | Result |
+| --- | --- |
+| Code Mode session, `claude --continue` with the variable | resumes |
+| Code Mode session, `claude --continue` without the variable | refuses: `This session was started in Code Mode (experimental), which is off, so it can't be resumed.`, exit 1 |
+| plain session, `--continue` with the variable | resumes without Code Mode |
+| `-p --resume <Code Mode session id>` | refuses: it only works in the interactive terminal |
+
+Stop, rewake, and session start in the same lab: the `Stop` hook fired at the end of a Code Mode turn, its `asyncRewake` exit-2 banner woke the session as `Stop hook feedback`, and `SessionStart` fired for `startup`, `clear`, and `compact` with the digest reaching context.
+The real watcher and real wake records were not exercised there, and a TUI-driven live end-to-end test for Code Mode does not exist yet.
+
+Not verified: Grok 1.0.77, Cursor, and pi-code loading `.claude/settings.json` with the new `onFailure` field.
+The Grok probe could not run because the installed Grok was not signed in, so unknown-field tolerance in those loaders rests on their documented Claude-compatible loading and is unconfirmed.
+
 ## Watcher continuity
 
 The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-09-21, all against isolated project and home state.
