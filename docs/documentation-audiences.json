@@ -1501,6 +1501,42 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/009-orca-branch-at-create/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/009-orca-branch-at-create/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     },
