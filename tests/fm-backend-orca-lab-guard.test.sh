@@ -208,18 +208,109 @@ cat > "$FAKE_NODE" <<'SH'
 #!/usr/bin/env bash
 env | grep '^ORCA_' | sort
 printf 'NODE_OPTIONS=%s\n' "${NODE_OPTIONS-unset}"
+printf 'HOME=%s\n' "${HOME-unset}"
+for v in CODEX_HOME CLAUDE_CONFIG_DIR OPENCODE_CONFIG_DIR PI_CODING_AGENT_DIR XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME; do
+  printf 'PTR:%s=%s\n' "$v" "${!v-unset}"
+done
 printf 'ARGS:'; printf ' [%s]' "$@"; printf '\n'
 SH
 chmod +x "$FAKE_NODE"
-orca_lab_write_launcher "$LAB/bin" "$LAB_DATA" "$FAKE_NODE" "$LAB/cli entry/index.js" || fail "A5: writing the launcher must succeed"
+LAB_HOME="$LAB/home"; mkdir -p "$LAB_HOME"
+orca_lab_write_launcher "$LAB/bin" "$LAB_DATA" "$FAKE_NODE" "$LAB/cli entry/index.js" "$LAB_HOME" || fail "A5: writing the launcher must succeed"
 [ -x "$LAB/bin/orca" ] || fail "A5: the launcher must be executable"
 launched=$(ORCA_USER_DATA_PATH="$HOME/.orca" ORCA_ENVIRONMENT=operator-env ORCA_PAIRING_CODE=pair ORCA_TERMINAL_HANDLE=term_live \
-  ORCA_AGENT_HOOK_PORT=1 NODE_OPTIONS=--inspect "$LAB/bin/orca" worktree create --name 'fm-test x' 2>&1)
+  ORCA_AGENT_HOOK_PORT=1 NODE_OPTIONS=--inspect CODEX_HOME="$HOME/.codex" CLAUDE_CONFIG_DIR="$HOME/.claude" OPENCODE_CONFIG_DIR="$HOME/.config/opencode" \
+  PI_CODING_AGENT_DIR="$HOME/.pi" XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache" \
+  "$LAB/bin/orca" worktree create --name 'fm-test x' 2>&1)
 orca_lines=$(printf '%s\n' "$launched" | grep '^ORCA_')
 assert_equals "ORCA_USER_DATA_PATH=$LAB_DATA" "$orca_lines" "U10: the only ORCA_ variable the CLI receives is the lab data directory"
 assert_contains "$launched" "NODE_OPTIONS=unset" "U10: NODE_OPTIONS is not passed on"
 assert_contains "$launched" "ARGS: [$LAB/cli entry/index.js] [worktree] [create] [--name] [fm-test x]" "A5: the CLI entry and the arguments pass through intact"
 pass "A5/U10: the launcher runs the CLI on the lab data directory with no other Orca variable"
+
+assert_contains "$launched" "HOME=$LAB_HOME" "L1: the CLI runs with the lab home, not the operator's HOME"
+assert_not_contains "$launched" "HOME=$HOME"$'\n' "L1: the operator's HOME never reaches the CLI"
+for v in CODEX_HOME CLAUDE_CONFIG_DIR OPENCODE_CONFIG_DIR PI_CODING_AGENT_DIR XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME; do
+  assert_contains "$launched" "PTR:$v=unset" "L1: $v is removed before the CLI runs"
+done
+pass "L1: the launcher pins HOME to the lab home and drops every agent-config pointer"
+
+# --- L1: an unpinned or unsafe home is refused and nothing is written --------------
+
+home_refused() {  # <label> <home...>: write_launcher with the given fifth argument(s)
+  local label=$1 dir out
+  shift
+  dir="$TMP_ROOT/home-refusal-$RANDOM"
+  mkdir -p "$dir"
+  out=$(orca_lab_write_launcher "$dir/bin" "$LAB_DATA" "$FAKE_NODE" "$LAB/cli entry/index.js" "$@" 2>&1) && fail "$label: the launcher write must be refused"
+  assert_contains "$out" "refus" "$label: the refusal says so"
+  [ ! -e "$dir/bin/orca" ] || fail "$label: a refused launcher write must not leave a launcher"
+}
+mkdir -p "$HOME/.claude" "$HOME/.codex/sessions" "$HOME/.config/opencode"
+home_refused "L1 no home argument"
+home_refused "L1 an empty home" ""
+home_refused "L1 the operator's HOME" "$HOME"
+home_refused "L1 a directory containing the operator's HOME" "$(dirname "$HOME")"
+home_refused "L1 the filesystem root" "/"
+home_refused "L1 ~/.claude" "$HOME/.claude"
+home_refused "L1 inside ~/.codex" "$HOME/.codex/sessions/lab"
+home_refused "L1 ~/.config/opencode" "$HOME/.config/opencode"
+home_refused "L1 ~/.orca" "$HOME/.orca"
+ln -s "$HOME/.claude" "$TMP_ROOT/home-link-claude"
+home_refused "L1 a symlink to ~/.claude" "$TMP_ROOT/home-link-claude"
+mkdir -p "$TMP_ROOT/used-home/.claude"
+home_refused "L1 a home that already holds agent config" "$TMP_ROOT/used-home"
+# The operator-HOME rule must hold on its own, not only because a real HOME is
+# never empty: with an empty operator HOME the freshness rule cannot refuse it.
+mkdir -p "$TMP_ROOT/empty-operator-home"
+err=$(HOME="$TMP_ROOT/empty-operator-home" orca_lab_validate_home "$TMP_ROOT/empty-operator-home" 2>&1) && fail "L1: an empty directory that is the operator's HOME must be refused as the lab home"
+assert_contains "$err" "operator's HOME" "L1: the refusal names the operator's HOME rule"
+# shellcheck disable=SC2016  # the single quotes are deliberate: the child shell expands them
+err=$(env -u HOME bash -c '. "$1"; orca_lab_validate_home "$2"' _ "$ROOT/tests/orca-lab-safety.sh" "$TMP_ROOT/fresh-unset-home" 2>&1) && fail "L1: an unset caller HOME must be refused"
+assert_contains "$err" "HOME is unset" "L1: the refusal says the caller's HOME is unset"
+mkdir -p "$TMP_ROOT/fresh-home"
+dir="$TMP_ROOT/home-accepted"
+orca_lab_write_launcher "$dir/bin" "$LAB_DATA" "$FAKE_NODE" "$LAB/cli entry/index.js" "$TMP_ROOT/fresh-home" || fail "L1: a fresh home outside the agent directories must be accepted"
+[ -x "$dir/bin/orca" ] || fail "L1: the accepted launcher must exist"
+pass "L1: the launcher write refuses a missing, empty, operator, containing, agent-config, Orca, linked, or used home and writes nothing"
+
+# --- L1: the runtime PATH holds no real agent -------------------------------------
+
+assert_equals "$LAB/bin:/usr/bin:/bin" "$(orca_lab_runtime_path "$LAB/bin")" "L1: the runtime PATH is the lab bin plus /usr/bin:/bin"
+orca_lab_runtime_path "" >/dev/null 2>&1 && fail "L1: an empty lab bin must be refused"
+orca_lab_assert_path_agent_free "$(orca_lab_runtime_path "$LAB/bin")" >/dev/null 2>&1 || fail "L1: the built runtime PATH must pass the agent-free check on this host"
+mkdir -p "$TMP_ROOT/agentbin" "$TMP_ROOT/cleanbin"
+: > "$TMP_ROOT/cleanbin/tool"; chmod +x "$TMP_ROOT/cleanbin/tool"
+orca_lab_assert_path_agent_free "$TMP_ROOT/cleanbin:/usr/bin:/bin" >/dev/null 2>&1 || fail "L1: a PATH with no agent must pass"
+for agent in claude codex opencode pi grok kimi gemini copilot cursor-agent omp; do
+  printf '#!/bin/sh\n' > "$TMP_ROOT/agentbin/$agent"; chmod +x "$TMP_ROOT/agentbin/$agent"
+  err=$(orca_lab_assert_path_agent_free "$TMP_ROOT/cleanbin:$TMP_ROOT/agentbin:/usr/bin" 2>&1) && fail "L1: a PATH reaching $agent must be refused"
+  assert_contains "$err" "$agent" "L1: the refusal names $agent"
+  assert_contains "$err" "$TMP_ROOT/agentbin" "L1: the refusal names the directory holding $agent"
+  rm -f "$TMP_ROOT/agentbin/$agent"
+done
+printf 'not executable\n' > "$TMP_ROOT/agentbin/codex"
+orca_lab_assert_path_agent_free "$TMP_ROOT/agentbin:/usr/bin" >/dev/null 2>&1 || fail "L1: a non-executable file named for an agent is not reachable and must pass"
+for bad in "" ":/usr/bin" "/usr/bin::/bin" "/usr/bin:" "relative/bin:/usr/bin" ".:/usr/bin"; do
+  err=$(orca_lab_assert_path_agent_free "$bad" 2>&1) && fail "L1: the PATH '$bad' must be refused"
+  assert_contains "$err" "refus" "L1: the refusal for '$bad' says so"
+done
+pass "L1: the runtime PATH is built from the lab bin and the system directories, and a PATH that reaches an agent or the working directory is refused"
+
+# --- L1: hook config paths must lie inside the lab home ------------------------------
+
+HJ_OK=$(jq -nc --arg h "$LAB_HOME" '{result:{agents:[{agent:"claude",configPath:($h+"/.claude/settings.json")},{agent:"codex",configPath:($h+"/.codex/hooks.json")},{agent:"pi"}]}}')
+orca_lab_paths_under_home "$LAB_HOME" "$HJ_OK" >/dev/null 2>&1 || fail "L1: config paths inside the lab home must pass"
+HJ_BAD=$(jq -nc --arg h "$LAB_HOME" --arg o "$HOME" '{result:{agents:[{agent:"claude",configPath:($h+"/.claude/settings.json")},{agent:"codex",configPath:($o+"/.codex/hooks.json")}]}}')
+err=$(orca_lab_paths_under_home "$LAB_HOME" "$HJ_BAD" 2>&1) && fail "L1: a config path in the operator's HOME must be refused"
+assert_contains "$err" "$HOME/.codex/hooks.json" "L1: the refusal names the offending path"
+HJ_SIB=$(jq -nc --arg h "$LAB_HOME" '{result:{agents:[{agent:"claude",configPath:($h+"-evil/settings.json")}]}}')
+orca_lab_paths_under_home "$LAB_HOME" "$HJ_SIB" >/dev/null 2>&1 && fail "L1: a sibling directory sharing the home's name prefix is not inside it"
+orca_lab_paths_under_home "$LAB_HOME" '{"result":{"agents":[]}}' >/dev/null 2>&1 && fail "L1: a report naming no config path proves nothing and must be refused"
+orca_lab_paths_under_home "$LAB_HOME" 'not json' >/dev/null 2>&1 && fail "L1: an unparsable report must be refused"
+orca_lab_paths_under_home "" "$HJ_OK" >/dev/null 2>&1 && fail "L1: an empty home must be refused"
+pass "L1: the hook config path check accepts only paths inside the lab home"
+
 
 # --- A6 / U11: stop terminates the lab's processes and only those -------------------
 
