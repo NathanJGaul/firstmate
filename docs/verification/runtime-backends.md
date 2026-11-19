@@ -2088,6 +2088,28 @@ Firstmate-level checks, all against the lab runtime:
 Still unobserved: a `turn_started` stage, because no agent in the lab starts a turn; that stage is taken from the Orca command line's own documentation and is covered by fake receipts only.
 Refresh this section with the lab commands above.
 
+#### Parked prompts and hook-less agents (2026-11-19)
+
+Observed with the Orca-level section of the same lab (`FM_ORCA_LIVE_SECTIONS=orca`, `HOME` pinned to a fresh directory, the runtime discovered from the operator's shim read-only), on the 1.4.261 runtime.
+`tests/fm-backend-orca.test.sh` and `tests/fm-task-inbox.test.sh` prove the class, the verdict, and the ring mapping against fake receipts shaped like the answers below; step A12 in `tests/fm-backend-orca-smoke.test.sh` is the live proof.
+
+```text
+terminal send --text 1 --enter --wait-submit 1   to a fake named claude that printed the workspace-trust dialog and waits
+  ok:false, error.code=agent_prompt_blocked, nonzero exit status
+  message: "agent_prompt_blocked The agent is showing a permission or trust prompt; to answer it, send --text and --enter as separate commands. Terminal prompt request ID: <id>. Re-issue the exact command with --retry-request <id> --wait-submit <seconds>; do not retry it without that ID."
+  the fake's terminal showed no "dialog got:" line afterwards: nothing was typed
+hook-less agent (no hook events reported)
+  result.send.accepted=true, prompt{stages=["input_accepted"], provider=claude, observation=supported, requestId}, a warning in result.warnings[]
+```
+
+- `fm_backend_orca_send_text_submit` against the parked dialog printed `prompt-blocked`, exited 1, and named the terminal, `agent_prompt_blocked`, the permission or trust prompt, and that nothing was delivered.
+- The adapter does not follow the runtime's advice to send the text and Enter separately: that would type into the dialog and press its default choice.
+- The doorbell ring maps `prompt-blocked` to a failed ring (2), not a gone endpoint (3), so the watcher's bounded re-ring still applies.
+- A hook-less answer is read as `accepted` (supported, with a request id), so it is replayed by id and finishes on the composer check; the warning changes nothing.
+
+Still unobserved: the dialog of a real Claude harness (the fake prints the dialog text only), and `terminal.send-approval-guard.v1`.
+Refresh this section by running the lab as described in its header with `FM_ORCA_LIVE_E2E=1 FM_ORCA_LIVE_SECTIONS=orca` and a pinned `HOME`.
+
 Not run, and what stays unknown:
 
 - Assertion 11, the browser bridge: the lab runtime reports browser automation unavailable, and a real browser session belongs to the operator's desktop, which the lab must not touch.
