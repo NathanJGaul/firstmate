@@ -1245,6 +1245,42 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/008-orca-lab-hardening/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/008-orca-lab-hardening/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
