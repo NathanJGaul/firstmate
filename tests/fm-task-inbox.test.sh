@@ -365,6 +365,29 @@ test_ring_keeps_other_orca_failures_as_failed_rings() {
   pass "inbox: the ring keeps a failed Orca send as 2 and a started receipt as 0"
 }
 
+# A refusal because the agent is parked on a permission or trust prompt is a
+# failed ring (2), never a gone endpoint (3): the watcher's bounded re-ring still
+# applies, nothing was typed, and the ring names the cause on stderr.
+test_ring_reports_a_blocked_orca_prompt_as_a_failed_ring() {
+  local dir state rec rc err blocked
+  dir="$TMP_ROOT/ring-orca-blocked"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_orca_ring_fake "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  blocked='{"ok":false,"error":{"code":"agent_prompt_blocked","message":"The agent is showing a permission or trust prompt. Terminal prompt request ID: r4."}}'
+  rc=0; orca_ring "$dir" "$state" "$rec" "$blocked" 1 2>"$dir/err" || rc=$?
+  err=$(cat "$dir/err")
+  [ "$rc" = 2 ] || fail "a parked Orca prompt should return 2 from the ring, got $rc"
+  case "$err" in *"permission or trust prompt"*) ;; *) fail "the ring must name the blocked prompt on stderr, got: $err" ;; esac
+  [ "$(grep -c '^terminal send' "$dir/orca.log")" = 1 ] || fail "a parked prompt must be tried once, not re-rung:"$'\n'"$(cat "$dir/orca.log")"
+  [ -f "$rec" ] || fail "a blocked prompt must leave the durable record in place"
+  # The same verdict with an exit 0 is still a failed ring: nothing was delivered.
+  rc=0; orca_ring "$dir" "$state" "$rec" "$blocked" 0 2>/dev/null || rc=$?
+  [ "$rc" = 2 ] || fail "a blocked prompt must never read as a rung doorbell, got $rc"
+  pass "inbox: the ring reports a parked Orca prompt as a failed ring (2), names it, and sends once"
+}
+
 # A fake tmux whose pane is a Claude-style composer that keeps its content in
 # FM_FAKE_COMPOSER: literal input appends to it, capture renders it wrapped
 # between rules, and Enter submits it (logged as SUBMIT) unless
@@ -1255,6 +1278,7 @@ test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_reports_a_gone_orca_terminal_as_gone
 test_ring_keeps_other_orca_failures_as_failed_rings
+test_ring_reports_a_blocked_orca_prompt_as_a_failed_ring
 test_ring_submits_its_own_stuck_doorbell
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack

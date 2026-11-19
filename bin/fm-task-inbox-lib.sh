@@ -440,7 +440,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # failed, 3 the endpoint is positively dead or missing (nothing typed; recovery
 # owns the record), whether the liveness pre-check said so or the backend's send
 # answered that the terminal cannot take input (Orca's terminal-gone, from its
-# delivery receipts). No return value is delivery proof; the
+# delivery receipts). An Orca agent parked on a permission or trust prompt
+# (verdict prompt-blocked) is a failed ring, 2, not a dead endpoint: nothing was
+# typed, the stderr line names the prompt, and the watcher's bounded re-ring still
+# applies. No return value is delivery proof; the
 # acknowledgement move is the only delivery signal.
 # The skip is deliberately narrow: only an exact `pending` verdict can defer,
 # because there our Enter could submit someone's real half-typed content.
@@ -483,6 +486,10 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # terminal-gone, printed with a nonzero exit) is gone like a dead agent, so
   # the watcher escalates it directly instead of ringing it again.
   [ "$verdict" != terminal-gone ] || return 3
+  if [ "$verdict" = prompt-blocked ]; then
+    echo "fm-task-inbox: doorbell not typed: the agent in $target is showing a permission or trust prompt; it needs an answer first" >&2
+    return 2
+  fi
   [ "$rc" -eq 0 ] || return 2
   # The verdict is read only to report a failed keystroke; every other value
   # (empty, pending, unknown, ...) is deliberately ignored, never proof.

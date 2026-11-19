@@ -2236,6 +2236,12 @@ rc_prompt() {  # <request-id> <stages-json> <provider> <observation> [replayed]
 rc_started() { rc_prompt "$1" '["input_accepted","turn_started"]' claude supported "${2:-false}"; }
 rc_accepted() { rc_prompt "$1" '["input_accepted"]' claude supported "${2:-false}"; }
 rc_unsupported() { rc_prompt "$1" '["input_accepted"]' unsupported unsupported; }
+rc_blocked() {  # <request-id> (the runtime's refusal while a permission or trust prompt is showing)
+  printf '{"ok":false,"error":{"code":"agent_prompt_blocked","message":"The agent is showing a permission or trust prompt; to answer it, send --text and --enter as separate commands. Terminal prompt request ID: %s. Re-issue the exact command with --retry-request %s; do not retry it without that ID."}}\n' "$1" "$1"
+}
+rc_hookless() {  # <request-id> (accepted by a recognized agent with no hook events: a warning, no turn_started)
+  printf '{"ok":true,"result":{"send":{"handle":"term-123","accepted":true,"bytesWritten":13,"prompt":{"requestId":"%s","stages":["input_accepted"],"provider":"claude","observation":"supported"}},"mutation":{"requestId":"%s","replayed":false},"warnings":["no turn start was observed; replay with --retry-request %s --wait-submit <seconds>"]}}\n' "$1" "$1" "$1"
+}
 rc_gone() {  # <request-id>
   printf '{"ok":false,"error":{"code":"terminal_not_writable","message":"terminal_not_writable Terminal prompt request ID: %s. Re-issue the exact command with --retry-request %s --wait-submit <seconds>; do not retry it without that ID."}}\n' "$1" "$1"
 }
@@ -2294,6 +2300,8 @@ test_receipt_class_matrix() {
   expect "accepted with no prompt object" '{"ok":true,"result":{"send":{"handle":"t","accepted":true}}}' $'unsupported\t'
   expect "input not accepted" '{"ok":true,"result":{"send":{"handle":"t","accepted":false,"bytesWritten":0}}}' $'failed\tnot-accepted'
   expect "a closed or exited terminal" "$(rc_gone req-4)" $'gone\tterminal_not_writable'
+  expect "a parked permission or trust prompt" "$(rc_blocked req-5)" $'blocked\tagent_prompt_blocked'
+  expect "a hook-less agent that accepted input with a warning" "$(rc_hookless req-6)" $'accepted\treq-6'
   expect "an unknown handle" '{"ok":false,"error":{"code":"terminal_handle_stale","message":"stale"}}' $'gone\tterminal_handle_stale'
   expect "another runtime error" '{"ok":false,"error":{"code":"runtime_error","message":"boom"}}' $'failed\truntime_error'
   expect "invalid JSON" 'not json' $'failed\tinvalid-json'
@@ -2430,6 +2438,51 @@ test_receipt_other_failures_stay_send_failed() {
   pass "fm_backend_orca_send_text_submit: every failure other than a gone terminal stays send-failed"
 }
 
+test_receipt_blocked_prompt_is_prompt_blocked() {
+  orca_case rc-blocked
+  rc_blocked req-7 > "$RESP/1.out"
+  printf '1\n' > "$RESP/1.exit"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = prompt-blocked ] || fail "a parked permission or trust prompt should report prompt-blocked, got '$OUT'"
+  [ "$RC" -eq 1 ] || fail "prompt-blocked must exit 1 so every caller reads a failed send, got $RC"
+  assert_contains "$ERR" term-123 "the failure must name the terminal"
+  assert_contains "$ERR" agent_prompt_blocked "the failure must carry the runtime's code"
+  assert_contains "$ERR" "permission or trust prompt" "the failure must name the blocked prompt"
+  assert_contains "$ERR" "nothing was delivered" "the failure must say nothing was delivered"
+  assert_not_contains "$ERR" "is gone" "a parked prompt is not a dead terminal"
+  [ "$(orca_all_sends)" -eq 1 ] || fail "a blocked prompt is not retried, got $(orca_all_sends) sends"
+  [ "$(orca_replay_count)" -eq 0 ] || fail "a blocked prompt must not be replayed"
+  [ "$(orca_enter_only_count)" -eq 0 ] || fail "an Enter must never be sent into a parked prompt"
+  pass "fm_backend_orca_send_text_submit: a parked prompt prints prompt-blocked, exits 1, names it, and sends exactly once"
+}
+
+test_receipt_blocked_replay_is_prompt_blocked() {
+  orca_case rc-blocked-replay
+  rc_accepted req-1 > "$RESP/1.out"
+  rc_blocked req-1 > "$RESP/2.out"
+  printf '1\n' > "$RESP/2.exit"
+  receipt_run term-123 "hello captain" 3
+  [ "$OUT" = prompt-blocked ] || fail "a replay refused by a parked prompt should report prompt-blocked, got '$OUT'"
+  [ "$RC" -eq 1 ] || fail "prompt-blocked must exit 1, got $RC"
+  [ "$(orca_all_sends)" -eq 2 ] || fail "the send and its one replay only, got $(orca_all_sends)"
+  [ "$(orca_enter_only_count)" -eq 0 ] || fail "an Enter must never be sent into a parked prompt"
+  pass "fm_backend_orca_send_text_submit: a replay refused by a parked prompt ends on prompt-blocked with nothing further typed"
+}
+
+test_receipt_hookless_accepted_is_replayed_by_id() {
+  orca_case rc-hookless
+  rc_hookless req-1 > "$RESP/1.out"
+  rc_hookless req-1 > "$RESP/2.out"
+  printf '%s\n' "$COMPOSER_EMPTY" > "$RESP/3.out"
+  receipt_run term-123 "hello captain" 2
+  [ "$OUT" = empty ] || fail "a hook-less accepted send that left the composer should report empty, got '$OUT'"
+  [ "$RC" -eq 0 ] || fail "a hook-less accepted send is not a failure, got $RC"
+  [ "$(orca_replay_count)" -eq 1 ] || fail "a hook-less accepted receipt is replayed once by id, got $(orca_replay_count)"
+  [ "$(orca_all_sends)" -eq 2 ] || fail "the send and its one replay only, got $(orca_all_sends)"
+  assert_contains "$(orca_sends)" $'--retry-request\x1freq-1' "the replay must carry the first receipt's id"
+  pass "fm_backend_orca_send_text_submit: a hook-less send that Orca accepted with a warning is an accepted delivery, replayed by id"
+}
+
 test_receipt_wait_window_is_tunable() {
   orca_case rc-wait
   rc_started req-1 > "$RESP/1.out"
@@ -2534,6 +2587,21 @@ test_fm_send_typed_names_a_gone_terminal() {
   pass "fm-send (typed): a gone Orca terminal fails with an error that names the terminal and says nothing was delivered"
 }
 
+test_fm_send_typed_names_a_blocked_prompt() {
+  orca_fm_send_case send-typed-blocked
+  rc_blocked req-1 > "$RESP/by-terminal-send.out"
+  printf '1\n' > "$RESP/by-terminal-send.exit"
+  orca_fm_send "/compact"
+  [ "$SEND_RC" -ne 0 ] || fail "a typed send to a parked prompt must fail"
+  assert_contains "$SEND_OUT" "term-io" "the error must name the terminal"
+  assert_contains "$SEND_OUT" "permission or trust prompt" "the error must name the blocked prompt"
+  assert_contains "$SEND_OUT" "nothing was delivered" "the error must say nothing was delivered"
+  assert_not_contains "$SEND_OUT" "is gone" "a parked prompt is not a gone terminal"
+  assert_not_contains "$SEND_OUT" "delivery unconfirmed" "a refused send is not an unconfirmed delivery"
+  [ "$(orca_all_sends)" -eq 1 ] || fail "a parked prompt gets one send and nothing more, got $(orca_all_sends)"
+  pass "fm-send (typed): a parked Orca prompt fails with an error that names the prompt and says nothing was delivered"
+}
+
 test_fm_send_without_the_capability_is_unchanged() {
   orca_fm_send_case send-typed-nocaps
   printf '%s\n' "$ACCEPT_OK" > "$RESP/by-terminal-send.out"
@@ -2599,10 +2667,14 @@ test_receipt_exhausted_with_unreadable_composer_is_pending
 test_receipt_unsupported_falls_back_to_the_composer
 test_receipt_gone_terminal_is_terminal_gone
 test_receipt_other_failures_stay_send_failed
+test_receipt_blocked_prompt_is_prompt_blocked
+test_receipt_blocked_replay_is_prompt_blocked
+test_receipt_hookless_accepted_is_replayed_by_id
 test_receipt_wait_window_is_tunable
 test_receipt_text_is_one_argument
 test_failed_status_read_selects_the_current_path
 test_fm_send_typed_uses_the_receipt_on_orca
 test_fm_send_doorbell_uses_the_receipt_on_orca
 test_fm_send_typed_names_a_gone_terminal
+test_fm_send_typed_names_a_blocked_prompt
 test_fm_send_without_the_capability_is_unchanged

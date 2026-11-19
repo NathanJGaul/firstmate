@@ -409,6 +409,46 @@ observe "send --enter --wait-submit to a handle the runtime never issued: $(jq -
 [ "$(jq -r '.error.code // empty' <<<"$UNKNOWN_SEND")" = terminal_handle_stale ] \
   || fail "A12: a send to a handle the runtime never issued did not answer error.code=terminal_handle_stale"
 ok "A12: a send to a handle the runtime never issued answers error.code=terminal_handle_stale"
+# An agent parked on a permission or trust prompt: the runtime refuses text plus Enter (specs/008). The fake is
+# named claude so Orca recognizes it, prints the workspace-trust dialog, and waits; it never leaves the lab.
+mkdir -p "$LAB/fake/trust"
+cat > "$LAB/fake/trust/claude" <<'SH'
+#!/usr/bin/env bash
+echo "Quick safety check: Is this a project you created or one you trust?"
+echo "Do you trust the files in this folder?"
+echo " > 1. Yes, I trust this folder"
+echo "   2. No, exit"
+echo "Enter to confirm - Esc to cancel"
+IFS= read -r answer
+echo "dialog got: $answer"
+sleep 30
+SH
+chmod +x "$LAB/fake/trust/claude"
+TRUST_T=$(O terminal create --worktree "id:$WT_A_ID" --title fm-test-trust --command "$LAB/fake/trust/claude" --json | jq -r '.result.terminal.handle')
+[ -n "$TRUST_T" ] || fail "A12: terminal create returned no handle for the dialog fake"
+wait_for_text "$TRUST_T" 'Do you trust the files' 10 || fail "A12: the dialog fake never printed its dialog"
+sleep 1
+BLOCKED_SEND=$(O terminal send --terminal "$TRUST_T" --text 1 --enter --wait-submit 1 --json 2>/dev/null || true)
+observe "send --text 1 --enter --wait-submit to an agent parked on a trust dialog: $(jq -c '{ok, code: .error.code, message: .error.message, send: .result.send}' <<<"$BLOCKED_SEND" | cut -c1-600)"
+observe "the dialog fake's terminal after that send: $(read_tail "$TRUST_T" | tail -3 | tr '\n' '|' | cut -c1-200)"
+if [ "$(jq -r '.error.code // empty' <<<"$BLOCKED_SEND")" = agent_prompt_blocked ]; then
+  ok "A12: a text-plus-Enter send to an agent parked on a trust dialog answers ok:false with error.code=agent_prompt_blocked (the adapter's prompt-blocked class)"
+  case "$(read_tail "$TRUST_T")" in
+    *"dialog got:"*) finding "the refused send still reached the dialog fake" ;;
+    *) ok "A12: the refused send typed nothing into the parked dialog" ;;
+  esac
+else
+  finding "a text-plus-Enter send to a dialog-printing fake named claude was not refused with agent_prompt_blocked (answer above): the runtime may not recognize the fake's dialog"
+fi
+BLOCKED_RC=0
+BLOCKED_VERDICT=$(PATH="$BIN:$PATH" bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_text_submit "$1" "$2" 2 0.1 0.1' "$ROOT" "$TRUST_T" 'fm-test-doorbell' 2>"$LAB/blocked.err") || BLOCKED_RC=$?
+observe "the adapter against the parked dialog: verdict=$BLOCKED_VERDICT rc=$BLOCKED_RC stderr=$(cut -c1-200 "$LAB/blocked.err")"
+if [ "$(jq -r '.error.code // empty' <<<"$BLOCKED_SEND")" = agent_prompt_blocked ]; then
+  [ "$BLOCKED_VERDICT" = prompt-blocked ] && [ "$BLOCKED_RC" -eq 1 ] \
+    || fail "A12: the adapter did not report prompt-blocked with exit 1 for a parked dialog (verdict=$BLOCKED_VERDICT rc=$BLOCKED_RC)"
+  ok "A12: fm_backend_orca_send_text_submit reports prompt-blocked and exits 1 for the parked dialog"
+fi
+O terminal close --terminal "$TRUST_T" --json >/dev/null 2>&1 || true
 notrun "A12 a started-turn receipt (stages include turn_started): the lab has no agent that starts a turn, so only input_accepted and unsupported receipts are observed; the started shape is taken from the Orca CLI's own documentation"
 O terminal close --terminal "$PLAIN_T" --json >/dev/null 2>&1 || true
 
