@@ -1914,7 +1914,7 @@ tests/fm-bootstrap.test.sh
 The fake-Orca suite covers readiness, registration, create response parsing, metadata routing, popup-safe submit, and path-matched release refusal.
 It also covers adopting `result.startupTerminal` (titled once, no second terminal, `result.terminal` preferred, a create fallback for an unspawned or handle-less startup terminal, and cleanup of a pathless result) and the `--force --delete-branch` release argument.
 The adoption of the terminal that `terminal list --worktree` reports (no response terminal, an empty list, an unreadable list, an unusable or foreign row, a pathless worktree, and a failed title) is covered the same way, and its live proof is recorded under the Linux live-lab entry below.
-The `startupTerminal` adoption and the branch-deleting release were proven against the fake here and live in that entry.
+The `startupTerminal` adoption is proven against the fake only, because the Linux headless runtime never returns one; the branch-deleting release was proven against the fake here and live in that entry.
 
 ### Linux, headless runtime 1.4.261
 
