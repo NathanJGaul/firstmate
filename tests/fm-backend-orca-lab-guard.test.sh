@@ -16,7 +16,6 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-orca-lab-guard)
 
 # The operator's world: every guard decision below is made against this HOME.
-REAL_HOME=$HOME
 HOME="$TMP_ROOT/home"
 mkdir -p "$HOME/.orca" "$HOME/.orca-remote" "$HOME/projects"
 export HOME
@@ -30,6 +29,25 @@ out=$(FM_ORCA_LIVE_E2E=0 "$ROOT/tests/fm-backend-orca-smoke.test.sh" 2>&1); rc=$
 expect_code 0 "$rc" "lane with the opt-in variable set to 0"
 assert_contains "$out" "skip: live: disabled by FM_ORCA_LIVE_E2E=0" "lane reports the explicit opt-out"
 pass "A1: the lane skips with one line unless FM_ORCA_LIVE_E2E=1"
+
+# --- A2/A3 through the real entry point: the lane refuses wrong variables ---------
+
+# FM_ORCA_LIVE_E2E=1 with an unsafe or used ORCA_USER_DATA_PATH must refuse before
+# anything is discovered, created, or started, even with no Orca installed.
+lane_refusal() {  # <label> <ORCA_USER_DATA_PATH>
+  local out rc
+  out=$(FM_ORCA_LIVE_E2E=1 ORCA_USER_DATA_PATH="$2" "$ROOT/tests/fm-backend-orca-smoke.test.sh" 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "$1: the lane must exit non-zero"
+  assert_contains "$out" "refus" "$1: the lane says it refused"
+  assert_not_contains "$out" "orca_server_ready" "$1: no runtime may have been started"
+}
+mkdir -p "$TMP_ROOT/used-entry"; : > "$TMP_ROOT/used-entry/stale.json"
+lane_refusal "A2 lane with ORCA_USER_DATA_PATH=~/.orca" "$HOME/.orca"
+lane_refusal "A2 lane with ORCA_USER_DATA_PATH inside ~/.orca" "$HOME/.orca/x"
+lane_refusal "A2 lane with ORCA_USER_DATA_PATH=~" "$HOME"
+lane_refusal "A3 lane with a non-empty ORCA_USER_DATA_PATH" "$TMP_ROOT/used-entry"
+[ -z "$(find "$HOME/.orca" "$HOME/.orca-remote" -mindepth 1 -print -quit)" ] || fail "A2: a refused lane wrote into the operator's Orca directories"
+pass "A2/A3: the lane entry point refuses an unsafe or used ORCA_USER_DATA_PATH before starting anything"
 
 # --- A2 / U1-U5, U7: protected data directories are refused ------------------
 
@@ -207,9 +225,9 @@ start_sleeper "$TMP_ROOT/bystander-data"; BYSTANDER2=$SLEEPER_PID
 
 found=$(orca_lab_leftovers "$LAB" "$LAB_DATA")
 for p in "$RT" "$DAEMON" "$PTYPROC"; do
-  case " $(echo $found) " in *" $p "*) : ;; *) fail "U11: the leftover scan must list lab process $p (got: $found)" ;; esac
+  case " ${found//$'\n'/ } " in *" $p "*) : ;; *) fail "U11: the leftover scan must list lab process $p (got: $found)" ;; esac
 done
-case " $(echo $found) " in *" $BYSTANDER2 "*) fail "U11: the leftover scan must not list a bystander" ;; esac
+case " ${found//$'\n'/ } " in *" $BYSTANDER2 "*) fail "U11: the leftover scan must not list a bystander" ;; esac
 
 orca_lab_stop "$LAB" "$LAB_DATA" "$RT" "$LAB/bin/orca" >/dev/null 2>&1 || fail "A6: stop must succeed when every lab process is provably the lab's"
 for p in "$RT" "$DAEMON" "$PTYPROC"; do

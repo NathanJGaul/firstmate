@@ -102,10 +102,10 @@ orca_lab_pid_owned() {
   [ "$pid" != "$$" ] && [ "$pid" != "${BASHPID:-$$}" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   [ -r "/proc/$pid/environ" ] || return 1
-  if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -Fxq -- "ORCA_USER_DATA_PATH=$data"; then
+  if { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq -- "ORCA_USER_DATA_PATH=$data"; then
     return 0
   fi
-  if [ -r "/proc/$pid/cmdline" ] && tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq -- "$data/"; then
+  if [ -r "/proc/$pid/cmdline" ] && { tr '\0' '\n' < "/proc/$pid/cmdline"; } 2>/dev/null | grep -Fq -- "$data/"; then
     return 0
   fi
   return 1
@@ -157,6 +157,7 @@ orca_lab_write_launcher() {
   mkdir -p "$bin" || return 1
   {
     printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016  # the single quotes are deliberate: the launcher expands it
     printf 'for v in $(env | sed -n "s/^\\(ORCA_[A-Za-z0-9_]*\\)=.*/\\1/p"); do unset "$v"; done\n'
     printf 'unset NODE_OPTIONS NODE_REPL_EXTERNAL_MODULE ELECTRON_RUN_AS_NODE\n'
     printf 'export ORCA_USER_DATA_PATH=%q\n' "$data"
@@ -184,9 +185,9 @@ orca_lab_leftovers() {
     pid=${d#/proc/}
     [ "$pid" != "$$" ] && [ "$pid" != "${BASHPID:-$$}" ] || continue
     orca_lab_pid_running "$pid" || continue
-    if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -Fxq -- "ORCA_USER_DATA_PATH=$data"; then
+    if { tr '\0' '\n' < "$d/environ"; } 2>/dev/null | grep -Fxq -- "ORCA_USER_DATA_PATH=$data"; then
       printf '%s\n' "$pid"
-    elif tr '\0' '\n' < "$d/cmdline" 2>/dev/null | grep -Fq -- "$lab"; then
+    elif { tr '\0' '\n' < "$d/cmdline"; } 2>/dev/null | grep -Fq -- "$lab"; then
       printf '%s\n' "$pid"
     fi
   done
@@ -231,7 +232,7 @@ orca_lab_stop() {
   sleep 0.2
   left=$(orca_lab_leftovers "$lab" "$data")
   if [ -n "$left" ]; then
-    echo "orca lab: processes still naming the lab after stop (left running, not provably the lab's): $(echo $left)" >&2
+    echo "orca lab: processes still naming the lab after stop (left running, not provably the lab's): ${left//$'\n'/ }" >&2
     rc=1
   fi
   return $rc

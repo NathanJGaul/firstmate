@@ -380,7 +380,8 @@ family_for_basename() {
     fm-send-inbox-doorbell-live-e2e.test.sh|\
     fm-calm-claude-mod-plugin.test.sh|fm-calm-claude-mod-live-e2e.test.sh|\
     fm-calm-pi-queue-retention-live-e2e.test.sh|\
-    fm-herdr-submit-confirm-live-e2e.test.sh)
+    fm-herdr-submit-confirm-live-e2e.test.sh|\
+    fm-backend-orca-smoke.test.sh)
       printf '%s\n' live-harness-optin
       ;;
     fm-backend-herdr.test.sh|fm-backend-tmux-smoke.test.sh|fm-backend.test.sh|\
@@ -417,7 +418,7 @@ family_for_basename() {
     fm-backend-zellij.test.sh|fm-backend-zellij-smoke.test.sh)
       printf '%s\n' zellij
       ;;
-    fm-backend-orca.test.sh)
+    fm-backend-orca.test.sh|fm-backend-orca-lab-guard.test.sh)
       printf '%s\n' orca
       ;;
     fm-branch-supervision.test.sh|fm-busy-adapter-wiring.test.sh|\
@@ -698,6 +699,8 @@ tests/fm-agy-signals-live-e2e.test.sh 53
 tests/fm-ask-user-authority.test.sh 171
 tests/fm-backend-cmux-smoke.test.sh 34
 tests/fm-backend-cmux.test.sh 3754
+tests/fm-backend-orca-lab-guard.test.sh 18000
+tests/fm-backend-orca-smoke.test.sh 40
 tests/fm-backend-orca.test.sh 27102
 tests/fm-backend-tmux-smoke.test.sh 291
 tests/fm-backend-zellij-smoke.test.sh 23
@@ -1458,7 +1461,7 @@ families_for_changed_path() {
       printf '%s\n' cmux
       printf '%s\n' backend-dispatch
       ;;
-    bin/backends/orca*|bin/backends/tmux.sh)
+    bin/backends/orca*|bin/backends/tmux.sh|tests/orca-lab-safety.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' orca
       ;;
