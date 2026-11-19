@@ -127,7 +127,7 @@ These are the captain's current calls, and each holds until the capability it na
 - Long-running or high-value ships belong on Herdr until Orca relaunch lands.
   Orca suits scouts and short ships that are cheap to redo.
 - Orca delivers `interrupt` through `bin/fm-control.sh` for every harness whose interrupt is Escape or Ctrl+C, but refuses `exit` and `relaunch` today, so a dead Orca worker cannot be recovered through `bin/fm-control.sh` or `bin/fm-spawn.sh --relaunch`.
-  Both wait on a recovery-grade agent-state proof that Orca does not yet have.
+  Both wait on the reclaim slice, which has to prove them live on top of the local process-table agent state described above.
   An interrupt on Orca proves only that the endpoint still exists, and reports `cancel=unconfirmed` unless the harness has its own acknowledgement.
   A harness that must see its screen between interrupt presses, such as Devin, is still refused, because Orca has no verified viewport read.
   [`agent-control.md`](agent-control.md) owns the reasons.
