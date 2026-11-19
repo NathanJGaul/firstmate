@@ -1,0 +1,29 @@
+== fm-backend-orca
+ok - fm_backend_orca_endpoint_state: every other answer is unreadable, never missing
+ok - fm_backend_orca_endpoint_state: one read-only terminal show naming the terminal
+ok - fm_backend_orca_endpoint_state: no reachable orca CLI is unreadable, not missing
+ok - fm_backend_target_exists: Orca presence needs a connected, writable terminal
+ok - fm_backend_agent_state: Orca reports missing, unverified, and unreadable
+ok - fm-control-lib: a missing Orca endpoint verdict leaves exit and relaunch refused
+ok - fm-crew-state: an exited, closed, or stale Orca terminal is gone; a live one is not
+ok - fm-crew-state: an unreadable Orca answer is unreachable, never gone
+== fm-session-start
+ok - session start: an unreachable host delays a reported check, not the digest
+ok - session start: a deferred result the digest outran still reaches the agent as a wake
+ok - session start: a read-only session declares its skipped network checks rather than dropping them
+ok - session start: the tasks-axi compatibility verdict is computed once and reused
+ok - session start: an existing ambiguous Pi process prevents duplicate recovery
+ok - session start: transient tmux unreadability never licenses a relaunch
+ok - session start: the proven bare-shell recovery path remains intact
+Terminated                 FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-startup-network.sh" wait "$limit"
+== fm-control
+ok - fm-control interrupt: muse confirms cancellation from its session log
+ok - fm-control interrupt: postconditions are revalidated after acknowledgement polling
+ok - fm-control exit: an interrupt-stopped agent satisfies the gone-state postcondition
+ok - fm-control exit: a stubborn agent reports delivered input and an unconfirmed exit
+ok - fm-control interrupt: grok reports delivery without claiming cancellation
+ok - fm-control interrupt: grok's idle footer does not confirm cancellation
+ok - fm-control: a lifecycle command to a secondmate is unmarked and opens no reply expectation
+ok - fm-control's arrival leaves fm-send's from-firstmate marking untouched
+== fm-backend-orca-smoke
+skip: live: opt-in; set FM_ORCA_LIVE_E2E=1 to run
