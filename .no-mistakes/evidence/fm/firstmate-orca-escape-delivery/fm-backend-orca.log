@@ -1,3 +1,15 @@
+ok - fm_backend_orca_json_get: listed-terminal-handle reads the first listed terminal
+ok - fm_backend_orca_json_get: listed-terminal-handle skips orphaned, unwritable, other-worktree, and handle-less terminals
+ok - fm_backend_orca_worktree_create: adopts the listed terminal when the response names none
+ok - fm_backend_orca_worktree_create: titles the listed terminal with the task name
+ok - fm-spawn.sh --backend orca: adopts the listed terminal and creates no second terminal when the response names none
+ok - fm-spawn.sh --backend orca: a terminal named by the response is adopted without listing terminals
+ok - fm-spawn.sh --backend orca: creates exactly one terminal when Orca lists none for the worktree
+ok - fm-spawn.sh --backend orca: an unreadable terminal list falls back to creating one terminal
+ok - fm-spawn.sh --backend orca: creates a terminal when the list holds only unusable or foreign terminals
+ok - fm-spawn.sh --backend orca: a pathless worktree's listed terminal is closed and the worktree released
+ok - fm-spawn.sh --backend orca: a failed title of the listed terminal does not fail the spawn
+ok - fm-teardown.sh backend=orca: closes exactly the terminal that spawn adopted from the list
 ok - fm-spawn.sh --backend orca: adopts the startup terminal and creates no second terminal
 ok - fm-spawn.sh --backend orca: adopts result.terminal, and prefers it when a startup terminal is also reported
 ok - fm-spawn.sh --backend orca: titles a terminal reported in the result.terminal shape
