@@ -56,6 +56,10 @@ Orca returns `orca_worktree_id=` as that composite of the Orca repo id and the w
 ## Current lifecycle and safety
 
 Spawn registers the repository, creates an independent worktree, installs harness hooks, records metadata, and launches the selected harness.
+A ship's worktree is created on its ship branch, the registered branch prefix plus the task id, and from the task's base branch when one is set, so the worker starts on a branch the brief and the task record already name and Orca makes no branch of its own.
+Orca hands the base ref to git as given, so spawn fetches origin's base branch first and passes `origin/<base>`; a base branch origin cannot supply is refused before anything is created, and a create Orca refuses reports Orca's own reason.
+Orca gives a branch name that is already taken a numeric suffix, so spawn reads the branch back and refuses, releasing the new worktree, when it is not the requested one.
+A scout makes no branch and a relaunch creates no worktree, so neither names one.
 The task's one terminal is the terminal Orca starts with the worktree.
 Spawn adopts it from `result.terminal.handle`, or `result.startupTerminal.handle` when Orca reports that terminal as spawned.
 When the creation response names neither, as on the Linux headless runtime, spawn adopts the terminal that `orca terminal list --worktree id:<id>` reports for the new worktree: the first row that has a handle, is not orphaned, is not unwritable, and is not another worktree's.
@@ -85,8 +89,9 @@ A scout still requires its report and completed decision inventory.
 A ship still refuses dirty or unlanded work.
 Before release, cleanup resolves the recorded Orca worktree id and verifies its path matches the recorded worktree path.
 A missing, unreadable, or mismatched identity preserves metadata and stops rather than deleting anything.
-After those checks, Firstmate closes the exact terminal and releases the exact worktree with Orca's worktree command, asking it to delete the branch it named for the worktree.
-Orca keeps any branch whose changes it cannot prove merged, so an unlanded branch is never lost, and Firstmate never deletes that branch or forces its deletion itself.
+After those checks, Firstmate closes the exact terminal and releases the exact worktree with Orca's worktree command, asking it to delete the ship branch.
+Orca keeps any branch whose changes it cannot prove merged, so an unlanded branch is never lost, and Firstmate never detaches the worktree, deletes that branch, or forces its deletion itself, even on a forced cleanup.
+A branch Orca cannot prove merged, such as one squash-merged on the forge, therefore stays in the local repository after cleanup.
 It never raw-deletes an Orca worktree.
 A close the CLI never attempted, because `orca` is not on the path, stops cleanup with the metadata intact even under `--force`: removing those records would leave nothing on disk naming a terminal that may still be live.
 Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/runtime-backends.md) "Endpoint close" owns what this arm can and cannot prove about its own close.

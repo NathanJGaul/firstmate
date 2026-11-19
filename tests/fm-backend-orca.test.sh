@@ -1588,7 +1588,9 @@ test_ship_teardown_completes_when_orca_keeps_the_branch() {
   assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-keep-branch::/orca/wt-keep-branch'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
     "teardown should ask Orca to delete the branch safely"
   assert_absent "$state/$id.meta" "teardown should remove task metadata once Orca released the worktree"
-  pass "fm-teardown.sh backend=orca: a release that reports no branch deletion still completes"
+  git -C "$proj" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "teardown must leave the branch to Orca's safe delete; firstmate force-deleted fm/$id itself"
+  pass "fm-teardown.sh backend=orca: a release that reports no branch deletion still completes and never force-deletes the branch"
 }
 
 test_ship_teardown_refuses_orca_unresolvable_worktree_id() {
@@ -2294,6 +2296,104 @@ test_teardown_closes_exactly_the_adopted_listed_terminal() {
     "teardown should release the worktree"
   assert_absent "$SPAWN_STATE/$id.meta" "teardown should remove the task metadata"
   pass "fm-teardown.sh backend=orca: closes exactly the terminal that spawn adopted from the list"
+}
+
+test_worktree_create_failure_names_orca_s_reason() {
+  local out status
+  orca_case create-failure-reason
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-fr"}}}\n' > "$RESP/2.out"
+  printf '{"ok":false,"error":{"code":"invalid_argument","message":"base ref release/9 does not exist"}}\n' > "$RESP/3.out"
+  printf '1\n' > "$RESP/3.exit"
+  set +e
+  out=$(PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task fm/fm-task release/9' "$ROOT" 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "a refused worktree create should fail"
+  assert_contains "$out" "base ref release/9 does not exist" "the refusal should carry Orca's own reason, got: $out"
+  assert_contains "$out" "orca worktree create failed for fm-task" "the refusal should say which create failed, got: $out"
+  pass "fm_backend_orca_worktree_create: a refused create reports Orca's own reason instead of failing silently"
+}
+
+test_worktree_create_passes_branch_and_base() {
+  local expect
+  orca_case create-branch-base
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-bb"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-bb::/orca/wt-bb","path":"/tmp/orca-wt-bb","branch":"refs/heads/team/fm-task"}}}\n' > "$RESP/3.out"
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task team/fm-task release/1' "$ROOT" >/dev/null \
+    || fail "worktree create with a branch and base should succeed"
+  expect="orca"$'\x1f'"worktree"$'\x1f'"create"$'\x1f'"--repo"$'\x1f'"id:repo-bb"$'\x1f'"--name"$'\x1f'"fm-task"$'\x1f'"--branch"$'\x1f'"team/fm-task"$'\x1f'"--base-branch"$'\x1f'"release/1"$'\x1f'"--no-parent"$'\x1f'"--setup"$'\x1f'"skip"$'\x1f'"--json"
+  assert_contains "$(cat "$LOG")" "$expect" \
+    "worktree create should pass --branch and --base-branch after --name, got: $(tr '\037' ' ' < "$LOG")"
+  pass "fm_backend_orca_worktree_create: passes the ship branch and the base branch to orca worktree create"
+}
+
+test_worktree_create_without_branch_is_unchanged() {
+  local expect_plain expect_branch_only
+  orca_case create-no-branch
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-nb"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-nb::/orca/wt-nb","path":"/tmp/orca-wt-nb"}}}\n' > "$RESP/3.out"
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task' "$ROOT" >/dev/null \
+    || fail "worktree create with no branch should succeed"
+  expect_plain="orca"$'\x1f'"worktree"$'\x1f'"create"$'\x1f'"--repo"$'\x1f'"id:repo-nb"$'\x1f'"--name"$'\x1f'"fm-task"$'\x1f'"--no-parent"$'\x1f'"--setup"$'\x1f'"skip"$'\x1f'"--json"
+  assert_contains "$(cat "$LOG")" "$expect_plain" \
+    "worktree create with no branch should keep the unchanged argument list, got: $(tr '\037' ' ' < "$LOG")"
+  assert_not_contains "$(cat "$LOG")" "--branch" "worktree create with no branch must not pass --branch"
+  assert_not_contains "$(cat "$LOG")" "--base-branch" "worktree create with no base must not pass --base-branch"
+  orca_case create-branch-only
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-bo"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-bo::/orca/wt-bo","path":"/tmp/orca-wt-bo"}}}\n' > "$RESP/3.out"
+  PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create "$FM_TEST_REPO" fm-task fm/fm-task' "$ROOT" >/dev/null \
+    || fail "worktree create with only a branch should succeed"
+  expect_branch_only="orca"$'\x1f'"worktree"$'\x1f'"create"$'\x1f'"--repo"$'\x1f'"id:repo-bo"$'\x1f'"--name"$'\x1f'"fm-task"$'\x1f'"--branch"$'\x1f'"fm/fm-task"$'\x1f'"--no-parent"$'\x1f'"--setup"$'\x1f'"skip"$'\x1f'"--json"
+  assert_contains "$(cat "$LOG")" "$expect_branch_only" \
+    "worktree create with only a branch should omit --base-branch, got: $(tr '\037' ' ' < "$LOG")"
+  pass "fm_backend_orca_worktree_create: no branch keeps the call unchanged and no base omits --base-branch"
+}
+
+test_forced_unlanded_ship_teardown_keeps_the_branch() {
+  local proj wt data state config id out rc neutral n
+  id="orcaforcekeepz2"
+  proj="$TMP_ROOT/force-keep-project"
+  wt="$TMP_ROOT/force-keep-wt"
+  data="$TMP_ROOT/force-keep-data"
+  state="$TMP_ROOT/force-keep-state"
+  config="$TMP_ROOT/force-keep-config"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  git -C "$wt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "unlanded work"
+  mkdir -p "$data/$id" "$state" "$config"
+  touch "$state/.last-watcher-beat"
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" "endpoint_task_id=$id" "terminal=term-force-keep" "worktree=$wt" "project=$proj" \
+    "harness=claude" "kind=ship" "mode=local-only" "yolo=off" "branch=fm/$id" \
+    "backend=orca" "orca_worktree_id=wt-force-keep::/orca/wt-force-keep"
+  orca_case force-keep
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-force-keep::/orca/wt-force-keep","path":"%s"}}}\n' "$wt" > "$RESP/1.out"
+  for n in 2 3 4 5 6; do
+    printf '{"ok":true,"result":{"removed":true}}\n' > "$RESP/$n.out"
+  done
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" --force 2>&1 )
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "a forced Orca ship teardown should complete"$'\n'"$out"$'\n'"$(tr '\037' ' ' < "$LOG")"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-force-keep::/orca/wt-force-keep'$'\x1f''--force'$'\x1f''--delete-branch'$'\x1f''--json' \
+    "a forced teardown should still ask Orca to delete the branch safely"
+  git -C "$proj" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "a forced teardown of an unlanded ship must keep fm/$id; only Orca's safe delete may remove a branch"
+  [ "$(git -C "$proj" rev-parse "refs/heads/fm/$id")" = "$(git -C "$wt" rev-parse HEAD)" ] \
+    || fail "the kept branch should still hold the unlanded commit"
+  pass "fm-teardown.sh backend=orca: a forced teardown of an unlanded ship keeps the branch for Orca's safe delete to judge"
 }
 
 test_json_get_listed_terminal_reads_the_first_handle
@@ -3032,3 +3132,7 @@ test_agent_state_missing_unverified_unreadable
 test_a_missing_orca_endpoint_does_not_unlock_the_control_plane
 test_crew_state_reports_a_dead_orca_endpoint_gone
 test_crew_state_does_not_call_an_unreadable_orca_endpoint_gone
+test_worktree_create_passes_branch_and_base
+test_worktree_create_without_branch_is_unchanged
+test_forced_unlanded_ship_teardown_keeps_the_branch
+test_worktree_create_failure_names_orca_s_reason

@@ -1259,7 +1259,7 @@ test_ship_branch_prefix_defaults_to_legacy_fm() {
     FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
     brief="$home/data/$id/brief.md"
     # shellcheck disable=SC2016  # literal backticks around the branch name must stay unexpanded
-    assert_grep "\`git checkout -b fm/$id --\`" "$brief" \
+    assert_grep "git checkout -b fm/$id --\`" "$brief" \
       "$mode: omitting --branch-prefix must still create the legacy fm/<task-id> branch"
   done
   pass "fm-brief.sh: --branch-prefix omitted defaults every ship mode to fm/<task-id>"
@@ -1277,7 +1277,7 @@ test_ship_branch_prefix_override_is_consistent_across_modes() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --branch-prefix 'contrib/' >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   # shellcheck disable=SC2016
-  assert_grep "\`git checkout -b contrib/$id --\`" "$brief" \
+  assert_grep "git checkout -b contrib/$id --\`" "$brief" \
     "no-mistakes: branch-creation command did not use the configured override"
   assert_no_grep "fm/$id" "$brief" \
     "no-mistakes: brief mixed the legacy fm/ prefix in with the configured override"
@@ -1286,7 +1286,7 @@ test_ship_branch_prefix_override_is_consistent_across_modes() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR --branch-prefix 'contrib/' >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   # shellcheck disable=SC2016
-  assert_grep "\`git checkout -b contrib/$id --\`" "$brief" \
+  assert_grep "git checkout -b contrib/$id --\`" "$brief" \
     "direct-PR: branch-creation command did not use the configured override"
   # shellcheck disable=SC2016
   assert_grep "push only your \`contrib/$id\` branch" "$brief" \
@@ -1298,7 +1298,7 @@ test_ship_branch_prefix_override_is_consistent_across_modes() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --branch-prefix 'contrib/' >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   # shellcheck disable=SC2016
-  assert_grep "\`git checkout -b contrib/$id --\`" "$brief" \
+  assert_grep "git checkout -b contrib/$id --\`" "$brief" \
     "local-only: branch-creation command did not use the configured override"
   # shellcheck disable=SC2016
   assert_grep "Work only on your \`contrib/$id\` branch" "$brief" \
@@ -1324,7 +1324,7 @@ test_ship_branch_prefix_empty_override_yields_bare_task_id() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --branch-prefix '' >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   # shellcheck disable=SC2016
-  assert_grep "\`git checkout -b $id --\`" "$brief" \
+  assert_grep "git checkout -b $id --\`" "$brief" \
     "an empty --branch-prefix must yield a bare <task-id> branch"
   assert_no_grep "checkout -b /$id" "$brief" \
     "an empty --branch-prefix produced a leading-slash branch name"
@@ -1386,7 +1386,7 @@ test_branch_prefix_command_is_shell_safe() {
     || fail "a ref-format-valid metacharacter prefix should scaffold safely"
   brief="$home/data/$id/brief.md"
   # shellcheck disable=SC2016 # The sed expression intentionally contains literal backticks.
-  command=$(sed -n 's/^1\. First action: create your branch: `\(.*\)`$/\1/p' "$brief")
+  command=$(sed -n 's/^1\. First action: [^`]*`\(.*\)`$/\1/p' "$brief")
   [ -n "$command" ] || fail "generated brief exposed no branch-creation command"
   repo="$TMP_ROOT/branch-prefix-shell-safe-repo"
   git init -q "$repo" || fail "could not initialize shell-safety fixture repository"
@@ -1497,8 +1497,84 @@ test_home_brief_include_is_appended_last
 test_base_branch_is_rendered_and_bounded
 test_ship_branch_prefix_defaults_to_legacy_fm
 test_ship_branch_prefix_override_is_consistent_across_modes
+# first_action_command <brief>: the one command on the brief's "First action" line.
+first_action_command() {
+  # shellcheck disable=SC2016 # The sed expression intentionally contains literal backticks.
+  sed -n 's/^1\. First action: [^`]*`\(.*\)`$/\1/p' "$1"
+}
+
+test_ship_first_action_is_idempotent_on_the_branch() {
+  local home id mode brief command repo head_before
+  home="$TMP_ROOT/first-action-home"
+  mkdir -p "$home/data"
+  for mode in local-only direct-PR no-mistakes; do
+    id="brief-first-action-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "a $mode ship brief should scaffold"
+    brief="$home/data/$id/brief.md"
+    command=$(first_action_command "$brief")
+    [ -n "$command" ] || fail "the $mode brief exposed no first-action command"
+
+    # Detached HEAD (treehouse, any non-Orca worktree): the branch is created.
+    repo="$TMP_ROOT/first-action-detached-$mode"
+    git init -q "$repo"
+    git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+    git -C "$repo" checkout -q --detach
+    ( cd "$repo" && eval "$command" ) || fail "the $mode first action failed at a detached HEAD"
+    [ "$(git -C "$repo" branch --show-current)" = "fm/$id" ] \
+      || fail "the $mode first action should create and enter fm/$id at a detached HEAD, got '$(git -C "$repo" branch --show-current)'"
+
+    # Already on the ship branch (an Orca-managed worktree): nothing changes.
+    repo="$TMP_ROOT/first-action-on-branch-$mode"
+    git init -q "$repo"
+    git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+    git -C "$repo" checkout -q -b "fm/$id"
+    git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "seed work"
+    head_before=$(git -C "$repo" rev-parse HEAD)
+    ( cd "$repo" && eval "$command" ) || fail "the $mode first action failed on a worktree already on fm/$id"
+    [ "$(git -C "$repo" branch --show-current)" = "fm/$id" ] || fail "the $mode first action left fm/$id"
+    [ "$(git -C "$repo" rev-parse HEAD)" = "$head_before" ] || fail "the $mode first action moved the branch it was already on"
+  done
+  pass "fm-brief.sh: the first action creates the ship branch at a detached HEAD and changes nothing on a worktree already on it"
+}
+
+test_ship_setup_states_the_orca_branch_case() {
+  local home brief base
+  home="$TMP_ROOT/orca-setup-home"
+  mkdir -p "$home/data"
+  # shellcheck source=bin/fm-dod-lib.sh
+  . "$ROOT/bin/fm-dod-lib.sh"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-orca-setup-a some-proj --mode no-mistakes --branch-prefix team/ >/dev/null 2>&1 \
+    || fail "a ship brief should scaffold"
+  brief="$home/data/brief-orca-setup-a/brief.md"
+  # shellcheck disable=SC2016 # literal backticks around the branch name
+  assert_grep 'An Orca-managed worktree is created already on your ship branch `team/brief-orca-setup-a`' "$brief" \
+    "the ship setup does not tell a worker its Orca worktree starts on the ship branch"
+  assert_grep 'every other worktree starts at the detached HEAD described above' "$brief" \
+    "the ship setup does not keep the detached-HEAD case for other worktrees"
+  assert_grep 'at a detached HEAD on a clean default branch.' "$brief" \
+    "the detached-HEAD sentence changed"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-orca-setup-b some-proj --mode direct-PR --base-branch release/1 >/dev/null 2>&1 \
+    || fail "a ship brief with a base branch should scaffold"
+  brief="$home/data/brief-orca-setup-b/brief.md"
+  base=$(fm_brief_base_branches "$brief") || fail "the base-branch comparison no longer finds the Base branch line"
+  [ "$base" = release/1 ] || fail "the base-branch comparison read '$base', not release/1"
+  # shellcheck disable=SC2016 # literal backticks around the branch name
+  assert_grep 'An Orca-managed worktree is created already on your ship branch `fm/brief-orca-setup-b`' "$brief" \
+    "the base-branch ship setup does not state the Orca case"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-orca-setup-c some-proj --scout >/dev/null 2>&1 \
+    || fail "a scout brief should scaffold"
+  assert_no_grep 'Orca-managed worktree is created already on your ship branch' "$home/data/brief-orca-setup-c/brief.md" \
+    "a scout makes no ship branch and must not be told it starts on one"
+  pass "fm-brief.sh: a ship brief states that an Orca worktree starts on the ship branch, and the base-branch line still parses"
+}
+
 test_ship_branch_prefix_empty_override_yields_bare_task_id
 test_branch_prefix_is_refused_where_it_does_not_apply
 test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
+test_ship_first_action_is_idempotent_on_the_branch
+test_ship_setup_states_the_orca_branch_case
 test_crewmate_scaffolds_forbid_pool_administration

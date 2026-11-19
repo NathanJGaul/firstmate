@@ -682,6 +682,13 @@ BRIEF
   [ "$(cd "$TASK_WT" && git rev-parse --show-toplevel)" = "$(cd "$TASK_WT" && pwd -P)" ] || fail "F: the task worktree is not its own git toplevel"
   ok "F: fm-spawn --backend orca with a raw harness records backend, terminal, worktree, and Orca worktree id inside the lab"
   observe "task meta: $(grep -E '^(backend|window|terminal|orca_worktree_id|worktree|harness)=' "$META" | tr '\n' ' ')"
+  # slice N1: the ship branch is named at create, so the worktree starts on it
+  # and Orca made no other branch.
+  [ "$(git -C "$TASK_WT" symbolic-ref --short HEAD)" = "fm/$ID" ] || fail "F: the spawned worktree is on '$(git -C "$TASK_WT" symbolic-ref --short HEAD 2>/dev/null)', not fm/$ID"
+  [ "$(meta branch)" = "fm/$ID" ] || fail "F: the task record names branch '$(meta branch)', not fm/$ID"
+  [ "$(git -C "$SCRATCH" branch --format='%(refname:short)' | sort | tr '\n' ' ')" = "fm/$ID main " ] \
+    || fail "F: after spawn the repository's branches are not exactly main and fm/$ID: $(git -C "$SCRATCH" branch --format='%(refname:short)' | tr '\n' ' ')"
+  ok "F: the spawned ship worktree starts on fm/<id>, named at create, and Orca made no other branch"
   NT=$(O terminal list --worktree "id:$TASK_WID" --json | jq -r '.result.totalCount')
   LIVE_AFTER=$(O worktree ps --json | jq -r --arg id "$TASK_WID" '.result.worktrees[] | select(.worktreeId == $id) | .liveTerminalCount')
   observe "after fm-spawn: terminal list totalCount=$NT, worktree ps liveTerminalCount=$LIVE_AFTER, recorded terminal=$TASK_T"
@@ -809,7 +816,70 @@ BRIEF
   [ ! -f "$META" ] || fail "F: the task record remains after a clean teardown"
   [ "$(O terminal list --worktree "id:$TASK_WID" --json 2>/dev/null | jq -r '.result.totalCount // 0')" = 0 ] || fail "F: terminals remain after a clean teardown"
   git -C "$SCRATCH" show-ref --verify --quiet "refs/heads/$TASK_BRANCH" && fail "F: the task branch $TASK_BRANCH remains after a clean teardown"
+  [ "$TASK_BRANCH" = "fm/$ID" ] || fail "F: the branch torn down was '$TASK_BRANCH', not fm/$ID"
   ok "F: a clean teardown removes the worktree, terminal, branch, and record"
+
+  # slice N1: a forced teardown of a ship holding an unmerged commit keeps the
+  # branch (Orca's safe delete cannot prove it merged), under a custom prefix.
+  KEEP_ID=test-orca-live-keep
+  KEEP_BRANCH=fm-test/$KEEP_ID
+  mkdir -p "$FMHOME/data/$KEEP_ID"
+  cat > "$FMHOME/data/$KEEP_ID/brief.md" <<BRIEF
+# Task
+## Captain's intent
+Exercise a forced teardown of an unlanded Orca ship for $KEEP_ID.
+
+## Firstmate spec
+Confirm the branch is named at create and kept after a forced unlanded teardown.
+Ship branch: $KEEP_BRANCH
+BRIEF
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$KEEP_ID" "$SCRATCH" --mode local-only --yolo off --branch-prefix fm-test/ --backend orca --harness 'sh -c cat' 2>&1) \
+    || fail "F: the prefixed ship spawn failed: $out"
+  KEEP_META=$FMHOME/state/$KEEP_ID.meta
+  KEEP_WT=$(sed -n 's/^worktree=//p' "$KEEP_META" | head -1)
+  [ "$(git -C "$KEEP_WT" symbolic-ref --short HEAD)" = "$KEEP_BRANCH" ] || fail "F: the prefixed worktree is on '$(git -C "$KEEP_WT" symbolic-ref --short HEAD 2>/dev/null)', not $KEEP_BRANCH"
+  ok "F: a registered ship-branch prefix is honored: the worktree starts on <prefix><id>"
+  git -C "$KEEP_WT" -c user.email=lab@fm.test -c user.name=fm-test commit -q --allow-empty -m "fm-test kept unlanded work"
+  if out=$(fm "$ROOT/bin/fm-teardown.sh" "$KEEP_ID" 2>&1); then fail "F: an unforced teardown of the unmerged ship succeeded: $out"; fi
+  out=$(fm "$ROOT/bin/fm-teardown.sh" "$KEEP_ID" --force 2>&1) || fail "F: the forced teardown failed: $out"
+  [ ! -e "$KEEP_WT" ] && [ ! -f "$KEEP_META" ] || fail "F: the forced teardown left the worktree or the record"
+  git -C "$SCRATCH" show-ref --verify --quiet "refs/heads/$KEEP_BRANCH" || fail "F: the forced teardown DELETED the unmerged branch $KEEP_BRANCH"
+  [ "$(git -C "$SCRATCH" log -1 --format=%s "$KEEP_BRANCH")" = "fm-test kept unlanded work" ] || fail "F: the kept branch lost its unlanded commit"
+  ok "F: a forced teardown of an unlanded ship removes the worktree and keeps the branch with its commit"
+  git -C "$SCRATCH" branch -D "$KEEP_BRANCH" >/dev/null || fail "F: could not delete the lab's own kept branch $KEEP_BRANCH"
+
+  # slice N1: a task base branch that exists only on origin reaches worktree
+  # create and the worktree starts from it.
+  BASE_ID=test-orca-live-base
+  BASE_REF=fm-test-basebr
+  git clone -q --bare "$SCRATCH" "$LAB/fm-test-origin.git"
+  git -C "$SCRATCH" remote add origin "file://$LAB/fm-test-origin.git"
+  git -C "$SCRATCH" checkout -q -b "$BASE_REF"
+  git -C "$SCRATCH" -c user.email=lab@fm.test -c user.name=fm-test commit -q --allow-empty -m "fm-test base commit"
+  git -C "$SCRATCH" push -q origin "$BASE_REF"
+  git -C "$SCRATCH" checkout -q main
+  git -C "$SCRATCH" branch -D "$BASE_REF" >/dev/null
+  mkdir -p "$FMHOME/data/$BASE_ID"
+  cat > "$FMHOME/data/$BASE_ID/brief.md" <<BRIEF
+# Task
+## Captain's intent
+Exercise an Orca ship from an origin-only base branch for $BASE_ID.
+
+## Firstmate spec
+Confirm the base branch reaches worktree create.
+
+# Setup
+You are in a disposable git worktree of fm-test-repo, at a detached HEAD on a clean copy of its base branch.
+Base branch: $BASE_REF
+BRIEF
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$BASE_ID" "$SCRATCH" --mode no-mistakes --yolo off --base-branch "$BASE_REF" --backend orca --harness 'sh -c cat' 2>&1) \
+    || fail "F: the base-branch ship spawn failed: $out"
+  BASE_WT=$(sed -n 's/^worktree=//p' "$FMHOME/state/$BASE_ID.meta" | head -1)
+  [ "$(git -C "$BASE_WT" symbolic-ref --short HEAD)" = "fm/$BASE_ID" ] || fail "F: the base-branch worktree is on '$(git -C "$BASE_WT" symbolic-ref --short HEAD 2>/dev/null)', not fm/$BASE_ID"
+  [ "$(git -C "$BASE_WT" log -1 --format=%s)" = "fm-test base commit" ] || fail "F: the base-branch worktree did not start from $BASE_REF (HEAD is '$(git -C "$BASE_WT" log -1 --format=%s)')"
+  ok "F: a task base branch that exists only on origin reaches worktree create, and the worktree starts on fm/<id> from it"
+  out=$(fm "$ROOT/bin/fm-teardown.sh" "$BASE_ID" --force 2>&1) || fail "F: the base-branch teardown failed: $out"
+  git -C "$SCRATCH" branch -D "fm/$BASE_ID" >/dev/null 2>&1 || true
 
   # final inventory
   section "F final inventory"

@@ -2169,6 +2169,32 @@ Each harness's own cancel behavior is recorded in the `harness-adapters` skill, 
 Also not run: any Orca older than 1.4.261.
 The floor is the one runtime this adapter has live proof for, so the 1.4.116 macOS app recorded above is below it and is refused at spawn until it is updated or re-proven.
 
+### Linux, headless runtime 1.4.261, ship branch named at worktree create
+
+Observed on 2026-11-19 with the same lab, after spawn began naming the ship branch when it creates the Orca worktree and teardown stopped force-deleting it (specs/009-orca-branch-at-create).
+
+```sh
+bin/fm-test-run.sh tests/fm-backend-orca.test.sh
+bin/fm-test-run.sh tests/fm-spawn-orca-worktree.test.sh
+env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh
+```
+
+A passing run printed `# summary: passed=61 findings=3`, left no lab process, directory, systemd scope, worktree, or branch, and left the operator's runtime running.
+The three findings are earlier observations about folder-kind repos, rewritten agent launch commands, and a stale agent identity, unchanged by this slice.
+
+What the lab proved against the runtime it started:
+
+- `worktree create --branch <prefix><id>` names the branch exactly as given: a spawned ship worktree is on `fm/<id>`, the task record names the same branch, and the repository holds no branch other than `main` and `fm/<id>`, so Orca made none of its own.
+- A custom `--branch-prefix` reaches the create: the worktree is on `fm-test/<id>`.
+- A clean teardown of a landed ship leaves no branch, deleted by Orca's `worktree rm --force --delete-branch` alone, with firstmate running no `git branch -D`.
+- A forced teardown of a ship holding an unmerged commit removes the worktree and keeps the branch with its commit, because Orca keeps a branch it cannot prove merged.
+- `--base-branch` is handed to `git worktree add` verbatim: a bare name for a branch that exists only on origin failed with `fatal: invalid reference`, and the spawn exited with no message because the adapter swallowed Orca's JSON refusal.
+  After the spawn fetches origin's branch and passes `origin/<base>`, the worktree starts on `fm/<id>` from that base's commit, and a refused create now reports Orca's reason.
+
+Not run: Orca's numeric-suffix rename of an already-taken branch name against the live runtime.
+The spawn's read-back refusal for it is pinned against a fake `orca` that renames the way Orca's help describes, and is not exercised live.
+Also not run: a ship squash-merged on a forge, whose branch Orca cannot prove merged and therefore keeps in the local repository.
+
 ## cmux
 
 The current compatibility floor is cmux 0.64, and the active live evidence uses 0.64.17 build 97 on macOS aarch64.
