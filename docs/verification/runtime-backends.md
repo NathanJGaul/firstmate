@@ -1946,17 +1946,90 @@ Claude workspace-trust entries were registered for those worktree paths, so the 
 `orca terminal show --json` carried `agentIdentity` and `agentWait`, and `orca terminal read --json` carried `status` and `source`, so Orca exposes native agent state that Firstmate does not read.
 A repository registered as a folder has no git worktree for that structural test to accept.
 
-Read from help text or the runtime bundle and not exercised live:
+The items this entry listed as read from help text only (Escape and Ctrl+U passthrough, the `worktree create` response, `--wait-submit` and `--retry-request`, the folder-kind create, and runtime restart) are now exercised live; see the lab entry below.
+Still unexercised: runtime update behavior, any harness other than Claude and a fake agent, and the browser bridge.
 
-- Escape and Ctrl+U passthrough is not exercised live: `orca terminal send --help` says text sent without `--enter` is written to the terminal verbatim, so control bytes pass through, but no control byte was sent to a live terminal.
-- The `worktree create` response: the runtime bundle builds `result.startupTerminal` (handle, tab, pane, pty, and surface `background`) and no `result.terminal`, which matches the two terminals per task above, but a fresh create response was not captured.
-- `terminal send --wait-submit` and `--retry-request`: described in `orca terminal send --help` only.
-- What `orca worktree create` does under a repository registered as a folder.
-- Runtime restart and update behavior.
-- Any harness other than Claude.
+### Linux, headless runtime 1.4.261, live lab
 
-There is no live Orca lane: `tests/fm-backend-orca.test.sh` and the suites that drive it use a fake Orca, so they prove Firstmate's side of the contract and not Orca's real behavior.
-Refresh this entry by repeating the read-only commands above on a Linux host, and record a macOS re-run when a macOS machine is available.
+Observed on 2026-11-18 with `tests/fm-backend-orca-smoke.test.sh`, the opt-in live lab (specs/006-orca-test-lab), on Linux against the Orca 1.4.261 headless runtime.
+The lab starts its own runtime as a child on a throwaway data directory, its own home, and a free loopback port.
+It never reaches the operator's runtime or data, and `tests/fm-backend-orca-lab-guard.test.sh` proves that without Orca installed.
+
+```sh
+tests/fm-backend-orca-lab-guard.test.sh
+env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh
+FM_ORCA_LIVE_SECTIONS=firstmate FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh
+```
+
+The lane refuses an inherited `ORCA_USER_DATA_PATH` that is, contains, or lies inside the operator's Orca data, and Orca terminals export exactly that variable, so run it with the variable unset or pointing at a fresh empty directory.
+`FM_ORCA_LIVE_SECTIONS` selects `orca`, `firstmate`, or `all` (default).
+A passing run printed `passed=35` hard assertions and the findings below, left no lab process, directory, systemd scope, worktree, or branch, and left the operator's runtime running.
+
+Runtime facts observed:
+
+```text
+orca status --json   result.runtime.{state=ready, reachable=true, appVersion=1.4.261, runtimeId, capabilities[306], degradations[]}
+                     degradations: browser_unavailable (capability browser.headless.v1, reason unconfigured)
+                     result.app.desktopWindowStatus=blocked, result.graph.state=ready
+orca serve           not usable from the remote-install command-line entry (runtime_serve_failed: not an installed app);
+                     the lab runs the bundled node on orcad.js with --json --bind 127.0.0.1 --port <free> --no-pairing
+orca shim            exports the operator's ORCA_USER_DATA_PATH unconditionally, so a caller's variable cannot redirect it
+repo add             git repo -> result.repo.kind=git; a non-git folder is refused (runtime_error, nextSteps name --kind folder);
+                     --kind folder -> kind=folder; repo show --repo path:<p> -> result.repo.kind
+worktree create      result keys: catalogVersion, lineage, warnings, workspaceLineage, worktree; no startupTerminal, no terminal
+                     worktree.id=<repo-id>::<path>, branch=refs/heads/<name>, default root <home>/orca/workspaces/<repo>/<name>
+                     under a folder-kind repo: succeeds, path is the folder itself, id=<repo-id>::<path>::workspace:<uuid>
+terminal create      result.terminal keys: processId, handle, tabId, paneKey, ptyId, worktreeId, title, surface=background, warning, ...
+terminal send        without --enter: raw bytes, {accepted, bytesWritten}; with --enter: also prompt{requestId, stages, provider, observation} and mutation{requestId, replayed}
+                     --retry-request <id> replays: mutation.replayed=true and the input was not repeated
+terminal read        result.terminal.{status=running|exited, source=stream|screen, tail[]}; --screen returns the rendered viewport
+terminal wait        --for exit: timeout -> error.code=timeout; exited -> result.wait{satisfied, status, exitCode, exitCause}
+worktree rm          landed: result{removed=true}; unmerged branch kept: result{removed=true, preservedBranch{branchName, head}}
+```
+
+Per assertion, the slice each one proves or unblocks, and what it observed:
+
+| Assertion | Result | Slice |
+| --- | --- | --- |
+| 1 status, version, capabilities | held; version and a 306-entry capability list are reported, including `terminal.prompt-delivery.v1`, `terminal.program-status.v1`, `worktree.remove-branch-policy.v1`, and `terminal.create-idempotency.v2` | unblocks the version and capability gate (P2-C) |
+| 2 repo kind and folder | held; the folder-kind create observation is a finding below | proves the folder-kind refusal (merged P1-C) live |
+| 3 worktree create shape | held; linked git worktree inside the lab; no startup terminal and no terminal in the response | startup-terminal adoption (merged P1-A) has nothing to adopt here |
+| 4 live terminal count | one terminal already exists after create; a second appears after the adapter's fallback create | startup-terminal adoption (merged P1-A) |
+| 5 control bytes | Escape (`\x1b`) and Ctrl+U (`\x15`) sent without `--enter` reach a `cat -v` shell; `--interrupt` delivers Ctrl+C; `terminal wait` behaves as above | unblocks Escape and Ctrl+U delivery (P2-A) |
+| 6 read status and source | shell and a full-screen program both read `status=running`; `--screen` returns the rendered viewport and shows the full-screen program's text | unblocks viewport capture (P2-F) and agent-state work (P2-B) |
+| 7 fake agent | a command named for a recognized harness gets `agentIdentity` and has its command line rewritten; `worktree ps` agents stays empty; identity is still reported after the agent exits; `terminal create` reports a `processId` that is a lab-owned process | informs agent-state proof (P2-B): identity cannot prove "no agent", a pid is exposed on create |
+| 8 receipts | `--wait-submit` returns a receipt (`provider` and `observation` for a recognized agent, `unsupported` for a plain shell); `--retry-request` replays without repeating input | unblocks delivery receipts (P2-D) |
+| 9 close and remove | landed branch deleted by `--delete-branch`; unmerged branch kept with `preservedBranch`; no terminal, process, or directory left | proves safe branch deletion (merged P1-B) live; informs P2-B |
+| 10 runtime restart | the terminal's process survives a runtime stop; after restart the same handle is listed and readable under a new runtime id | answers gap G11 |
+| 11 browser bridge | not run | slice 1 stays proven by fakes only |
+
+Firstmate-level checks, all against the lab runtime:
+
+- `fm-spawn --backend orca --harness 'sh -c cat'` recorded `backend=orca`, `terminal`, `worktree`, and `orca_worktree_id` inside the lab.
+- `fm-peek` read the recorded terminal, and `fm-send` wrote the durable inbox record and rang the doorbell into the terminal.
+- `fm-send --key Enter` and `--key C-c` were delivered, and `--key Escape` was refused (`key 'Escape' not sent`), which is the P2-A gap.
+- `fm-crew-state` printed a state line for the task (`state: unknown`, because a raw harness has no semantic signal).
+- `fm-teardown` refused a dirty worktree and a branch holding an unlanded commit, leaving the terminal, worktree, and record in place, and a clean teardown then removed the worktree, terminal, branch, and record.
+- The final inventory found zero leftover terminals, non-main worktrees, branches, and lab processes besides the runtime and its terminal host, which the lab then stopped.
+
+Findings, where a real shape contradicts what a merged or held slice assumes:
+
+- `worktree create` returns neither `startupTerminal` nor `terminal` on this runtime, although a terminal already exists, so `fm_backend_orca_worktree_create` adopts nothing and falls back to `terminal create`, and each spawned task ends with two live terminals instead of one.
+  Follow-up: adopt the existing terminal from `terminal list --worktree` before creating one.
+- `worktree create` under a folder-kind repo succeeds and returns the folder itself, so without the adapter's folder refusal a task would run in the operator's own folder.
+- A command whose name Orca recognizes as an agent has its command line rewritten (`--plugin-dir` is appended), and `agentIdentity` stays set after the agent exits, so neither proves "no agent".
+- `terminal create` returns `processId`, which was a live lab-owned process: the pid the held agent-state slice listed as not exposed is exposed on create.
+- The command-line shim cannot be pointed at another data directory by environment, and the default worktree root is under the runtime's home, so a lab needs its own launcher and home.
+
+Not run, and what stays unknown:
+
+- Assertion 11, the browser bridge: the lab runtime reports browser automation unavailable, and a real browser session belongs to the operator's desktop, which the lab must not touch.
+  Unknown: whether a per-task `chrome-devtools-axi` session name avoids the missing-Chromium failure from a worker launched under an Orca terminal.
+- A real agent harness: only a shell script named for one was driven, so real turn start and stop receipts are unobserved.
+- Runtime update behavior, and macOS: record a macOS re-run when a machine is available.
+- A scheduled nightly lane: a pinned runtime artifact, its license, and a mirror are unknown, so a workflow that fails soft on download errors is a documented follow-up.
+
+Refresh this entry by running the lab commands above on a Linux host with the headless runtime installed.
 
 ## cmux
 

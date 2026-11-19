@@ -32,7 +32,7 @@ On macOS the Orca app can show a task's terminal, and the headless runtime on Li
 Routine supervision uses the recorded endpoint through `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'`.
 The adapter delivers Enter and Ctrl+C and does not deliver Escape or Ctrl+U today.
 That is an adapter gap and not an Orca limit, because Orca's help says text sent without `--enter` is written to the terminal verbatim, so control bytes pass through.
-That passthrough has not been exercised live.
+The live lab sent Escape and Ctrl+U to a real terminal and both arrived, so the gap is only the adapter's.
 
 ## Task shape and metadata
 
@@ -88,7 +88,7 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - Secondmate spawns are unsupported.
 - Firstmate gates on readiness alone and sets no version floor, although `orca --version` and the `appVersion` and capability list in `orca status --json` report a version.
 - The adapter reads only verified response fields: the worktree id and path, and a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned. It rejects other response shapes.
-- The startup-terminal adoption and the branch-deleting release have been exercised against a fake Orca only; `verification/runtime-backends.md` lists what a live run must still prove.
+- The branch-deleting release is proven live, and the startup-terminal adoption never fires on the Linux headless runtime because its worktree create names no startup terminal, so each task ends with two live terminals; `verification/runtime-backends.md` records the lab findings.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.
   That check refuses any path that is not a linked git worktree, so it could never accept a project Orca registered as a folder.
 
@@ -115,5 +115,7 @@ tests/fm-backend.test.sh
 tests/fm-bootstrap.test.sh
 tests/fm-teardown-endpoint-safety.test.sh
 ```
+
+The opt-in live lab runs against a throwaway Orca runtime of its own and never the operator's: `env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh`, with its guards proven by `tests/fm-backend-orca-lab-guard.test.sh`.
 
 [`verification/runtime-backends.md`](verification/runtime-backends.md#orca) records the macOS readiness and response-shape smoke and the Linux headless 1.4.261 observations.
