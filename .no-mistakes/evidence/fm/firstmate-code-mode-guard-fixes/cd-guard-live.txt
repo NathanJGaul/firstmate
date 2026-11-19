@@ -1,0 +1,16 @@
+== cd /tmp && ls
+rc=0
+== (cd /tmp && ls)
+rc=0
+== git -C /tmp status
+rc=0
+== ls /tmp
+rc=0
+== missing script
+sh: line 1: /nonexistent/bin/fm-cd-pretool-check.sh: No such file or directory
+rc=127
+[
+  "continue",
+  "continue",
+  "continue"
+]
