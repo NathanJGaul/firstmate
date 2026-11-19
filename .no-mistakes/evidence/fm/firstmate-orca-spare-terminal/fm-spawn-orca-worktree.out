@@ -1,0 +1,5 @@
+ok - an Orca-backed fresh spawn enters the worktree Orca created for it, instead of hard-refusing on the post-launch proof
+ok - a relaunch against an Orca-backed task is refused before the RELAUNCH+orca worktree carve-out could run
+ok - an allowlisted Orca launch keeps every observed ORCA_ variable and still clears the rest
+ok - an Orca launch with no allowlist file still inherits the terminal environment unchanged
+# all fm-spawn-orca-worktree tests passed
