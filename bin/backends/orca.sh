@@ -8,7 +8,9 @@
 # terminal.prompt-delivery.v1 capability: one `terminal send --enter
 # --wait-submit`, replayed by request id, with the composer as the last word.
 # A terminal the runtime says cannot take input is reported as terminal-gone
-# (verdict on stdout, exit 1). Without the capability the verified literal-send
+# (verdict on stdout, exit 1). An agent parked on a permission or trust prompt is
+# refused by the runtime (agent_prompt_blocked) and reported as prompt-blocked
+# the same way: nothing is typed, replayed, or Entered. Without the capability the verified literal-send
 # and Enter loop runs unchanged. See fm_backend_orca_send_text_submit.
 #
 # Target string shape: the Orca terminal id accepted by `orca terminal ...`.
@@ -396,6 +398,9 @@ process.exit(Array.isArray(caps) && caps.includes(process.argv[1]) ? 0 : 1);
 #                (closed, or its process exited) or terminal_handle_stale (a handle it
 #                does not know). Only those two codes, both seen on Orca 1.4.261
 #                (docs/verification/runtime-backends.md); detail = the code
+#   blocked      the runtime refused the send because the agent is showing a
+#                permission or trust prompt (agent_prompt_blocked, seen on Orca
+#                1.4.261): nothing was typed, and the terminal is alive; detail = the code
 #   failed       anything else, including input the runtime did not accept and an
 #                answer that is not JSON (detail = the code or a short reason)
 fm_backend_orca_receipt_class() {
@@ -403,6 +408,7 @@ fm_backend_orca_receipt_class() {
 const fs = require("fs");
 const out = (cls, detail) => process.stdout.write(cls + "\t" + (detail || ""));
 const GONE = new Set(["terminal_not_writable", "terminal_handle_stale"]);
+const BLOCKED = "agent_prompt_blocked";
 let data;
 try {
   data = JSON.parse(fs.readFileSync(0, "utf8"));
@@ -416,7 +422,7 @@ if (!data || typeof data !== "object") {
 }
 if (data.ok === false) {
   const code = data.error && data.error.code;
-  out(GONE.has(code) ? "gone" : "failed", code || "error");
+  out(GONE.has(code) ? "gone" : code === BLOCKED ? "blocked" : "failed", code || "error");
   process.exit(0);
 }
 const r = data.result || {};
@@ -496,7 +502,11 @@ fm_backend_orca_composer_finish() {  # <terminal-id> <retries> <enter-sleep>
 # observations. A receipt the runtime cannot observe (a plain shell, an
 # unrecognized agent) falls to the composer; a terminal the runtime reports as
 # unable to take input prints terminal-gone, names it on stderr, and exits 1 so
-# every caller reads a failed send (the ring and fm-send alone read the word).
+# every caller reads a failed send (the ring and fm-send alone read the word). A
+# runtime refusal because a permission or trust prompt is showing prints
+# prompt-blocked and exits 1 the same way, on the first send or any replay: the
+# terminal is alive, nothing was delivered, and pressing Enter would answer the
+# prompt's default, so it is never retried or Entered here.
 # FM_ORCA_SUBMIT_WAIT sets the per-observation wait in seconds (default 2).
 fm_backend_orca_send_text_receipt() {  # <terminal-id> <text> <retries> <enter-sleep> <settle>
   local terminal=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 wait=${FM_ORCA_SUBMIT_WAIT:-2}
@@ -520,6 +530,11 @@ fm_backend_orca_send_text_receipt() {  # <terminal-id> <text> <retries> <enter-s
       gone)
         echo "error: Orca terminal $terminal is gone ($detail): nothing was delivered" >&2
         printf 'terminal-gone'
+        return 1
+        ;;
+      blocked)
+        echo "error: Orca terminal $terminal is showing a permission or trust prompt ($detail): nothing was delivered; answer the prompt in the terminal, then resend" >&2
+        printf 'prompt-blocked'
         return 1
         ;;
       unsupported)

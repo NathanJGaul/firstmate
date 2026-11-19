@@ -855,7 +855,9 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
 # An endpoint the backend can prove cannot take input echoes terminal-gone and
 # returns nonzero (today only Orca, from its delivery receipts), so a caller
 # that tests only the exit status or send-failed still sees a failed send; the
-# steering ring and fm-send alone read the word.
+# steering ring and fm-send alone read the word. An Orca agent parked on a
+# permission or trust prompt is refused the same way, with the verdict
+# prompt-blocked.
 # A pane that already shows the recognised dialog is refused before any
 # adapter types, so that submit neither types the text nor sends Enter.
 fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
