@@ -364,7 +364,7 @@ SUB=$(O terminal send --terminal "$AG2" --text 'fm-test-receipt-1' --enter --wai
 observe "send --enter --wait-submit receipt: $(jq -c '{prompt: .result.send.prompt, mutation: .result.mutation, warnings: .result.warnings}' <<<"$SUB")"
 REQ=$(jq -r '.result.mutation.requestId // empty' <<<"$SUB")
 wait_for_text "$AG2" 'got: fm-test-receipt-1' 10 || fail "A8: the agent never received the submitted text"
-ok "A8: send --enter --wait-submit delivers the text to the agent and returns a receipt"
+ok "A8: send --enter --wait-submit delivers the text to the agent"
 if [ -n "$REQ" ]; then
   REPLAY=$(O terminal send --terminal "$AG2" --text 'fm-test-receipt-1' --enter --retry-request "$REQ" --json)
   sleep 1
@@ -399,7 +399,7 @@ RM_B=$(O worktree rm --worktree "id:$WT_B_ID" --force --delete-branch --json)
 [ "$(jq -r '.result.removed' <<<"$RM_B")" = true ] || fail "A9: removing the unmerged worktree did not report removed=true"
 [ ! -e "$WT_B_PATH" ] || fail "A9: the unmerged worktree directory still exists"
 git -C "$SCRATCH" show-ref --verify --quiet "refs/heads/$UNLANDED" || fail "A9: the unmerged branch was DELETED by worktree rm --delete-branch"
-ok "A9: removing a worktree whose branch holds unmerged work keeps the branch and reports preservedBranch"
+ok "A9: removing a worktree whose branch holds unmerged work keeps the branch"
 observe "unmerged worktree rm result: $(jq -c .result <<<"$RM_B")"
 git -C "$SCRATCH" branch -D "$UNLANDED" >/dev/null 2>&1 || true
 
