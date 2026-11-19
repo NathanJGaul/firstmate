@@ -2009,7 +2009,7 @@ Firstmate-level checks, all against the lab runtime:
 
 - `fm-spawn --backend orca --harness 'sh -c cat'` recorded `backend=orca`, `terminal`, `worktree`, and `orca_worktree_id` inside the lab.
 - `fm-peek` read the recorded terminal, and `fm-send` wrote the durable inbox record and rang the doorbell into the terminal.
-- `fm-send --key Enter` and `--key C-c` were delivered, and `--key Escape` was refused (`key 'Escape' not sent`), which is the P2-A gap.
+- `fm-send --key Enter` and `--key C-c` were delivered, and `--key Escape` was refused (`key 'Escape' not sent`) before the Escape and Ctrl+U delivery below landed.
 - `fm-crew-state` printed a state line for the task (`state: unknown`, because a raw harness has no semantic signal).
 - `fm-teardown` refused a dirty worktree and a branch holding an unlanded commit, leaving the terminal, worktree, and record in place, and a clean teardown then removed the worktree, terminal, branch, and record.
 - The final inventory found zero leftover terminals, non-main worktrees, branches, and lab processes besides the runtime and its terminal host, which the lab then stopped.
@@ -2093,6 +2093,32 @@ Not run, and what stays unknown:
 - A scheduled nightly lane: a pinned runtime artifact, its license, and a mirror are unknown, so a workflow that fails soft on download errors is a documented follow-up.
 
 Refresh this entry by running the lab commands above on a Linux host with the headless runtime installed.
+
+### Linux, headless runtime 1.4.261, Escape and Ctrl+U delivery and the version gate
+
+Observed on 2026-11-19 with the same lab, after the adapter began delivering Escape and Ctrl+U and gating them on the runtime status (specs/007-orca-escape-delivery).
+
+```sh
+bin/fm-test-run.sh tests/fm-backend-orca.test.sh
+bin/fm-test-run.sh tests/fm-control.test.sh
+env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh
+```
+
+What the lab proved against the runtime it started:
+
+- `fm_backend_orca_runtime_check` accepted `appVersion=1.4.261`, the floor, and recorded the capability list.
+- The runtime reports `terminal.ordered-input.v1`, the capability Escape and Ctrl+U delivery is gated on.
+  Orca reports no capability named for control-byte passthrough, and the 306-entry list holds none; this one is the closest marker, present on the runtime where passthrough was proven.
+- `fm_backend_send_key orca <terminal> Escape` reached a `cat -v` shell as `^[` and `C-u` cleared a typed line, so the adapter's bytes (`\x1b` and `\x15`, sent with `terminal send --text` and no `--enter`) match the raw bytes the earlier assertion proved.
+- `fm-send --key Escape` reached a task terminal as a raw Escape: the line discipline echoed `^[`.
+- `fm-control interrupt` on a task recorded with a verified Escape harness delivered one Escape and printed `interrupt-delivered <id> harness=claude backend=orca verified=endpoint cancel=unconfirmed`.
+- `fm-control exit` and `fm-control relaunch` stayed refused on Orca, naming the missing recovery-grade agent-state classifier.
+
+Not run: an interrupt of a real harness turn.
+The lab's isolated home holds no harness credentials, and a turn spends model tokens, so the interrupt above used the lab's raw terminal with its record labelled as a verified harness, which proves the control path and the byte delivery but not any harness's reaction to the Escape.
+Each harness's own cancel behavior is recorded in the `harness-adapters` skill, measured on the backend that harness was verified on.
+Also not run: any Orca older than 1.4.261.
+The floor is the one runtime this adapter has live proof for, so the 1.4.116 macOS app recorded above is below it and is refused at spawn until it is updated or re-proven.
 
 ## cmux
 

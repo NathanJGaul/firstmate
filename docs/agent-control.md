@@ -165,7 +165,7 @@ The worktree and the task's records are unaffected either way.
 - An adapter that is not verified for this task's kind is refused **before** the running agent is stopped, not after.
   Muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
-  Orca's adapter delivers only Enter and Ctrl+C today, so it does not deliver Escape or Ctrl+U, and [`orca-backend.md`](orca-backend.md) owns the Orca operating posture.
+  Orca delivers all four keys, but Escape and Ctrl+U only when its runtime reports the capability they are gated on, and the adapter refuses before sending when it does not; [`orca-backend.md`](orca-backend.md) owns that gate and the Orca operating posture.
 - `exit` and `relaunch` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" postcondition cannot be proven.
   zellij, orca, and cmux are refused rather than reported as successful blind.
 - An ambiguous or unreadable endpoint state refuses.
@@ -185,7 +185,7 @@ Backend capability comes from each adapter's real surface, not from a policy cho
 | herdr | yes | yes | yes | yes | yes |
 | zellij | yes | yes | yes | yes | no |
 | cmux | yes | yes | yes | yes | no |
-| orca | no | yes | yes | no | no |
+| orca | yes, when the runtime reports the capability | yes | yes | yes, when the runtime reports the capability | no |
 
 Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`, with adapters outside its lane pinning their control mechanics in their own harness suites.
 The empirical basis for each adapter's value is the `harness-adapters` skill's verification record for that adapter.
