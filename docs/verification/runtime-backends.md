@@ -1965,6 +1965,32 @@ The lane refuses an inherited `ORCA_USER_DATA_PATH` that is, contains, or lies i
 `FM_ORCA_LIVE_SECTIONS` selects `orca`, `firstmate`, or `all` (default).
 A passing run printed `passed=36` hard assertions and the findings below, left no lab process, directory, systemd scope, worktree, or branch, and left the operator's runtime running.
 
+#### Lab isolation: HOME, PATH, and inherited Orca terminal variables
+
+Found on 2026-11-19 against Orca 1.4.261 while mapping the agentic CLI, and closed by `tests/orca-lab-safety.sh`.
+
+- `orca agent hooks status` computes each agent's `configPath` client-side from the caller's `HOME`.
+  Run through a launcher that left `HOME` alone, it named the operator's real `~/.claude/settings.json` and six other real agent config files as installed.
+  The command is read-only, but `agent hooks on|off` and `skills install|update|share` write to those same paths, so a lab extended past read-only calls would have written to the operator's agent configuration.
+  The launcher now exports `HOME` as a fresh lab home that `orca_lab_validate_home` accepts only when it is empty and is not, does not contain, and does not lie inside the operator's `HOME`, the Orca directories, or the agent config directories, and `orca_lab_write_launcher` refuses to write without one.
+  It also removes `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, and the four `XDG_*_HOME` pointers.
+  Those eight names are removed as defense in depth, because none of them was observed to redirect a config path.
+  The live lane's assertion H1 runs `agent hooks status --json` through the launcher and fails unless every reported `configPath` lies inside the lab home.
+- The runtime starts a real `codex app-server` by name at boot.
+  A fake `codex` on the lab `PATH` caught `codex -c approval_policy=never -c features.plugins=false -s read-only -a never app-server` with an `initialize` message from client `orca_desktop`, one second after the runtime became ready.
+  A lab runtime whose `PATH` reaches a real `codex` therefore runs it with whatever credentials its `HOME` holds, and the same holds for any agent a terminal command names.
+  The lane now starts the runtime with `PATH` built by `orca_lab_runtime_path` as the lab bin directory plus `/usr/bin:/bin`, never inherited, and `orca_lab_assert_path_agent_free` refuses to start when any entry holds an executable named for an agent harness or is empty or relative.
+  On this host the operator's inherited `PATH` reaches `claude`, `codex`, `copilot`, `cursor-agent`, `gemini`, `grok`, `muse`, `omp`, `opencode`, and `pi`, and the check refuses it.
+- A worker shell can inherit the primary terminal's `ORCA_TERMINAL_HANDLE` and `ORCA_WORKTREE_ID`, so a bare `orca terminal read|send` or `orca agent launch` from that shell would act on the primary's terminal and workspace.
+  Traced on 2026-11-19 from the `/proc` ancestry of a Herdr-backed worker (task metadata `backend=herdr`): every ancestor up to and including the `herdr server --session default` process carried `ORCA_TERMINAL_HANDLE`, and the server's parent was a firstmate script run from the primary's Orca terminal.
+  So that variable reached the worker through the Herdr server's environment, which the server received when it was first started from the primary's Orca terminal; it did not come from the worker's own launch line.
+  The opt-in launch-environment filter forwards every `ORCA_` name on purpose (`ORCA_FLOOR_NAMES` in `bin/fm-spawn.sh`), so it does not clear the inheritance either.
+  Not traced: a worker started on the Orca backend, where Orca sets these variables for the terminal it creates; whether they then name the primary's terminal or the task's own is unknown.
+  Every `orca` call in `bin/backends/orca.sh` passes an explicit `--terminal` or `--worktree id:` selector, and that must hold for every new call; the lab launcher removes every `ORCA_*` variable before running the CLI.
+  Re-check with `tr '\0' '\n' < /proc/<pid>/environ | grep -c '^ORCA_TERMINAL_HANDLE='` along the worker's parent chain.
+
+`tests/fm-backend-orca-lab-guard.test.sh` pins the launcher pin, the refused homes, the `PATH` builder and check, and the config-path check without Orca installed.
+
 Runtime facts observed:
 
 ```text

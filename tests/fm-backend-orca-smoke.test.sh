@@ -10,7 +10,10 @@
 #   - The runtime is a child of this script on a fresh data directory
 #     (ORCA_USER_DATA_PATH, refused if it is, contains, or lies inside ~/.orca or
 #     ~/.orca-remote), its own HOME, a free loopback port, and a launcher pinned
-#     to that directory with every other ORCA_* variable removed.
+#     to that directory and that HOME with every other ORCA_* variable removed.
+#   - The runtime's PATH is the lab bin plus /usr/bin:/bin, and the lane refuses
+#     to start when it could reach a real agent: the runtime runs `codex
+#     app-server` by name at boot.
 #   - Every mutating step is preceded by the proof that the answering runtime is
 #     this script's own child; signals go only to processes proven the lab's.
 #   - Every object carries the fm-test- prefix and is removed by exact id; the
@@ -99,7 +102,7 @@ discover_runtime() {
 }
 discover_runtime || fail "FM_ORCA_LIVE_E2E=1 was requested but the headless Orca runtime was not found: need its node binary, CLI entry, and orcad.js (read from the shim in \$ORCA_CLI_BIN_DIR or ~/.orca/cli/bin; override with FM_ORCA_LIVE_NODE, FM_ORCA_LIVE_CLI_ENTRY, FM_ORCA_LIVE_ORCAD)"
 
-orca_lab_write_launcher "$BIN" "$DATA" "$NODE_BIN" "$CLI_ENTRY" || fail "cannot write the lab launcher"
+orca_lab_write_launcher "$BIN" "$DATA" "$NODE_BIN" "$CLI_ENTRY" "$LAB/home" || fail "cannot write the lab launcher (it pins HOME to the fresh lab home, refused above if unsafe)"
 O() { "$BIN/orca" "$@"; }
 
 # Every later `orca` the repo's adapter runs resolves to the lab launcher first.
@@ -112,9 +115,14 @@ PORT=$("$NODE_BIN" -e 'const s=require("net").createServer();s.listen(0,"127.0.0
 [ -n "$PORT" ] || fail "cannot pick a free loopback port"
 
 start_runtime() {
-  local v unset_args=()
+  local v unset_args=() rt_path
+  # The runtime starts `codex ... app-server` by name at boot and any command a
+  # terminal names, so its PATH is built from the lab bin and the system
+  # directories and refused if it could reach a real agent.
+  rt_path=$(orca_lab_runtime_path "$BIN") || fail "cannot build the lab runtime PATH"
+  orca_lab_assert_path_agent_free "$rt_path" || fail "the lab runtime PATH can reach a real agent binary (see above); nothing was started"
   for v in $(env | sed -n 's/^\(ORCA_[A-Za-z0-9_]*\)=.*/\1/p'); do unset_args+=(-u "$v"); done
-  (cd "$LAB" && exec env "${unset_args[@]}" HOME="$LAB/home" ORCA_USER_DATA_PATH="$DATA" ORCA_USER_DATA="$DATA" \
+  (cd "$LAB" && exec env "${unset_args[@]}" HOME="$LAB/home" PATH="$rt_path" ORCA_USER_DATA_PATH="$DATA" ORCA_USER_DATA="$DATA" \
     "$NODE_BIN" "$ORCAD_JS" --json --bind 127.0.0.1 --port "$PORT" --no-pairing \
     > "$LAB/serve.out" 2> "$LAB/serve.err" < /dev/null) &
   CHILD=$!
@@ -133,6 +141,19 @@ own() { orca_lab_assert_own_runtime "$DATA" "$CHILD" "$BIN/orca" || fail "the an
 
 start_runtime
 own
+
+# --- isolation proof: the launcher's HOME pin reaches the CLI --------------------------
+# `agent hooks status` computes its config paths client-side from HOME and is
+# read-only; run through the lab launcher every path it names must lie inside the
+# lab home, never in the operator's real agent config directories.
+
+section "H1 isolation (the launcher pins HOME; the runtime PATH holds no real agent)"
+if HOOKS_STATUS=$(O agent hooks status --json 2>/dev/null); then
+  orca_lab_paths_under_home "$LAB/home" "$HOOKS_STATUS" || fail "H1: agent hooks status names a config path outside the lab home (the HOME pin did not reach the CLI)"
+  ok "H1: every agent hooks status config path lies inside the lab home"
+else
+  notrun "H1: this runtime has no 'agent hooks status', so the HOME pin is proven by the portable guard test only"
+fi
 
 # read helpers shared by both sections
 read_tail() { O terminal read --terminal "$1" --json | jq -r '.result.terminal.tail | join("\n")'; }
