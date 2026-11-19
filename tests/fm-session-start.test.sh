@@ -1424,6 +1424,61 @@ EOF
   pass "herdr endpoint liveness is reported per task: alive, dead for exit 1, dead for any other probe status"
 }
 
+# make_fake_orca <fakebin>: `orca terminal show|read --terminal <handle> --json`
+# answer with the real shapes recorded in the isolated lab. term-live is
+# connected and writable (read: status running), term-exited and term-closed are
+# neither (read: ok:true with status exited, the answer that once made a dead
+# terminal look present), and every other handle is one the runtime never issued
+# (ok:false terminal_handle_stale, exit 1). Every other verb answers ok:false.
+make_fake_orca() {
+  local fakebin=$1
+  cat > "$fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = terminal ] && [ "${3:-}" = --terminal ]; then
+  case "${2:-}:${4:-}" in
+    show:term-live) printf '{"ok":true,"result":{"terminal":{"handle":"term-live","connected":true,"writable":true,"agentWait":null}}}\n'; exit 0 ;;
+    show:term-exited) printf '{"ok":true,"result":{"terminal":{"handle":"term-exited","connected":false,"writable":false,"exitCause":{"kind":"exited","exitCode":0}}}}\n'; exit 0 ;;
+    show:term-closed) printf '{"ok":true,"result":{"terminal":{"handle":"term-closed","connected":false,"writable":false,"exitCause":{"kind":"operator_close"}}}}\n'; exit 0 ;;
+    read:term-live) printf '{"ok":true,"result":{"terminal":{"handle":"term-live","status":"running","tail":["idle prompt"]}}}\n'; exit 0 ;;
+    read:term-exited|read:term-closed) printf '{"ok":true,"result":{"terminal":{"handle":"%s","status":"exited","tail":[]}}}\n' "${4:-}"; exit 0 ;;
+    show:*|read:*) printf '{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal_handle_stale"}}\n'; exit 1 ;;
+  esac
+fi
+printf '{"ok":false,"error":{"code":"unexpected","message":"unexpected orca call"}}\n'
+exit 1
+SH
+  chmod +x "$fakebin/orca"
+}
+
+test_orca_endpoint_states_in_the_digest() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-orca)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_orca "$fakebin"
+  # The shared toolchain stubs node out; the Orca presence read parses the CLI's
+  # JSON with it, so this case runs the real node (the adapter already needs it).
+  ln -sf "$(command -v node)" "$fakebin/node"
+
+  printf 'window=fm-live\nterminal=term-live\nkind=ship\nbackend=orca\nendpoint_task_id=live\n' > "$home/state/task-live.meta"
+  printf 'window=fm-exited\nterminal=term-exited\nkind=ship\nbackend=orca\nendpoint_task_id=exited\n' > "$home/state/task-exited.meta"
+  printf 'window=fm-closed\nterminal=term-closed\nkind=ship\nbackend=orca\nendpoint_task_id=closed\n' > "$home/state/task-closed.meta"
+  printf 'window=fm-stale\nterminal=term-stale\nkind=ship\nbackend=orca\nendpoint_task_id=stale\n' > "$home/state/task-stale.meta"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: alive (backend=orca window=fm-live)" "a live Orca terminal was not reported alive"
+  assert_contains "$out" "endpoint: dead (backend=orca window=fm-exited)" "an exited Orca shell was not reported dead"
+  assert_contains "$out" "endpoint: dead (backend=orca window=fm-closed)" "a closed Orca terminal was not reported dead"
+  assert_contains "$out" "endpoint: dead (backend=orca window=fm-stale)" "a stale Orca handle was not reported dead"
+  assert_not_contains "$out" "endpoint: error (backend=orca" "an Orca endpoint read was mislabelled as a failed read"
+
+  pass "orca endpoint liveness is reported per task: alive for a connected writable terminal, dead for an exited, closed, or stale one"
+}
+
 test_endpoint_read_death_is_isolated_and_reported() {
   local rec root home fakebin out status=0
   [ -r /proc/self/stat ] || { echo "skip: /proc not readable (the read-death shape needs process ancestry)"; return 0; }
@@ -3038,6 +3093,7 @@ test_status_tail_line_cap
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
+test_orca_endpoint_states_in_the_digest
 test_endpoint_read_death_is_isolated_and_reported
 test_endpoint_read_hang_is_bounded_and_reported
 test_endpoint_bound_rejects_padded_zero

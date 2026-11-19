@@ -73,7 +73,10 @@ A terminal the runtime reports as closed, exited, or unknown makes the send fail
 On the typed plane, `fm-send.sh` verifies composer clearance through the fleet-wide classifier in `bin/fm-composer-lib.sh`, retrying Enter without retyping when a slash popup first fills an argument placeholder.
 The composer read is one bounded tail of the live terminal and never pages backward into scrollback, so a stale startup banner cannot compete with the bottom-anchored composer.
 A bare shell row is `unknown`, not an empty agent composer, and plain-text captures degrade a glyph row carrying trailing text to `unknown` rather than a false `pending`.
-Orca exposes native agent state through `orca worktree ps`, `orca terminal show`, and `orca terminal wait --for tui-idle`, and Firstmate does not use it today.
+Orca exposes native agent state through `orca worktree ps`, `orca terminal show`, and `orca terminal wait --for tui-idle`, and Firstmate does not use it for worker state.
+The one field it reads from `terminal show` is the terminal's own presence record: the cheap endpoint-presence check, the session-start digest's `endpoint:` line, and `fm-crew-state.sh` treat a terminal as present only when Orca reports it connected and writable.
+An exited shell, a closed terminal, and a handle the runtime answers `terminal_handle_stale` for read as gone, even though `terminal read` still answers successfully for the first two.
+Any other answer, including a stopped runtime, an unparseable reply, or a record that contradicts itself, reads as unreadable rather than gone, so a failed read never licenses recovery.
 Each harness adapter's semantic lifecycle supplies worker state instead, and for Claude that is the hooks Firstmate installs.
 Grok alone retains its isolated rendered-tail fallback.
 
@@ -93,10 +96,10 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 - Orca is explicit-only.
 - A ready Orca runtime is required: the app on macOS or the headless runtime on Linux.
 - Secondmate spawns are unsupported.
-- A receipt proves Orca accepted input and, for a recognized agent, that its turn started; it does not prove which agent runs in a live terminal, so `fm_backend_agent_state` stays unverified for Orca.
 - Before any spawn mutates repository state, Firstmate reads `appVersion` and the capability list from `orca status --json` and refuses a runtime whose version is below 1.4.261, the lowest runtime proven against this adapter.
   A runtime that reports no readable version is not refused, but it reports no capability either, so nothing gated on one is enabled for it.
   A task already running is not re-checked, so only a new spawn meets the floor.
+- A receipt and a present endpoint prove Orca accepted input and, for a recognized agent, that its turn started; neither proves which process runs in a live terminal, so `fm_backend_agent_state` reports `missing` for an absent terminal, `unreadable` for a read that failed, and `unverified` for every live terminal, and the control plane's exit and relaunch verbs stay refused on Orca.
 - The adapter reads only verified response fields: the worktree id and path, a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned, and the `result.terminals[]` rows of `terminal list --worktree`. It rejects other response shapes.
 - The branch-deleting release and the one-terminal-per-task adoption are proven live on the Linux headless runtime: after spawn, `worktree ps` reports `liveTerminalCount=1`, and teardown leaves no terminal behind; `verification/runtime-backends.md` records the lab results.
 - The worktrees Orca's command line creates are linked git worktrees sharing the project's git common dir (observed on Linux with Orca 1.4.261), so the spawn-time Claude workspace-trust check in `bin/fm-claude-trust.sh` accepts them.

@@ -319,6 +319,14 @@ EXPECTED_LABEL="fm-$ID"
 pane_readable() {  # <target>
   case "$TASK_BACKEND" in
     tmux) tmux display-message -p -t "$1" '#{pane_id}' >/dev/null 2>&1 ;;
+    # Orca's tail read succeeds for an exited or closed terminal, so presence
+    # comes from the endpoint's own connected and writable record instead.
+    # The verdict is kept for the fallback below, so one read answers both.
+    orca)
+      fm_backend_source orca || return 1
+      CREW_ORCA_ENDPOINT=$(fm_backend_orca_endpoint_state "$1")
+      [ "$CREW_ORCA_ENDPOINT" = present ]
+      ;;
     *) fm_backend_capture "$TASK_BACKEND" "$1" 1 "$EXPECTED_LABEL" >/dev/null 2>&1 ;;
   esac
 }
@@ -1259,22 +1267,26 @@ if ! pane_readable "$BACKEND_TARGET"; then
   #             normal flow below instead of being discarded.
   #   anything else - the cheap probes themselves failed to answer or
   #             contradicted themselves, which is unknown, never death.
-  # Backends with no classifier (orca, zellij, and cmux all report unverified)
-  # keep their historical capture-failure-means-gone reading.
+  # Orca reports only endpoint presence (no process classifier yet), read once
+  # by pane_readable: `missing` is the runtime positively saying the terminal is
+  # gone, and anything it cannot prove (`unreadable`) is unreachable, never gone.
+  # Backends with no classifier (zellij and cmux report unverified) keep their
+  # historical capture-failure-means-gone reading.
   case "$TASK_BACKEND" in
     tmux|herdr) AGENT_STATE=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET") ;;
+    orca) AGENT_STATE=${CREW_ORCA_ENDPOINT:-unreadable} ;;
     *) AGENT_STATE=none ;;
   esac
   case "$TASK_BACKEND:$AGENT_STATE" in
     tmux:alive|herdr:alive)
       ;;
-    tmux:missing|herdr:missing)
+    tmux:missing|herdr:missing|orca:missing)
       emit unknown none "backend target gone: $BACKEND_TARGET"
       ;;
     tmux:dead|herdr:dead)
       emit unknown none "backend target gone: $BACKEND_TARGET (agent gone, pane shell remains)"
       ;;
-    tmux:*|herdr:*)
+    tmux:*|herdr:*|orca:*)
       emit unknown none "backend unreachable ($TASK_BACKEND endpoint state: $AGENT_STATE)"
       ;;
     *)

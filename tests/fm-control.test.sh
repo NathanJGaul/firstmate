@@ -563,6 +563,7 @@ set -u
 case "${1:-}:${2:-}" in
   status:*) cat "$FM_FAKE_DIR/status.json" ;;
   terminal:read) printf '{"ok":true,"result":{"terminal":{"tail":["$ "]}}}\n' ;;
+  terminal:show) printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":true,"writable":true}}}\n' "${4:-term}" ;;
   terminal:send) printf '{"ok":true,"result":{"accepted":true}}\n' ;;
   *) printf '{"ok":true,"result":{}}\n' ;;
 esac
