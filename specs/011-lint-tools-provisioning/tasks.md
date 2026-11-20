@@ -16,7 +16,7 @@
 
 **Independent test**: run `bin/fm-lint.sh` under `env -i` with a daemon-like search path after provisioning.
 
-- [X] T003 [US1] [A1] [A2] [A3] [U1] [U2] [U3] [U4] Write tests in `tests/fm-lint-tools.test.sh` for managed-directory fallback, search-path precedence, and off-pin refusal (red first)
+- [X] T003 [US1] [A1] [A2] [A3] [U1] [U2] [U3] [U4] Write tests in `tests/fm-lint-tools.test.sh` for managed-first resolution over an off-pin search-path tool, search-path acceptance of a pinned tool, and off-pin refusal (red first)
 - [X] T004 [US1] [A1] [A2] [A3] [U1] [U2] [U3] [U4] Make `bin/fm-lint.sh` resolve ShellCheck through the library
 - [X] T005 [US1] [A1] [A3] Make `bin/fm-lint-workflows.sh` resolve actionlint through the library
 - [X] T006 [US1] [U10] [U11] Set `FM_LINT_TOOLS_DIR` to an empty directory in the missing-tool tests of `tests/fm-lint.test.sh` and `tests/fm-lint-workflows.test.sh`
