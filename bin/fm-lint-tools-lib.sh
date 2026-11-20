@@ -46,7 +46,7 @@ fm_lint_tool_version() {
 }
 
 fm_lint_tool_resolve() {
-  local name=$1 pin=$2 managed= found
+  local name=$1 pin=$2 managed='' found
   local dir
   if dir=$(fm_lint_tools_dir) && [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
     managed=$dir/$name
