@@ -10,8 +10,8 @@
 # without downloading.
 #
 # With no destination the binary goes into the managed pinned-tool directory
-# that bin/fm-lint-tools-lib.sh owns, where the lint entry points look when the
-# tool is not on PATH; bin/fm-install-lint-tools.sh provisions both tools there.
+# that bin/fm-lint-tools-lib.sh owns, where the lint entry points prefer a tool that
+# reports the pin over PATH; bin/fm-install-lint-tools.sh provisions both tools there.
 #
 # Usage:
 #   fm-install-shellcheck.sh [<destination-directory>]

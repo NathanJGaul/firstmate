@@ -5,7 +5,7 @@
 # directory that bin/fm-lint-tools-lib.sh owns, using the same checksum-verified
 # installers CI runs (bin/fm-install-shellcheck.sh and
 # bin/fm-install-actionlint.sh). bin/fm-lint.sh and bin/fm-lint-workflows.sh
-# fall back to that directory when a tool is not on PATH, which is how the
+# prefer that directory over PATH when its tool reports the pin, which is how the
 # shared no-mistakes daemon's fixed search path finds them without any change
 # to the daemon. A tool already at its pinned version is skipped, so repeating
 # the command downloads nothing. It never starts, stops, or configures the
