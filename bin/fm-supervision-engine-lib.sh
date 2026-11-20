@@ -376,6 +376,10 @@ fm_supervision_engine_turn() {
   ledger=$(mktemp "$STATE/.supervision-host-descendants.XXXXXX") || return 127
   (
     cd "$FM_ROOT" || exit 127
+    # The engine is a print-mode run, which Claude Code's Code Mode ignores, but
+    # a stray variable must never decide: Code Mode is an explicit per-launch
+    # choice owned by bin/fm-spawn.sh (docs/configuration.md "Claude Code Mode").
+    unset CLAUDE_CODE_EXPERIMENTAL_CODE_MODE
     fm_exec_timed "$timeout" "$grace" "$bin" "${args[@]}"
   ) </dev/null >"$result" 2>"$errors" &
   watched=$!

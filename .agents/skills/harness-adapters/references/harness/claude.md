@@ -70,7 +70,7 @@ A `--secondmate` launch omits the statement because a secondmate operates under 
 
 Claude Code's Code Mode lets the model write JavaScript that calls the session's tools.
 Lab evidence: [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#claude-code-code-mode-2026-11-19).
-Firstmate keeps it off for primaries and secondmates, and enables it nowhere; nothing in `../../../../../bin/fm-spawn.sh` sets it.
+Firstmate keeps it off for primaries and secondmates, and enables it only for scouts through the opt-in `config/claude-code-mode` knob, which `../../../../../docs/configuration.md#claude-code-mode-configclaude-code-mode` owns.
 
 | Fact | Value |
 |---|---|
@@ -80,7 +80,7 @@ Firstmate keeps it off for primaries and secondmates, and enables it nowhere; no
 | Hook failure | A PreToolUse hook that cannot start or times out refuses the call under Code Mode. The tracked PreToolUse hooks set `"onFailure": "continue"`; `../../../../../docs/turnend-guard.md#claude-code-code-mode` owns the semantics. |
 | Resume | A session started in Code Mode resumes only with Code Mode on, and `-p --resume` refuses it. `../../../../../docs/agent-control.md` has no resume verb and records no verified Claude pane-resume contract, so a relaunch builds a fresh agent from the brief and only a person typing `claude --resume` meets the rule. |
 | cwd wrapper | `.cwd(dir)` reaches hooks as `cd '<dir>' && <cmd>`, which the cd guard denies; `../../../../../docs/cd-guard.md#claude-code-code-mode` owns the rule: never `.cwd()` or a leading `cd`. |
-| Enablement | A tmux server keeps the environment of the client that started it, so a caller-side export reaches a worker only when that spawn started the server; set or scrub the variable inside the pane command if it is ever launched deliberately. |
+| Enablement | Only the launch line decides: a qualifying scout carries `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` and every other template launch carries `env -u` for it, because a tmux server keeps the environment of the client that started it, so a caller-side export reaches a worker only when that spawn started the server and a `config/launch-env-allowlist` strips it. `../../../../../bin/fm-claude-code-mode-lib.sh` reads the dialog acceptance (`codeModeCaveatsAcceptedV1` in the config directory's `.claude.json`) and never writes it; a scout in an unaccepted directory launches without Code Mode and the spawn says why. |
 
 ## Primary integration
 
