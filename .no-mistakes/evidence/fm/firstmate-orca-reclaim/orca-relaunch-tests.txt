@@ -1,0 +1,6 @@
+ok - fm-control relaunch on orca: a dead terminal is adopted - same handle, no create, no close, work untouched
+ok - fm-control relaunch on orca: a gone terminal is closed, one fresh terminal is created by the recorded worktree id, and the record is republished
+ok - fm-control relaunch on orca: a wedged agent is refused, then closed on the receipt and reclaimed with --close-terminal
+ok - fm-control relaunch on orca: every failure keeps the record, leaves no stray terminal, and never touches the worktree
+ok - fm-spawn --relaunch on orca: the runtime's readiness is checked before any mutation
+ok - fm-spawn --relaunch on orca: an alive agent, a non-local runtime, and a secondmate each refuse before anything changes
