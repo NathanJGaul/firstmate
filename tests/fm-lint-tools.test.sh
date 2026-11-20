@@ -5,7 +5,7 @@
 # fixed search path, so the pinned ShellCheck and actionlint that workers and CI
 # put on their own PATH are invisible to it. bin/fm-lint-tools-lib.sh owns one
 # per-user managed directory that bin/fm-lint.sh and bin/fm-lint-workflows.sh
-# fall back to, bin/fm-install-lint-tools.sh provisions it, and these cases pin
+# prefer, bin/fm-install-lint-tools.sh provisions it, and these cases pin
 # the lookup order, the version refusal, the provisioning contract, and the
 # resolution from a clean `env -i` environment that mimics the daemon.
 # Every case sets FM_LINT_TOOLS_DIR or a temporary HOME, so a developer machine
@@ -106,7 +106,7 @@ test_dir_without_a_home_is_absent_not_an_error() {
   out=$(env -i PATH="$DAEMON_BIN" bash -c "$LIB_DRIVER" _ "$LIB" fm_lint_tools_dir 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "a missing home still produced a directory: $out"
   rc=0
-  out=$(env -i PATH="$DAEMON_BIN" bash -c "$LIB_DRIVER" _ "$LIB" fm_lint_tool_resolve shellcheck 2>&1) || rc=$?
+  out=$(env -i PATH="$DAEMON_BIN" bash -c "$LIB_DRIVER" _ "$LIB" fm_lint_tool_resolve shellcheck "$SC_PIN" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "resolution without a home expected rc 1, got $rc: $out"
   assert_equals "" "$out" "resolution without a home printed output"
   pass "no home and no override reads as an absent directory"
@@ -118,7 +118,7 @@ test_resolve_ignores_a_non_executable_managed_file() {
   mkdir -p "$tmp/tools"
   : > "$tmp/tools/shellcheck"
   env -i FM_LINT_TOOLS_DIR="$tmp/tools" PATH="$DAEMON_BIN" \
-    bash -c "$LIB_DRIVER" _ "$LIB" fm_lint_tool_resolve shellcheck >/dev/null 2>&1 || rc=$?
+    bash -c "$LIB_DRIVER" _ "$LIB" fm_lint_tool_resolve shellcheck "$SC_PIN" >/dev/null 2>&1 || rc=$?
   [ "$rc" -eq 1 ] || fail "a non-executable managed file was resolved (rc=$rc)"
   pass "a non-executable managed file is ignored"
 }
@@ -140,20 +140,20 @@ test_clean_env_resolves_the_default_managed_directory() {
   pass "a clean daemon-like environment resolves both pinned tools from the default directory"
 }
 
-test_search_path_wins_over_the_managed_directory() {
+test_pinned_managed_wins_over_an_off_pin_search_path_tool() {
   local tmp out rc=0 marker target
   tmp=$(fm_test_tmproot fm-lint-tools-order)
   marker="$tmp/ran"
-  write_tool "$tmp/pathbin" shellcheck "$SC_PIN" "$marker"
-  write_tool "$tmp/pathbin" actionlint "$AL_PIN" "$marker"
+  write_tool "$tmp/pathbin" shellcheck "0.10.0" "$marker"
+  write_tool "$tmp/pathbin" actionlint "1.7.0" "$marker"
   write_tool "$tmp/tools" shellcheck "$SC_PIN" "$marker"
   write_tool "$tmp/tools" actionlint "$AL_PIN" "$marker"
   target="$tmp/probe.sh"
   printf '#!/usr/bin/env bash\ntrue\n' > "$target"
   out=$(env -i FM_LINT_TOOLS_DIR="$tmp/tools" PATH="$tmp/pathbin:$DAEMON_BIN" "$LINT" "$target" 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || fail "lint with both locations failed (rc=$rc)"$'\n'"$out"
-  grep -q "$tmp/pathbin/shellcheck" "$marker" || fail "the search-path ShellCheck did not run"
-  grep -q "$tmp/tools/shellcheck" "$marker" && fail "the managed ShellCheck ran despite a search-path one"
+  [ "$rc" -eq 0 ] || fail "lint with an off-pin search-path tool failed (rc=$rc)"$'\n'"$out"
+  grep -q "$tmp/tools/shellcheck" "$marker" || fail "the pinned managed ShellCheck did not run"
+  grep -q "$tmp/pathbin/shellcheck" "$marker" && fail "the off-pin search-path ShellCheck ran"
   : > "$marker"
   rc=0
   mkdir -p "$tmp/wf/.github/workflows"
@@ -161,10 +161,43 @@ test_search_path_wins_over_the_managed_directory() {
     > "$tmp/wf/.github/workflows/t.yml"
   env -i FM_LINT_TOOLS_DIR="$tmp/tools" PATH="$tmp/pathbin:$DAEMON_BIN" \
     "$LINT_WF" --root "$tmp/wf" >/dev/null 2>&1 || rc=$?
-  [ "$rc" -eq 0 ] || fail "workflow lint with both locations failed (rc=$rc)"
-  grep -q "$tmp/pathbin/actionlint" "$marker" || fail "the search-path actionlint did not run"
-  grep -q "$tmp/tools/actionlint" "$marker" && fail "the managed actionlint ran despite a search-path one"
-  pass "a tool on the search path wins over the managed directory"
+  [ "$rc" -eq 0 ] || fail "workflow lint with an off-pin search-path tool failed (rc=$rc)"
+  grep -q "$tmp/tools/actionlint" "$marker" || fail "the pinned managed actionlint did not run"
+  grep -q "$tmp/pathbin/actionlint" "$marker" && fail "the off-pin search-path actionlint ran"
+  pass "a pinned managed tool wins over an off-pin search-path tool"
+}
+
+test_off_pin_search_path_tools_alone_are_refused() {
+  local tmp out rc=0
+  tmp=$(fm_test_tmproot fm-lint-tools-pathoff)
+  mkdir -p "$tmp/empty"
+  write_tool "$tmp/pathbin" shellcheck "0.10.0"
+  write_tool "$tmp/pathbin" actionlint "1.7.0"
+  printf '#!/usr/bin/env bash\ntrue\n' > "$tmp/probe.sh"
+  out=$(env -i FM_LINT_TOOLS_DIR="$tmp/empty" PATH="$tmp/pathbin:$DAEMON_BIN" "$LINT" "$tmp/probe.sh" 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "off-pin ShellCheck on PATH expected rc 1, got $rc"$'\n'"$out"
+  assert_contains "$out" "ShellCheck $SC_PIN required for CI parity, found 0.10.0" "off-pin PATH ShellCheck was not refused"
+  rc=0
+  mkdir -p "$tmp/wf/.github/workflows"
+  printf 'name: t\non: push\njobs: {}\n' > "$tmp/wf/.github/workflows/t.yml"
+  out=$(env -i FM_LINT_TOOLS_DIR="$tmp/empty" PATH="$tmp/pathbin:$DAEMON_BIN" "$LINT_WF" --root "$tmp/wf" 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "off-pin actionlint on PATH expected rc 1, got $rc"$'\n'"$out"
+  assert_contains "$out" "actionlint $AL_PIN required for CI parity, found 1.7.0" "off-pin PATH actionlint was not refused"
+  pass "an off-pin search-path tool with no managed copy is refused naming the pin"
+}
+
+test_pinned_search_path_tool_is_accepted_without_a_managed_copy() {
+  local tmp out rc=0 marker
+  tmp=$(fm_test_tmproot fm-lint-tools-pathpin)
+  marker="$tmp/ran"
+  mkdir -p "$tmp/empty"
+  write_tool "$tmp/pathbin" shellcheck "$SC_PIN" "$marker"
+  write_tool "$tmp/pathbin" actionlint "$AL_PIN" "$marker"
+  printf '#!/usr/bin/env bash\ntrue\n' > "$tmp/probe.sh"
+  out=$(env -i FM_LINT_TOOLS_DIR="$tmp/empty" PATH="$tmp/pathbin:$DAEMON_BIN" "$LINT" "$tmp/probe.sh" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "pinned PATH ShellCheck was refused (rc=$rc)"$'\n'"$out"
+  grep -q "$tmp/pathbin/shellcheck" "$marker" || fail "the pinned search-path ShellCheck did not run"
+  pass "a pinned search-path tool is accepted with no managed copy"
 }
 
 test_off_pin_managed_tools_are_refused() {
@@ -429,7 +462,9 @@ test_dir_default_follows_xdg_then_home
 test_dir_without_a_home_is_absent_not_an_error
 test_resolve_ignores_a_non_executable_managed_file
 test_clean_env_resolves_the_default_managed_directory
-test_search_path_wins_over_the_managed_directory
+test_pinned_managed_wins_over_an_off_pin_search_path_tool
+test_off_pin_search_path_tools_alone_are_refused
+test_pinned_search_path_tool_is_accepted_without_a_managed_copy
 test_off_pin_managed_tools_are_refused
 test_provisioning_installs_both_pinned_tools
 test_second_provisioning_downloads_nothing

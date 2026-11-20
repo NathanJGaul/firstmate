@@ -30,7 +30,7 @@ The tools must instead become findable by the lint entry points themselves, from
 **Acceptance Scenarios**:
 
 1. **Given** the pinned tools are provisioned in the managed tool directory and neither is on the search path, **When** `bin/fm-lint.sh` runs from a clean environment, **Then** it resolves the pinned ShellCheck, reports the pinned version, and runs, including the workflow lint with the pinned actionlint.
-2. **Given** a pinned tool is also on the search path, **When** lint runs, **Then** the search-path tool is used, so CI and tests that stage tools on the path behave exactly as before.
+2. **Given** a pinned tool is in the managed directory and an off-pin tool is on the search path, **When** lint runs, **Then** the pinned managed tool is used; a pinned tool on the search path with no managed copy is also accepted.
 3. **Given** the managed directory holds a build that is not the pinned version, **When** lint runs, **Then** it refuses naming the pin, never lint under another version.
 
 ### User Story 2 - One command provisions both tools, safely and repeatably (Priority: P1)
@@ -63,7 +63,7 @@ The tools must instead become findable by the lint entry points themselves, from
 
 ### Functional Requirements
 
-- **FR-001**: `bin/fm-lint.sh` and `bin/fm-lint-workflows.sh` MUST resolve ShellCheck and actionlint from the search path first and, when absent there, from one managed pinned-tool directory.
+- **FR-001**: `bin/fm-lint.sh` and `bin/fm-lint-workflows.sh` MUST resolve ShellCheck and actionlint from one managed pinned-tool directory when its tool reports the pin and otherwise from the search path, refusing any resolved tool that is off-pin.
 - **FR-002**: The managed directory MUST default to a per-user location that the shared daemon process can reach, and MUST be overridable with `FM_LINT_TOOLS_DIR`.
 - **FR-003**: Version enforcement MUST be unchanged: a resolved tool that is not the exact pin is refused, wherever it was found.
 - **FR-004**: One owner MUST define the managed directory location, and both lint entry points and both installers MUST use it.

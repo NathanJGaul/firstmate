@@ -913,7 +913,7 @@ if [ "$LIST_FILES" -eq 1 ]; then
   exit 0
 fi
 
-if ! SHELLCHECK_BIN=$(fm_lint_tool_resolve shellcheck); then
+if ! SHELLCHECK_BIN=$(fm_lint_tool_resolve shellcheck "$REQUIRED_SHELLCHECK"); then
   printf 'fm-lint.sh: ShellCheck not found on PATH or in %s; run bin/fm-install-lint-tools.sh to install the pinned ShellCheck %s there, or install it elsewhere with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
     "$(fm_lint_tools_dir 2>/dev/null || printf 'the managed tool directory')" "$REQUIRED_SHELLCHECK" >&2
   exit 1

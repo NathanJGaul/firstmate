@@ -109,7 +109,7 @@ else
   fi
 fi
 
-if ! ACTIONLINT_BIN=$(fm_lint_tool_resolve actionlint); then
+if ! ACTIONLINT_BIN=$(fm_lint_tool_resolve actionlint "$REQUIRED_ACTIONLINT"); then
   printf 'fm-lint-workflows.sh: actionlint not found on PATH or in %s; run bin/fm-install-lint-tools.sh to install the pinned actionlint %s there, or install it elsewhere with bin/fm-install-actionlint.sh <destination-directory> and put that directory on PATH.\n' \
     "$(fm_lint_tools_dir 2>/dev/null || printf 'the managed tool directory')" "$REQUIRED_ACTIONLINT" >&2
   exit 1

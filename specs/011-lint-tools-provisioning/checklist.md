@@ -1,7 +1,7 @@
 # Quality Checklist: Pinned Lint Tools Visible to the No-Mistakes Pipeline
 
 - [X] Every behavior test was seen failing for the right reason before its implementation, with the stated exceptions (`tdd/cycle-log.md`, `tdd/verification.md`).
-- [X] The lint entry points resolve ShellCheck and actionlint from the search path first, then from one managed directory (A1, A2).
+- [X] The lint entry points resolve ShellCheck and actionlint from the managed directory when it holds the pin, then from the search path (A1, A2).
 - [X] Version enforcement is unchanged and refuses an off-pin tool wherever it was found (A3).
 - [X] One library owns the managed directory; both entry points and both installers use it (U1-U6).
 - [X] Provisioning is idempotent, checksum-verified through the existing installers, and offers a read-only `--check` (A4-A7, U7, U8).

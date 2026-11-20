@@ -10,6 +10,11 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Cases stage fake tools on PATH; an empty managed directory keeps a provisioned
+# machine from overriding them.
+FM_LINT_TOOLS_DIR=$(fm_test_tmproot fm-lint-empty-tools)
+export FM_LINT_TOOLS_DIR
+
 LINT_WF="$ROOT/bin/fm-lint-workflows.sh"
 LINT="$ROOT/bin/fm-lint.sh"
 INSTALLER="$ROOT/bin/fm-install-actionlint.sh"

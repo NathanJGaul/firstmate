@@ -15,7 +15,7 @@ All 9 were killed:
 
 | mutant | killed by |
 | --- | --- |
-| the managed directory wins over the search path (M1) | `test_search_path_wins_over_the_managed_directory` |
+| a pinned managed tool wins over an off-pin search-path tool (M1) | `test_pinned_managed_wins_over_an_off_pin_search_path_tool` |
 | a non-executable managed file is accepted (M2) | `test_resolve_ignores_a_non_executable_managed_file` |
 | `XDG_CACHE_HOME` is ignored (M3) | `test_dir_default_follows_xdg_then_home` |
 | a pinned tool is reinstalled every run (M4) | `test_second_provisioning_downloads_nothing` |

@@ -16,7 +16,7 @@ CI installs both tools per job with the checksum-verified installers into `$RUNN
    Rejected: the daemon is shared by every lane and may not be restarted or changed.
 3. Per-run download from inside lint.
    Rejected: network and side effects inside a gate step, and a failure mode in an offline sandbox.
-4. Managed per-user directory that the lint entry points fall back to, provisioned by the existing pinned installers.
+4. Managed per-user directory that the lint entry points prefer when it holds the pin, provisioned by the existing pinned installers.
    Chosen: no daemon change, one owner, checksum-pinned, repeatable, and invisible to CI.
 
 ## Directory choice

@@ -6,7 +6,7 @@
 
 ## Summary
 
-A small sourced library owns the managed pinned-tool directory and the lookup order (search path, then that directory).
+A small sourced library owns the managed pinned-tool directory and the lookup order (the managed directory when its tool reports the pin, then the search path).
 `bin/fm-lint.sh` and `bin/fm-lint-workflows.sh` resolve their tool through it, and both pinned installers default their destination to it.
 A new `bin/fm-install-lint-tools.sh` provisions both tools there idempotently and offers `--check`.
 No daemon change is needed, because the daemon's own search path is never consulted for the managed directory: the lint entry points look there themselves.
@@ -44,8 +44,8 @@ The lint entry points reach a directory the daemon can already read because it s
 
 ### D2: One owner for location and lookup
 
-`bin/fm-lint-tools-lib.sh` defines `fm_lint_tools_dir` (override, else XDG cache default, else failure when no home is derivable) and `fm_lint_tool_resolve <name>` (search path first, then an executable file in the managed directory).
-Search-path-first keeps CI, which stages tools on the path, and every existing stub-based test unchanged.
+`bin/fm-lint-tools-lib.sh` defines `fm_lint_tools_dir` (override, else XDG cache default, else failure when no home is derivable) and `fm_lint_tool_resolve <name> <pin>` (the managed copy when it reports the pin, else the search-path tool, else the managed copy so an off-pin build is named in the refusal).
+Pinned-managed-first makes a provisioned pin win over an off-pin system tool on the daemon search path; CI and the stub-based tests point the managed directory at an empty one, so their staged tools still resolve.
 The version check in each entry point is untouched, so a wrong build in either location is refused.
 
 ### D3: Installers
