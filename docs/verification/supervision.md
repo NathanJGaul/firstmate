@@ -580,6 +580,9 @@ Refresh it with `FM_CLAUDE_CODEMODE_LIVE_E2E=1 tests/fm-claude-codemode-live-e2e
 The guard builds each launch line with the real `bin/fm-spawn.sh`, then runs that exact line in a real tmux pane against a copy of the throwaway Claude config directory, with `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` left in the pane's ambient environment.
 It submits one bounded Haiku turn per case, and the pane answers the `--add-dir` folder confirmations for directories the lab created.
 
+Claude Code gates Code Mode on the client and terminal.
+When the pane shows `Code Mode (experimental) isn't available`, the guard prints a `skip:` line naming the version and exits without a verdict, so a skip proves nothing about the launch knob; only a run that reaches the cases below does.
+
 Result on Claude Code 2.1.328, all three cases:
 
 | Case | Observed |
