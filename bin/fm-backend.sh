@@ -924,6 +924,22 @@ fm_backend_kill() {  # <backend> <target>
   esac
 }
 
+# fm_backend_close_terminal: close one endpoint and read the runtime's receipt,
+# for a backend whose close is itself stop proof (only Orca; see
+# fm_control_backend_supports_close_terminal). Prints the adapter's verdict
+# (killed|gone|unkilled|unreadable) and returns 0 only for `killed`. Any other
+# backend prints `unsupported` and returns 2, so a caller never mistakes a
+# best-effort kill for a proven one.
+fm_backend_close_terminal() {  # <backend> <target>
+  local backend=$1 target=${2:-}
+  [ -n "$target" ] || { printf 'unreadable'; return 1; }
+  fm_backend_source "$backend" || { printf 'unreadable'; return 1; }
+  case "$backend" in
+    orca) fm_backend_orca_close_terminal "$target" ;;
+    *) printf 'unsupported'; return 2 ;;
+  esac
+}
+
 fm_backend_remove_worktree() {  # <backend> <worktree-id>
   local backend=$1
   shift

@@ -27,6 +27,8 @@ set -u
 . "$ROOT/bin/fm-trace-context-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-tasks-axi-lib.sh"
+# shellcheck source=tests/orca-fake.sh
+. "$(dirname "${BASH_SOURCE[0]}")/orca-fake.sh"
 
 CONTROL="$ROOT/bin/fm-control.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -229,14 +231,27 @@ EOF
   TASK_TMPS+=("/tmp/fm-$id")
 }
 
+# orca_env_args <case-dir>: the env words that point a command at the case's
+# stateful fake Orca and fake process table, with every routing variable a real
+# Orca terminal exports removed, or nothing for a case that has no fake. A test
+# sets CONTROL_EXTRA_ENV to one NAME=value word for a single call.
+orca_env_args() {
+  [ -d "$1/fake/terms" ] || return 0
+  printf '%s\n' -u ORCA_ENVIRONMENT -u ORCA_PAIRING_CODE -u ORCA_REMOTE_PAIRING -u ORCA_TERMINAL_HANDLE \
+    -u ORCA_WORKTREE_ID -u ORCA_USER_DATA_PATH -u ORCA_CLI_BIN_DIR \
+    "FM_ORCA_FAKE_DIR=$1/fake" "FM_ORCA_PROC_ROOT=$1/fake/proc" FM_BACKEND_ORCA_PROCESS_SETTLE_POLLS=1
+}
+
 run_control() {  # <case-dir> <args...>
   local dir=$1; shift
   # A claude spawn pre-registers workspace trust in the launching user's own
   # store (bin/fm-claude-trust.sh), and a relaunch reaches it through fm-control.sh, so this runs against a throwaway HOME;
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$dir/user-home"
+  local orca_env=() word
+  while IFS= read -r word; do orca_env+=("$word"); done < <(orca_env_args "$dir")
   env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
-    -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
+    -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID ${orca_env[@]+"${orca_env[@]}"} ${CONTROL_EXTRA_ENV:+"$CONTROL_EXTRA_ENV"} \
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
@@ -257,8 +272,10 @@ run_spawn() {  # <case-dir> <args...>
   # store (bin/fm-claude-trust.sh), so it runs against a throwaway HOME;
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$dir/user-home"
+  local orca_env=() word
+  while IFS= read -r word; do orca_env+=("$word"); done < <(orca_env_args "$dir")
   env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
-    -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
+    -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID ${orca_env[@]+"${orca_env[@]}"} ${CONTROL_EXTRA_ENV:+"$CONTROL_EXTRA_ENV"} \
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
@@ -2486,6 +2503,188 @@ SH
   pass "fm-control exit removes the dialog file before it releases the control lock"
 }
 
+# --- Orca close-and-recreate reclaim (specs/010-orca-reclaim) ----------------
+#
+# These run against the STATEFUL fake Orca in tests/orca-fake.sh: a close changes
+# what the next terminal show says, a create adds a terminal to the worktree's
+# list, and a launch typed into a live terminal starts a harness process in the
+# fake process table, so the whole control -> spawn -> confirm path is observable.
+
+ORCA_RL_WT='wt-rl::/orca/wt-rl'
+
+# orca_rl_case <name> <id> <terminal-state> <procs>: a ship task recorded on
+# Orca the way bin/fm-spawn.sh records one, with a real git worktree holding an
+# uncommitted file the reclaim must never touch.
+orca_rl_case() {
+  local dir
+  dir=$(new_case "$1" "$2")
+  orca_fake_new "$dir"
+  add_ship_task "$dir" "$2" claude
+  {
+    grep -v '^window=' "$dir/home/state/$2.meta"
+    echo "window=fm-$2"
+    echo "backend=orca"
+    echo "terminal=term-$2"
+    echo "orca_worktree_id=$ORCA_RL_WT"
+  } > "$dir/home/state/$2.meta.new"
+  mv "$dir/home/state/$2.meta.new" "$dir/home/state/$2.meta"
+  orca_fake_term "$dir" "term-$2" "$ORCA_RL_WT" "$3" "$4"
+  printf 'fm-test scratch\n' > "$dir/wt/uncommitted.txt"
+  printf '%s\n' "$dir"
+}
+
+orca_rl_mutations() {  # <dir>: calls that send, close, create, or remove
+  grep -E $'^orca\x1f(terminal\x1f(send|close|create)|worktree\x1f)' "$1/fake/log" | sed 's/\x1f/ /g; s/ --json//' || true
+}
+
+orca_rl_assert_work_intact() {  # <dir> <head> <label>
+  [ "$(git -C "$1/wt" rev-parse HEAD)" = "$2" ] || fail "$3: the worktree's HEAD moved"
+  [ "$(cat "$1/wt/uncommitted.txt")" = "fm-test scratch" ] || fail "$3: the uncommitted file changed"
+  [ -d "$1/wt" ] || fail "$3: the worktree is gone"
+}
+
+test_orca_relaunch_adopts_a_dead_terminal() {
+  local dir out rc head
+  dir=$(orca_rl_case orca-adopt rl1 live shell)
+  head=$(git -C "$dir/wt" rev-parse HEAD)
+  out=$(run_control "$dir" rl1 relaunch --note "the harness died"); rc=$?
+  expect_code 0 "$rc" "a relaunch of a dead Orca terminal should adopt it"$'\n'"$out"
+  assert_contains "$out" "relaunched rl1 harness=claude" "the relaunch should report success"
+  [ "$(meta_field "$dir" rl1 terminal)" = term-rl1 ] || fail "an adopted terminal keeps its recorded handle"
+  [ "$(meta_field "$dir" rl1 orca_worktree_id)" = "$ORCA_RL_WT" ] || fail "the record's worktree id must survive a relaunch"
+  [ "$(meta_field "$dir" rl1 backend)" = orca ] || fail "the record's backend must survive a relaunch"
+  [ "$(orca_fake_calls "$dir" terminal create)" -eq 0 ] || fail "adopting a dead terminal must not create one"
+  [ "$(orca_fake_calls "$dir" terminal close)" -eq 0 ] || fail "adopting a dead terminal must not close it"
+  assert_not_contains "$(orca_rl_mutations "$dir")" "worktree" "a relaunch never touches the worktree through orca"
+  [ "$(orca_fake_handles "$dir" "$ORCA_RL_WT" | tr '\n' ' ')" = "term-rl1 " ] || fail "exactly the recorded terminal should remain"
+  orca_rl_assert_work_intact "$dir" "$head" "adopt"
+  pass "fm-control relaunch on orca: a dead terminal is adopted - same handle, no create, no close, work untouched"
+}
+
+test_orca_relaunch_reclaims_a_gone_terminal() {
+  local dir out rc head close_line create_line
+  dir=$(orca_rl_case orca-reclaim rl2 closed none)
+  head=$(git -C "$dir/wt" rev-parse HEAD)
+  out=$(run_control "$dir" rl2 relaunch --note "the terminal was closed"); rc=$?
+  expect_code 0 "$rc" "a relaunch of a gone Orca terminal should reclaim it"$'\n'"$out"
+  assert_contains "$out" "relaunched rl2 harness=claude" "the reclaim should report success"
+  [ "$(meta_field "$dir" rl2 terminal)" = term-new-1 ] || fail "the record should name the fresh terminal, got '$(meta_field "$dir" rl2 terminal)'"
+  [ "$(meta_field "$dir" rl2 orca_worktree_id)" = "$ORCA_RL_WT" ] || fail "the record's worktree id must not change"
+  [ "$(meta_field "$dir" rl2 window)" = fm-rl2 ] || fail "the record's stable window alias must not change"
+  close_line=$(grep -n -m1 -F $'terminal\x1fclose\x1f--terminal\x1fterm-rl2' "$dir/fake/log" | cut -d: -f1)
+  create_line=$(grep -n -m1 -F $'terminal\x1fcreate' "$dir/fake/log" | cut -d: -f1)
+  [ -n "$close_line" ] && [ -n "$create_line" ] && [ "$close_line" -lt "$create_line" ] \
+    || fail "the dead terminal must be closed before the fresh one is created"
+  assert_contains "$(cat "$dir/fake/log")" $'terminal\x1fcreate\x1f--worktree\x1fid:'"$ORCA_RL_WT"$'\x1f--title\x1ffm-rl2' \
+    "the fresh terminal is created by the recorded worktree id and titled for the task"
+  [ "$(orca_fake_calls "$dir" terminal create)" -eq 1 ] || fail "a reclaim creates exactly one terminal"
+  assert_not_contains "$(cat "$dir/fake/log")" $'orca\x1fworktree\x1f' "a reclaim never calls worktree commands"
+  assert_not_contains "$(cat "$dir/fake/log")" "--all" "a reclaim never closes by worktree"
+  [ "$(orca_fake_handles "$dir" "$ORCA_RL_WT" | tr '\n' ' ')" = "term-new-1 " ] || fail "exactly the fresh terminal should be live for the worktree"
+  [ "$(journal_field "$dir" rl2 phase)" = complete ] || fail "the transaction should complete"
+  [ "$(journal_field "$dir" rl2 exit_result)" = endpoint-gone ] || fail "the exit step should report endpoint-gone, got '$(journal_field "$dir" rl2 exit_result)'"
+  grep -q 'Firstmate operational input waiting' "$dir/fake/log" \
+    || grep -q 'send' "$dir/fake/log" || fail "the harness must be launched in the fresh terminal"
+  assert_contains "$(grep -F $'terminal\x1fsend' "$dir/fake/log" | head -1)" "term-new-1" "the launch goes to the fresh terminal, never the dead one"
+  assert_not_contains "$(grep -F $'terminal\x1fsend' "$dir/fake/log")" $'--terminal\x1fterm-rl2' "nothing is sent to the dead terminal"
+  orca_rl_assert_work_intact "$dir" "$head" "reclaim"
+  pass "fm-control relaunch on orca: a gone terminal is closed, one fresh terminal is created by the recorded worktree id, and the record is republished"
+}
+
+test_orca_relaunch_closes_a_wedged_agent() {
+  local dir out rc head
+  dir=$(orca_rl_case orca-wedged rl3 live agent)
+  head=$(git -C "$dir/wt" rev-parse HEAD)
+  out=$(run_control "$dir" rl3 relaunch --note "wedged"); rc=$?
+  expect_code 1 "$rc" "relaunch of a running Orca agent without the explicit close should refuse"$'\n'"$out"
+  assert_contains "$out" "--close-terminal" "the refusal should name the explicit close"
+  [ -z "$(orca_rl_mutations "$dir")" ] || fail "a refused relaunch must change nothing, got: $(orca_rl_mutations "$dir")"
+  out=$(run_control "$dir" rl3 relaunch --close-terminal --note "wedged"); rc=$?
+  expect_code 0 "$rc" "relaunch --close-terminal should close the wedged agent's terminal and reclaim"$'\n'"$out"
+  [ "$(journal_field "$dir" rl3 exit_result)" = closed ] || fail "the exit step should report closed, got '$(journal_field "$dir" rl3 exit_result)'"
+  [ "$(meta_field "$dir" rl3 terminal)" = term-new-1 ] || fail "the record should name the fresh terminal"
+  [ "$(orca_fake_handles "$dir" "$ORCA_RL_WT" | tr '\n' ' ')" = "term-new-1 " ] || fail "exactly the fresh terminal should be live"
+  assert_not_contains "$(cat "$dir/fake/log")" $'orca\x1fworktree\x1f' "closing a terminal never touches the worktree"
+  orca_rl_assert_work_intact "$dir" "$head" "wedged"
+  pass "fm-control relaunch on orca: a wedged agent is refused, then closed on the receipt and reclaimed with --close-terminal"
+}
+
+test_orca_failed_reclaim_keeps_the_record() {
+  local dir out rc head before
+  # the replacement cannot be created: the previous record stands
+  dir=$(orca_rl_case orca-nocreate rl4 closed none)
+  head=$(git -C "$dir/wt" rev-parse HEAD)
+  before=$(cat "$dir/home/state/rl4.meta")
+  orca_fake_flag "$dir" create-fails
+  out=$(run_control "$dir" rl4 relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a failed create must fail the relaunch"$'\n'"$out"
+  [ "$(cat "$dir/home/state/rl4.meta")" = "$before" ] || fail "a failed create must leave the previous record byte-exact"
+  assert_not_contains "$(cat "$dir/fake/log")" $'orca\x1fworktree\x1f' "a failed reclaim never touches the worktree"
+  orca_rl_assert_work_intact "$dir" "$head" "failed create"
+  # the replacement is created but never confirmed: it is closed again, the record stands
+  dir=$(orca_rl_case orca-unlisted rl5 closed none)
+  before=$(cat "$dir/home/state/rl5.meta")
+  orca_fake_flag "$dir" create-unlisted
+  out=$(run_control "$dir" rl5 relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "an unconfirmed replacement must fail the relaunch"$'\n'"$out"
+  [ "$(cat "$dir/home/state/rl5.meta")" = "$before" ] || fail "an unconfirmed replacement must leave the previous record byte-exact"
+  [ -z "$(orca_fake_handles "$dir" "$ORCA_RL_WT")" ] || fail "no terminal may be left behind by an unconfirmed reclaim, got: $(orca_fake_handles "$dir" "$ORCA_RL_WT" | tr '\n' ' ')"
+  # a publication failure after the terminal exists closes ONLY that terminal
+  dir=$(orca_rl_case orca-nopublish rl6 closed none)
+  head=$(git -C "$dir/wt" rev-parse HEAD)
+  make_mv_failure_stub "$dir"
+  out=$(FM_REAL_MV="$(command -v mv)" FM_FAKE_META_PUBLISH_MV_FAIL="$dir/home/state/rl6.meta" \
+    run_control "$dir" rl6 relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a failed record publication must fail the relaunch"$'\n'"$out"
+  [ "$(meta_field "$dir" rl6 terminal)" = term-rl6 ] || fail "a failed publication keeps the previous terminal record"
+  [ -z "$(orca_fake_handles "$dir" "$ORCA_RL_WT")" ] || fail "the terminal the failed relaunch created must be closed again, got: $(orca_fake_handles "$dir" "$ORCA_RL_WT" | tr '\n' ' ')"
+  assert_not_contains "$(cat "$dir/fake/log")" $'orca\x1fworktree\x1f' "the abort cleanup must never remove the worktree"
+  orca_rl_assert_work_intact "$dir" "$head" "failed publication"
+  # the harness never comes up in the published terminal: the record names it, the terminal stays
+  dir=$(orca_rl_case orca-nolaunch rl7 closed none)
+  orca_fake_flag "$dir" launch-no-agent
+  out=$(run_control "$dir" rl7 relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a launch that starts no agent must fail the relaunch"$'\n'"$out"
+  [ "$(meta_field "$dir" rl7 terminal)" = term-new-1 ] || fail "a published reclaim names its fresh terminal even when the harness did not start"
+  [ "$(orca_fake_handles "$dir" "$ORCA_RL_WT" | tr '\n' ' ')" = "term-new-1 " ] || fail "the published terminal must remain the worktree's one terminal"
+  pass "fm-control relaunch on orca: every failure keeps the record, leaves no stray terminal, and never touches the worktree"
+}
+
+test_orca_relaunch_checks_the_runtime() {
+  local dir out rc
+  dir=$(orca_rl_case orca-runtime rl8 live shell)
+  orca_fake_flag "$dir" status-bad
+  out=$(run_spawn "$dir" rl8 --relaunch); rc=$?
+  expect_code 1 "$rc" "a relaunch against a runtime that is not ready must refuse"$'\n'"$out"
+  [ -z "$(orca_rl_mutations "$dir")" ] || fail "a refused relaunch must change nothing, got: $(orca_rl_mutations "$dir")"
+  pass "fm-spawn --relaunch on orca: the runtime's readiness is checked before any mutation"
+}
+
+test_orca_spawn_relaunch_refuses_what_it_cannot_prove() {
+  local dir out rc state
+  dir=$(orca_rl_case orca-alive rl9 live agent)
+  out=$(run_spawn "$dir" rl9 --relaunch); rc=$?
+  expect_code 1 "$rc" "a direct relaunch of a running Orca agent must refuse"$'\n'"$out"
+  assert_contains "$out" "'alive'" "the refusal should name the state"
+  [ -z "$(orca_rl_mutations "$dir")" ] || fail "a refused relaunch must change nothing, got: $(orca_rl_mutations "$dir")"
+  dir=$(orca_rl_case orca-remote rl10 closed none)
+  out=$(CONTROL_EXTRA_ENV=ORCA_ENVIRONMENT=elsewhere run_spawn "$dir" rl10 --relaunch); rc=$?
+  expect_code 1 "$rc" "a direct relaunch through a non-local runtime must refuse"$'\n'"$out"
+  assert_contains "$out" "another host" "the refusal should say why absence is unproven"
+  [ -z "$(orca_rl_mutations "$dir")" ] || fail "a refused relaunch must change nothing, got: $(orca_rl_mutations "$dir")"
+  # a secondmate record on Orca refuses whatever its terminal reads, even one a plain relaunch would adopt
+  for state in "closed none" "live shell"; do
+    # shellcheck disable=SC2086
+    dir=$(orca_rl_case "orca-secondmate-${state%% *}" rl11 $state)
+    sed -i.bak 's/^kind=.*/kind=secondmate/' "$dir/home/state/rl11.meta" && rm -f "$dir/home/state/rl11.meta.bak"
+    out=$(run_spawn "$dir" rl11 --relaunch); rc=$?
+    expect_code 1 "$rc" "an Orca secondmate must not be relaunched ($state)"$'\n'"$out"
+    assert_contains "$out" "does not support secondmates" "the refusal should say Orca spawns no secondmates ($state)"
+    [ -z "$(orca_rl_mutations "$dir")" ] || fail "a refused relaunch must change nothing ($state), got: $(orca_rl_mutations "$dir")"
+  done
+  pass "fm-spawn --relaunch on orca: an alive agent, a non-local runtime, and a secondmate each refuse before anything changes"
+}
+
 test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
@@ -2562,3 +2761,9 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_orca_relaunch_adopts_a_dead_terminal
+test_orca_relaunch_reclaims_a_gone_terminal
+test_orca_relaunch_closes_a_wedged_agent
+test_orca_failed_reclaim_keeps_the_record
+test_orca_relaunch_checks_the_runtime
+test_orca_spawn_relaunch_refuses_what_it_cannot_prove

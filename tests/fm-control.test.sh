@@ -25,6 +25,8 @@ set -u
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-marker-lib.sh"
+# shellcheck source=tests/orca-fake.sh
+. "$(dirname "${BASH_SOURCE[0]}")/orca-fake.sh"
 
 CONTROL="$ROOT/bin/fm-control.sh"
 SEND="$ROOT/bin/fm-send.sh"
@@ -252,9 +254,21 @@ add_task() {
 
 # run_control <case-dir> <args...>: run fm-control against the case's home with
 # the stubbed provider on PATH. Echoes combined output; returns its exit code.
+# CONTROL_EXTRA_ENV: one optional NAME=value word a test can set for a single
+# call (for example ORCA_ENVIRONMENT=elsewhere). A case that installed the
+# stateful fake Orca (tests/orca-fake.sh) also gets its fake process table and
+# state directory, with every routing variable a real Orca terminal exports
+# removed so a case can never reach another runtime.
 run_control() {
   local dir=$1; shift
-  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  local orca_env=()
+  if [ -d "$dir/fake/terms" ]; then
+    orca_env=(-u ORCA_ENVIRONMENT -u ORCA_PAIRING_CODE -u ORCA_REMOTE_PAIRING -u ORCA_TERMINAL_HANDLE
+      -u ORCA_WORKTREE_ID -u ORCA_USER_DATA_PATH -u ORCA_CLI_BIN_DIR
+      "FM_ORCA_FAKE_DIR=$dir/fake" "FM_ORCA_PROC_ROOT=$dir/fake/proc" FM_BACKEND_ORCA_PROCESS_SETTLE_POLLS=1)
+  fi
+  env ${orca_env[@]+"${orca_env[@]}"} ${CONTROL_EXTRA_ENV:+"$CONTROL_EXTRA_ENV"} \
+    PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.05 \
     FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
@@ -642,19 +656,154 @@ test_orca_refuses_an_escape_interrupt_without_the_capability() {
   pass "fm-control interrupt: orca refuses an Escape harness before sending when the runtime lacks the capability"
 }
 
-test_orca_refuses_exit_and_relaunch() {
-  local dir out rc verb
-  dir=$(new_case orca-stop)
-  make_orca_stub "$dir" 1.4.261 "$ORCA_KEY_CAP"
-  add_orca_task "$dir" t1 claude
-  for verb in exit "relaunch --note x"; do
-    # shellcheck disable=SC2086
-    out=$(run_control "$dir" t1 $verb); rc=$?
-    expect_code 1 "$rc" "${verb%% *} on orca should still refuse"$'\n'"$out"
-    assert_contains "$out" "no recovery-grade agent-state classifier" "the ${verb%% *} refusal should name the missing stop proof"
-  done
-  [ -z "$(orca_sends "$dir")" ] || fail "a refused stop verb must send nothing, got: $(orca_sends "$dir")"
-  pass "fm-control: exit and relaunch stay refused on orca even though Escape now delivers"
+# orca_stop_case <name> <terminal-state> <procs> [harness]: an Orca task on the
+# stateful fake, whose terminal term-t1 is in <terminal-state> (live|closed|exited)
+# with <procs> (shell|agent|none) in its process table.
+ORCA_WT_ID='wt-t1::/orca/wt-t1'
+orca_stop_case() {
+  local dir
+  dir=$(new_case "$1")
+  orca_fake_new "$dir"
+  add_orca_task "$dir" t1 "${4:-claude}"
+  orca_fake_term "$dir" term-t1 "$ORCA_WT_ID" "$2" "$3"
+  printf '%s\n' "$dir"
+}
+
+# orca_mutations <dir>: every logged call that sends, closes, creates, or removes.
+orca_mutations() {
+  grep -E $'^orca\x1f(terminal\x1f(send|close|create)|worktree\x1f)' "$1/fake/log" | sed 's/\x1f/ /g' || true
+}
+
+test_orca_exit_matrix() {
+  local dir out rc name state procs want
+  # name | terminal state | processes | expected outcome
+  while IFS='|' read -r name state procs want; do
+    dir=$(orca_stop_case "exit-$name" "$state" "$procs")
+    case "$name" in
+      ambiguous) orca_fake_proc "$dir" 400 100 vim vim term-t1 ;;
+      unreadable) rm -rf "$dir/fake/proc"; : > "$dir/fake/proc" ;;
+    esac
+    out=$(run_control "$dir" t1 exit); rc=$?
+    case "$want" in
+      already-stopped|endpoint-gone)
+        expect_code 0 "$rc" "exit on a $name Orca terminal should report $want"$'\n'"$out"
+        assert_contains "$out" "$want t1 harness=claude backend=orca" "exit on $name should report $want"
+        ;;
+      *)
+        expect_code 1 "$rc" "exit on a $name Orca terminal should refuse"$'\n'"$out"
+        assert_contains "$out" "'$want'" "the $name refusal should name the state '$want'"
+        ;;
+    esac
+    [ -z "$(orca_mutations "$dir")" ] || fail "exit on a $name Orca terminal must change nothing, got: $(orca_mutations "$dir")"
+  done <<'MATRIX'
+dead|live|shell|already-stopped
+gone|closed|none|endpoint-gone
+alive|live|agent|alive
+ambiguous|live|shell|ambiguous
+unverified|live|none|unverified
+unreadable|live|shell|unreadable
+MATRIX
+  dir=$(orca_stop_case exit-remote closed none)
+  out=$(CONTROL_EXTRA_ENV=ORCA_ENVIRONMENT=elsewhere run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "exit on a non-local runtime's missing terminal should refuse"$'\n'"$out"
+  assert_contains "$out" "another host" "the non-local refusal should say why absence is unproven"
+  [ -z "$(orca_mutations "$dir")" ] || fail "a refused non-local exit must change nothing, got: $(orca_mutations "$dir")"
+  dir=$(orca_stop_case exit-lingering closed shell)
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "exit on a gone terminal whose handle a process still carries should refuse"$'\n'"$out"
+  assert_contains "$out" "still carries its handle" "the refusal should name the lingering process"
+  pass "fm-control exit on orca: dead and gone act, and alive, ambiguous, unverified, unreadable, non-local, and lingering all refuse naming why"
+}
+
+test_orca_relaunch_refusals_change_nothing() {
+  local dir out rc name state procs want brief
+  while IFS='|' read -r name state procs want; do
+    dir=$(orca_stop_case "relaunch-$name" "$state" "$procs")
+    case "$name" in
+      ambiguous) orca_fake_proc "$dir" 400 100 vim vim term-t1 ;;
+      unreadable) rm -rf "$dir/fake/proc"; : > "$dir/fake/proc" ;;
+    esac
+    brief=$(cat "$dir/home/data/t1/brief.md")
+    out=$(run_control "$dir" t1 relaunch --note x); rc=$?
+    expect_code 1 "$rc" "relaunch on a $name Orca terminal should refuse"$'\n'"$out"
+    assert_contains "$out" "'$want'" "the $name relaunch refusal should name the state '$want'"
+    [ "$(cat "$dir/home/data/t1/brief.md")" = "$brief" ] || fail "a refused $name relaunch must leave the instructions byte-exact"
+    [ -z "$(orca_mutations "$dir")" ] || fail "a refused $name relaunch must change nothing, got: $(orca_mutations "$dir")"
+  done <<'MATRIX'
+alive|live|agent|alive
+ambiguous|live|shell|ambiguous
+unverified|live|none|unverified
+unreadable|live|shell|unreadable
+MATRIX
+  pass "fm-control relaunch on orca: an unproven state refuses before anything changes and names the state"
+}
+
+test_orca_exit_close_terminal() {
+  local dir out rc
+  dir=$(orca_stop_case close-ok live agent)
+  out=$(run_control "$dir" t1 exit --close-terminal); rc=$?
+  expect_code 0 "$rc" "exit --close-terminal on an alive Orca agent should close its terminal"$'\n'"$out"
+  assert_contains "$out" "closed t1 harness=claude backend=orca endpoint=term-t1" "the close should be reported as closed"
+  [ "$(orca_mutations "$dir" | sed 's/ --json//')" = "orca terminal close --terminal term-t1" ] \
+    || fail "the explicit close should be exactly one close of the recorded terminal, got: $(orca_mutations "$dir")"
+  [ -z "$(ls "$dir/fake/proc" 2>/dev/null)" ] || fail "the close should leave no process carrying the handle"
+  dir=$(orca_stop_case close-nokill live agent)
+  orca_fake_flag "$dir" close-nokill
+  out=$(run_control "$dir" t1 exit --close-terminal); rc=$?
+  expect_code 1 "$rc" "a close whose receipt kills nothing must refuse"$'\n'"$out"
+  assert_contains "$out" "unkilled" "the refusal should name the receipt"
+  dir=$(orca_stop_case close-lingers live agent)
+  orca_fake_flag "$dir" close-lingers
+  out=$(run_control "$dir" t1 exit --close-terminal); rc=$?
+  expect_code 1 "$rc" "a close the runtime accepted but did not honour must refuse"$'\n'"$out"
+  assert_contains "$out" "still" "the refusal should say the terminal or its processes persist"
+  dir=$(orca_stop_case close-error live agent)
+  orca_fake_flag "$dir" close-error
+  out=$(run_control "$dir" t1 exit --close-terminal); rc=$?
+  expect_code 1 "$rc" "an unreadable close answer must refuse"$'\n'"$out"
+  assert_contains "$out" "unreadable" "the refusal should name the receipt"
+  pass "fm-control exit --close-terminal on orca: ptyKilled true is proof; an unkilled, lingering, or unreadable close refuses"
+}
+
+test_orca_close_terminal_is_bounded() {
+  local dir out rc name state procs want
+  while IFS='|' read -r name state procs want; do
+    dir=$(orca_stop_case "bounded-$name" "$state" "$procs")
+    out=$(run_control "$dir" t1 exit --close-terminal); rc=$?
+    expect_code 1 "$rc" "--close-terminal on a $name terminal should refuse"$'\n'"$out"
+    assert_contains "$out" "'$want'" "the refusal should name the state '$want'"
+    assert_contains "$out" "applies only to an agent that reads 'alive'" "the refusal should say what the flag is for"
+    [ -z "$(orca_mutations "$dir")" ] || fail "a refused close must change nothing, got: $(orca_mutations "$dir")"
+  done <<'MATRIX'
+dead|live|shell|dead
+gone|closed|none|missing
+unverified|live|none|unverified
+MATRIX
+  dir=$(orca_stop_case bounded-verb live agent)
+  out=$(run_control "$dir" t1 interrupt --close-terminal); rc=$?
+  expect_code 1 "$rc" "--close-terminal on interrupt should be refused"$'\n'"$out"
+  assert_contains "$out" "applies to 'exit' and 'relaunch' only" "the refusal should name the verbs"
+  dir=$(new_case bounded-tmux)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  out=$(run_control "$dir" t1 exit --close-terminal); rc=$?
+  expect_code 1 "$rc" "--close-terminal on tmux should be refused"$'\n'"$out"
+  assert_contains "$out" "tmux" "the refusal should name the backend"
+  [ -z "$(literals "$dir")" ] || fail "a refused close flag must send nothing to tmux"
+  pass "fm-control --close-terminal: refused for any state but alive, any verb but exit and relaunch, and any backend but orca"
+}
+
+test_orca_interrupt_keeps_endpoint_proof() {
+  local dir out rc
+  dir=$(orca_stop_case interrupt-alive live agent)
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "interrupt on a live Orca agent should be delivered"$'\n'"$out"
+  assert_contains "$out" "verified=agent-alive" "an agent the classifier still sees alive is proven alive"
+  dir=$(orca_stop_case interrupt-nonlocal live agent)
+  out=$(CONTROL_EXTRA_ENV=ORCA_ENVIRONMENT=elsewhere run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "interrupt through a non-local runtime keeps its endpoint proof"$'\n'"$out"
+  assert_contains "$out" "verified=endpoint" "a runtime the table cannot prove keeps the endpoint existence as proof"
+  pass "fm-control interrupt on orca: agent-alive when the classifier proves it, the endpoint proof when it cannot"
 }
 
 test_fm_send_delivers_escape_to_an_orca_task() {
@@ -700,11 +849,16 @@ test_unverified_state_backends_refuse_stop_verbs() {
   pass "fm-control: a backend that cannot prove an agent stopped refuses exit and relaunch"
 }
 
-test_state_verified_backends_are_exactly_tmux_and_herdr() {
+test_state_verified_backends_are_tmux_herdr_and_orca() {
   fm_control_backend_state_verified tmux || fail "tmux has a recovery-grade classifier"
   fm_control_backend_state_verified herdr || fail "herdr has a recovery-grade classifier"
+  fm_control_backend_state_verified orca || fail "orca has a recovery-grade classifier (process table, endpoint answer, close receipt)"
+  fm_control_backend_supports_close_terminal orca || fail "orca stops an agent by closing its terminal"
   local backend
-  for backend in zellij orca cmux; do
+  for backend in tmux herdr zellij cmux; do
+    fm_control_backend_supports_close_terminal "$backend" && fail "$backend has no close receipt and must not claim a close as stop proof"
+  done
+  for backend in zellij cmux; do
     fm_control_backend_state_verified "$backend" \
       && fail "$backend has no recovery-grade classifier and must not claim one"
   done
@@ -1296,10 +1450,14 @@ test_orca_delivers_an_escape_harness_interrupt
 test_orca_interrupt_follows_a_composer_restoring_harness_with_ctrl_u
 test_orca_interrupt_for_a_ctrl_c_harness_is_unchanged
 test_orca_refuses_an_escape_interrupt_without_the_capability
-test_orca_refuses_exit_and_relaunch
+test_orca_exit_matrix
+test_orca_relaunch_refusals_change_nothing
+test_orca_exit_close_terminal
+test_orca_close_terminal_is_bounded
+test_orca_interrupt_keeps_endpoint_proof
 test_fm_send_delivers_escape_to_an_orca_task
 test_unverified_state_backends_refuse_stop_verbs
-test_state_verified_backends_are_exactly_tmux_and_herdr
+test_state_verified_backends_are_tmux_herdr_and_orca
 test_window_label_is_refused_with_the_exact_id
 test_explicit_endpoint_is_refused
 test_unknown_task_is_refused

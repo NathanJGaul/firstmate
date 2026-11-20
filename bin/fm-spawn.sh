@@ -1260,6 +1260,11 @@ BACKEND=
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+# The one terminal an Orca relaunch reclaim created and has not yet published:
+# the abort cleanup closes exactly this terminal and nothing else. It is a
+# separate variable from ORCA_ABORT_CLEANUP on purpose, because that cleanup
+# removes the whole worktree, which a relaunch must never do.
+ORCA_RELAUNCH_NEW_TERMINAL=
 HERDR_PROJECTION_ABORT_CLEANUP=0
 HERDR_PROJECTION_ABORT_SESSION=
 HERDR_PROJECTION_ABORT_TASK_PANE=
@@ -1362,6 +1367,10 @@ spawn_abort_cleanup() {
   if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ]; then
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
+  fi
+  if [ -n "$ORCA_RELAUNCH_NEW_TERMINAL" ]; then
+    fm_backend_kill orca "$ORCA_RELAUNCH_NEW_TERMINAL" 2>/dev/null || true
+    ORCA_RELAUNCH_NEW_TERMINAL=
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
@@ -1812,6 +1821,17 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
+  if [ "$BACKEND" = orca ]; then
+    # Orca spawns no secondmates, so a secondmate record on Orca is not
+    # something this launch owner can recover; refuse it before reading any
+    # state. A runtime that is not ready, or below the version floor, refuses
+    # here too, before any terminal is touched.
+    if [ "$(fm_meta_get "$RELAUNCH_META" kind)" = secondmate ]; then
+      echo "error: task $ID is a secondmate recorded on backend orca, which does not support secondmates; refusing to relaunch or reclaim it" >&2
+      exit 1
+    fi
+    fm_backend_orca_runtime_check || exit 1
+  fi
   # A relaunch must PROVE the previous agent is gone before it launches another
   # one into the same endpoint, and only tmux and herdr have a recovery-grade
   # classifier that can (bin/fm-control-lib.sh owns that capability table).
@@ -1865,7 +1885,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
     dead) ;;
     missing) RELAUNCH_REBIND=1 ;;
     *)
-      echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
+      RELAUNCH_STOP_HINT="stop the agent first with bin/fm-control.sh $ID exit"
+      if [ "$RELAUNCH_STATE" = alive ] && fm_control_backend_supports_close_terminal "$BACKEND"; then
+        RELAUNCH_STOP_HINT="$RELAUNCH_STOP_HINT --close-terminal, which closes the terminal and takes the runtime's receipt as proof"
+      fi
+      echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint ($RELAUNCH_STOP_HINT)" >&2
       exit 1
       ;;
   esac
@@ -1897,6 +1921,13 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2
     exit 1
   }
+  if [ "$BACKEND" = orca ]; then
+    # The record's own identity is what the republished record carries. The
+    # worktree id was validated with the endpoint above, and the terminal is
+    # replaced below only when it was proven gone.
+    ORCA_WORKTREE_ID=$(fm_meta_get "$RELAUNCH_META" orca_worktree_id)
+    ORCA_TERMINAL=$RELAUNCH_TARGET
+  fi
   if [ "$KIND" = secondmate ]; then
     FIRSTMATE_HOME=$(fm_meta_get "$RELAUNCH_META" home)
     [ -n "$FIRSTMATE_HOME" ] || FIRSTMATE_HOME=$RELAUNCH_WT
@@ -3686,6 +3717,22 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
+  elif [ "$BACKEND" = orca ]; then
+    # The recorded terminal is proven gone (fm_backend_orca_absence_verdict), so
+    # reclaim the task by closing it, creating ONE fresh terminal by the recorded
+    # worktree id, and confirming it is listed there. The worktree, its branch,
+    # its commits, and its uncommitted changes are never touched: nothing on this
+    # path removes or recreates a worktree, and the abort cleanup closes only the
+    # terminal created here (ORCA_RELAUNCH_NEW_TERMINAL), never the worktree.
+    ORCA_RELAUNCH_NEW_TERMINAL=$(fm_backend_orca_reclaim_terminal "$ORCA_WORKTREE_ID" "$RELAUNCH_TARGET" "$W") || {
+      ORCA_RELAUNCH_NEW_TERMINAL=
+      echo "error: task $ID's terminal $RELAUNCH_TARGET could not be replaced in its recorded worktree $ORCA_WORKTREE_ID; its record, worktree, and work are untouched" >&2
+      exit 1
+    }
+    ORCA_TERMINAL=$ORCA_RELAUNCH_NEW_TERMINAL
+    T=$ORCA_TERMINAL
+    WT_TARGET=$T
+    SES=$T
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -3693,9 +3740,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
-    # every read is scoped to the session the record names
+    # Herdr is the only backend that reaches THIS arm: the gate above rebinds
+    # only on a PROVEN-gone endpoint, and absence is provable only on herdr
+    # (whose every read is scoped to the session the record names) and on a
+    # local Orca runtime, which has its own arm above
     # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
     # secondmate were already refused, so there is no dispatch left to make.
     #
@@ -5298,6 +5346,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
+  # The published record now names the reclaimed terminal, so it is the task's
+  # own endpoint and an abort from here on must not close it.
+  ORCA_RELAUNCH_NEW_TERMINAL=
 fi
 # A dispatch or relaunch keeps the per-task meta lock through launch delivery.
 # The backlog mutation is deliberately the final fallible commit below, so

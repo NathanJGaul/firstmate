@@ -33,8 +33,15 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
-| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, and only Herdr can supply one: proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path. A tmux `missing` always refuses rather than claim a stop it cannot see. |
+| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, and only Herdr and a local Orca runtime can supply one: proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path (on Orca it refuses unless `--close-terminal` is given, below). A tmux `missing` always refuses rather than claim a stop it cannot see. |
 | `relaunch` | Replace the running agent with a new one in the same worktree - and the same endpoint whenever that endpoint still exists - on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the endpoint the task's record now names, and that record names the harness that is actually running. |
+
+`exit` and `relaunch` take one extra flag, `--close-terminal`, which is Orca-only and applies to an agent reading `alive` only.
+Closing an Orca terminal takes its agent with it and returns a receipt, so a wedged agent that no read can classify as stopped is stopped by closing the recorded terminal.
+Without the flag, an Orca agent that reads `alive` is refused, naming the state and the flag.
+With it, `exit` closes the one recorded terminal, requires the runtime's `ptyKilled: true` receipt, then waits for the terminal to read missing and for no local process to carry its handle before it reports `closed`; a receipt that kills nothing, or a terminal or process that survives the wait, refuses.
+Every other state, every other verb, and every other backend refuses the flag, because a stopped or gone agent needs no close and no other endpoint has a close receipt to take as proof.
+`relaunch --close-terminal` is that close followed by the [reclaim](#reclaiming-a-task-whose-endpoint-is-gone).
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -84,7 +91,7 @@ A relaunch does take one session reference when the endpoint's own runtime recor
    A secondmate relaunch does not require one and never rewrites its standing charter.
 4. **Stop the old agent** through the `exit` verb, with its postcondition.
 5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which reuses the recorded worktree instead of creating one, adopts the recorded endpoint when it still exists, clears the previous harness's per-task wiring, and arms a fresh busy generation.
-   When the recorded endpoint is proven gone rather than merely idle or unreachable - which only Herdr can establish - the launch owner creates one fresh endpoint in that same worktree and the republished record rebinds the task to it - see [Reclaiming a task whose endpoint is gone](#reclaiming-a-task-whose-endpoint-is-gone).
+   When the recorded endpoint is proven gone rather than merely idle or unreachable - which only Herdr and a local Orca runtime can establish - the launch owner creates one fresh endpoint in that same worktree and the republished record rebinds the task to it - see [Reclaiming a task whose endpoint is gone](#reclaiming-a-task-whose-endpoint-is-gone).
 6. **Preserve runtime-bound status authority where supported.**
    The endpoint's runtime may bind pane status to one session identity; the launch owner preserves it only when that runtime records a reference the replacement adapter can consume, and otherwise launches the ordinary fresh session.
    This reference is a launch input, never authority to send, close, or act on the pane.
@@ -97,7 +104,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 A Herdr pane or workspace can be destroyed out from under a live task by churn or a session restart.
 The task's worktree, branch, commits, and uncommitted changes all survive that; only its terminal does not.
 
-**Reclaim is Herdr-only.** On tmux, both verbs refuse a `missing` endpoint, leaving it exactly as deadlocked as it was before this mechanism existed - deliberately, and with the reason stated rather than guessed past.
+**Reclaim is Herdr and Orca only.** On tmux, both verbs refuse a `missing` endpoint, leaving it exactly as deadlocked as it was before this mechanism existed - deliberately, and with the reason stated rather than guessed past.
 
 Two endpoint verdicts are agent-free, and both license a relaunch:
 
@@ -112,6 +119,11 @@ An unreachable endpoint can still hold the live agent a rebind would duplicate, 
   `dead` means the pane survived the restart and is adopted after all, with no second tab; `alive` means the agent came back and refuses; only a second `missing` proves the pane itself did not survive ([`docs/herdr-backend.md`](herdr-backend.md) "Restart and liveness behavior").
   That server start is a real side effect, and the parenthetical above does not cover it: when the recorded session's server no longer exists at all, the probe stands a fresh empty one up in order to ask, and nothing afterwards uses it.
   So in that state `exit` - which otherwise reads as a read-only inspection - leaves an idle herdr server behind.
+- **Orca can, for a runtime on this host.** The runtime must answer that the terminal is gone (an exited shell, a closed terminal, or a handle it never issued), and no process on this host may still carry the terminal's handle.
+  That second clause is what stops a stale handle after a runtime restart, when Orca's terminal processes survive, from licensing a second agent beside a live one: a harness still carrying the handle reads `alive`, and any other process reads unproven.
+  A runtime that may be on another host (`ORCA_ENVIRONMENT`, `ORCA_PAIRING_CODE`, or `ORCA_REMOTE_PAIRING` set) is always unproven, because neither its answer about a handle nor this host's process table proves anything about that terminal.
+  A host with no process table accepts the runtime's own answer, the only evidence available there.
+  [`orca-backend.md`](orca-backend.md) owns the Orca reclaim.
 - **tmux cannot.** `list-windows -a` describes only the tmux server the *current process* addresses (its `TMUX_TMPDIR`/socket), and a task record carries no socket identity for its endpoint.
   A different but running server would answer "not anywhere" about a window it was never able to see, so a server-wide read cannot tell a destroyed window from one on a server this process cannot address.
   There is no read available that closes that gap, so tmux always refuses - for a renamed session, a moved window, a foreign socket, and a dead server alike.
@@ -166,13 +178,15 @@ The worktree and the task's records are unaffected either way.
   Muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
   Orca delivers all four keys, but Escape and Ctrl+U only when its runtime reports the capability they are gated on, and the adapter refuses before sending when it does not; [`orca-backend.md`](orca-backend.md) owns that gate and the Orca operating posture.
-- `exit` and `relaunch` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" postcondition cannot be proven.
-  zellij, orca, and cmux are refused rather than reported as successful blind.
+- `exit` and `relaunch` require a backend with a recovery-grade agent-state classifier - tmux, herdr, and orca - because without one the "the agent stopped" postcondition cannot be proven.
+  zellij and cmux are refused rather than reported as successful blind.
+  On Orca only `dead`, a locally proven `missing`, and a running agent closed with `--close-terminal` act; `ambiguous`, `unverified` (a runtime that may be on another host, or no process table), and `unreadable` refuse, each naming its state.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
-- `fm-spawn --relaunch` independently refuses unless the endpoint is positively agent-free - either a `dead` endpoint that survives, or a Herdr endpoint proven gone by the absence proof above - so a replacement can never join a live agent.
+- `fm-spawn --relaunch` independently refuses unless the endpoint is positively agent-free - either a `dead` endpoint that survives, or a Herdr or local Orca endpoint proven gone by the absence proof above - so a replacement can never join a live agent.
   An `alive`, `ambiguous`, or `unreadable` verdict all refuse, and so does any endpoint whose absence is not provable, which on tmux is every `missing`; absence is claimed only from positive evidence of it.
+  On Orca it also checks the runtime's readiness and version floor before any mutation, and it refuses an Orca secondmate record, because Orca spawns no secondmates.
   It also requires the shell to be in the recorded worktree: every backend but Orca (which owns its own task worktree with no current-path probe) gets one explicit `cd` to the recorded path, then a pre-launch path read that refuses before any harness starts unless it confirms the endpoint is sitting in the recorded copy.
 
 ## Capability matrix
@@ -185,7 +199,7 @@ Backend capability comes from each adapter's real surface, not from a policy cho
 | herdr | yes | yes | yes | yes | yes |
 | zellij | yes | yes | yes | yes | no |
 | cmux | yes | yes | yes | yes | no |
-| orca | yes, when the runtime reports the capability | yes | yes | yes, when the runtime reports the capability | no |
+| orca | yes, when the runtime reports the capability | yes | yes | yes, when the runtime reports the capability | yes, for a runtime on this host |
 
 Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`, with adapters outside its lane pinning their control mechanics in their own harness suites.
 The empirical basis for each adapter's value is the `harness-adapters` skill's verification record for that adapter.
@@ -195,3 +209,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the endpoint-absence proof both verbs share - the Herdr reclaim of a destroyed endpoint, and tmux refusing one it cannot prove absent.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
+- `tests/fm-control.test.sh` and `tests/fm-control-relaunch.test.sh` also drive Orca through the stateful fake in `tests/orca-fake.sh` (a close changes what the next read says, a create adds a listed terminal, a launch starts a harness in a fake process table): the exit matrix, the refusals, `--close-terminal`, the reclaim, and every failure path that must leave the record and the worktree untouched.
+- `tests/fm-backend-orca-smoke.test.sh` step A15 - the Orca reclaim against a real headless runtime in the opt-in lab; [`verification/runtime-backends.md`](verification/runtime-backends.md#orca) owns the dated result.
