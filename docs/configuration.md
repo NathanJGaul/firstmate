@@ -619,6 +619,7 @@ The flag is a home-local supervision-noise preference and is not inherited by se
 ## Gate defaults (.no-mistakes.yaml)
 
 The tracked `.no-mistakes.yaml` sets `test.evidence.store_in_repo: true` and pins `commands.lint` to `bin/fm-lint.sh`, the same owner CI invokes.
+The daemon runs that command with its own fixed search path, so ShellCheck and actionlint resolve from the managed per-user tool directory that `bin/fm-install-lint-tools.sh` provisions with the pinned builds, ahead of `PATH` when its tool reports the pin; without it the lint step stops on a missing tool.
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
 That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.

@@ -10,6 +10,11 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Cases stage fake tools on PATH; an empty managed directory keeps a provisioned
+# machine from overriding them.
+FM_LINT_TOOLS_DIR=$(fm_test_tmproot fm-lint-empty-tools)
+export FM_LINT_TOOLS_DIR
+
 LINT_WF="$ROOT/bin/fm-lint-workflows.sh"
 LINT="$ROOT/bin/fm-lint.sh"
 INSTALLER="$ROOT/bin/fm-install-actionlint.sh"
@@ -252,7 +257,7 @@ test_missing_actionlint_fails_closed() {
     ln -s "$(command -v "$tool")" "$fakebin/$tool"
   done
   rc=0
-  out=$(PATH="$fakebin" "$LINT_WF" --root "$tmp" 2>&1) || rc=$?
+  out=$(FM_LINT_TOOLS_DIR="$tmp/no-tools" PATH="$fakebin" "$LINT_WF" --root "$tmp" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "missing actionlint expected exit 1, got $rc"$'\n'"$out"
   assert_contains "$out" "actionlint not found" \
     "missing actionlint did not name the required linter"
@@ -468,6 +473,7 @@ test_fm_lint_default_path_catches_broken_ci_yml() {
   mkdir -p "$tmp/bin" "$tmp/.github/workflows"
   cp "$LINT" "$tmp/bin/fm-lint.sh"
   cp "$LINT_WF" "$tmp/bin/fm-lint-workflows.sh"
+  cp "$ROOT/bin/fm-lint-tools-lib.sh" "$tmp/bin/fm-lint-tools-lib.sh"
   chmod +x "$tmp/bin/fm-lint.sh" "$tmp/bin/fm-lint-workflows.sh"
   write_col0_heredoc_workflow "$tmp/.github/workflows/ci.yml"
 

@@ -20,6 +20,8 @@ REQUIRED_ACTIONLINT=1.7.12
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SELF_DIR/fm-lint-workflows.sh"
 ROOT="$(cd "$SELF_DIR/.." && pwd)"
+# shellcheck source=bin/fm-lint-tools-lib.sh
+. "$SELF_DIR/fm-lint-tools-lib.sh"
 
 if [ "${1:-}" = "--required-version" ]; then
   printf '%s\n' "$REQUIRED_ACTIONLINT"
@@ -107,12 +109,11 @@ else
   fi
 fi
 
-if ! command -v actionlint >/dev/null 2>&1; then
-  printf 'fm-lint-workflows.sh: actionlint not found; install actionlint %s with bin/fm-install-actionlint.sh <destination-directory> and put that directory on PATH.\n' \
-    "$REQUIRED_ACTIONLINT" >&2
+if ! ACTIONLINT_BIN=$(fm_lint_tool_resolve actionlint "$REQUIRED_ACTIONLINT"); then
+  printf 'fm-lint-workflows.sh: actionlint not found on PATH or in %s; run bin/fm-install-lint-tools.sh to install the pinned actionlint %s there, or install it elsewhere with bin/fm-install-actionlint.sh <destination-directory> and put that directory on PATH.\n' \
+    "$(fm_lint_tools_dir 2>/dev/null || printf 'the managed tool directory')" "$REQUIRED_ACTIONLINT" >&2
   exit 1
 fi
-ACTIONLINT_BIN=$(command -v actionlint)
 resolved=$("$ACTIONLINT_BIN" -version | awk 'NR==1 {print; exit}')
 printf 'fm-lint-workflows.sh: actionlint %s (pinned %s)\n' "$resolved" "$REQUIRED_ACTIONLINT" >&2
 if [ "$resolved" != "$REQUIRED_ACTIONLINT" ]; then
