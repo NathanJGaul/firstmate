@@ -131,6 +131,11 @@ if [ -r "$SELF_DIR/fm-timeout-lib.sh" ]; then
   . "$SELF_DIR/fm-timeout-lib.sh"
 fi
 
+# The tools library owns where the pinned ShellCheck is looked up beyond the
+# search path, so the no-mistakes daemon's fixed search path still finds it.
+# shellcheck source=bin/fm-lint-tools-lib.sh
+. "$SELF_DIR/fm-lint-tools-lib.sh"
+
 FM_LINT_WORKER_RUN_PID=
 FM_LINT_WORKER_ARGS=()
 # shellcheck disable=SC2329 # Registered by the private worker's signal traps.
@@ -908,13 +913,12 @@ if [ "$LIST_FILES" -eq 1 ]; then
   exit 0
 fi
 
-if ! command -v shellcheck >/dev/null 2>&1; then
-  printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
-    "$REQUIRED_SHELLCHECK" >&2
+if ! SHELLCHECK_BIN=$(fm_lint_tool_resolve shellcheck); then
+  printf 'fm-lint.sh: ShellCheck not found on PATH or in %s; run bin/fm-install-lint-tools.sh to install the pinned ShellCheck %s there, or install it elsewhere with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
+    "$(fm_lint_tools_dir 2>/dev/null || printf 'the managed tool directory')" "$REQUIRED_SHELLCHECK" >&2
   exit 1
 fi
 unset SHELLCHECK_OPTS
-SHELLCHECK_BIN=$(command -v shellcheck)
 if ! PERL_BIN=$(command -v perl); then
   printf 'fm-lint.sh: perl is required for bounded worker cleanup.\n' >&2
   exit 127

@@ -9,11 +9,17 @@
 # otherwise shasum -a 256. An unsupported OS/arch or a missing pin fails
 # without downloading.
 #
+# With no destination the binary goes into the managed pinned-tool directory
+# that bin/fm-lint-tools-lib.sh owns, where the lint entry points look when the
+# tool is not on PATH; bin/fm-install-lint-tools.sh provisions both tools there.
+#
 # Usage:
-#   fm-install-actionlint.sh <destination-directory>
+#   fm-install-actionlint.sh [<destination-directory>]
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/fm-lint-tools-lib.sh
+. "$ROOT/bin/fm-lint-tools-lib.sh"
 VERSION="$("$ROOT/bin/fm-lint-workflows.sh" --required-version)"
 
 die() {
@@ -21,7 +27,11 @@ die() {
   exit 1
 }
 
-DESTINATION=${1:?usage: fm-install-actionlint.sh <destination-directory>}
+DESTINATION=${1:-}
+if [ -z "$DESTINATION" ]; then
+  DESTINATION=$(fm_lint_tools_dir) \
+    || die "no destination given and no managed directory (set FM_LINT_TOOLS_DIR or HOME)"
+fi
 
 os=$(uname -s)
 arch=$(uname -m)
