@@ -1,0 +1,20 @@
+== before: lint with nothing provisioned
+fm-lint.sh: ShellCheck not found on PATH or in /home/nathanjgaul/.cache/tmp/tmp.9NtVmK1YEi; run bin/fm-install-lint-tools.sh to install the pinned ShellCheck 0.11.0 there, or install it elsewhere with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.
+exit=1
+== install
+fm-install-lint-tools.sh: shellcheck missing from /home/nathanjgaul/.cache/tmp/tmp.9NtVmK1YEi (pinned 0.11.0)
+fm-install-lint-tools.sh: installed shellcheck 0.11.0 into /home/nathanjgaul/.cache/tmp/tmp.9NtVmK1YEi
+fm-install-lint-tools.sh: actionlint missing from /home/nathanjgaul/.cache/tmp/tmp.9NtVmK1YEi (pinned 1.7.12)
+fm-install-lint-tools.sh: installed actionlint 1.7.12 into /home/nathanjgaul/.cache/tmp/tmp.9NtVmK1YEi
+exit=0
+/home/nathanjgaul/.cache/tmp/tmp.9NtVmK1YEi:
+actionlint
+shellcheck
+== after: lint
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+exit=0
+== workflows
+fm-lint-workflows.sh: actionlint 1.7.12 (pinned 1.7.12)
+fm-lint-workflows.sh: 3 workflow files valid
+exit=0

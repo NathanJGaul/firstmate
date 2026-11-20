@@ -1,0 +1,11 @@
+ok - provisioning never invokes the no-mistakes daemon
+ok - each installer defaults to the managed directory
+ok - each installer keeps honoring an explicit destination
+ok - a missing tool names the provisioning command and the managed directory
+fm-lint: begin tests/zellij-test-safety.sh (shard 1, full mode)
+fm-lint: end tests/secondmate-helpers.sh reason=ok rc=0 duration_ms=21 rss_kib=unavailable
+fm-lint: end tests/zellij-test-safety.sh reason=ok rc=0 duration_ms=16 rss_kib=unavailable
+fm-lint-workflows.sh: actionlint not found on PATH or in /home/nathanjgaul/.cache/tmp/fm-lint-empty-tools.UqKr5S; run bin/fm-install-lint-tools.sh to install the pinned actionlint 1.7.12 there, or install it elsewhere with bin/fm-install-actionlint.sh <destination-directory> and put that directory on PATH.
+ok - fm-lint-workflows.sh pins an explicit actionlint version (1.7.12)
+not ok - current workflows must parse, got 1
+fm-lint-workflows.sh: actionlint not found on PATH or in /home/nathanjgaul/.cache/tmp/fm-lint-empty-tools.DpeaA9; run bin/fm-install-lint-tools.sh to install the pinned actionlint 1.7.12 there, or install it elsewhere with bin/fm-install-actionlint.sh <destination-directory> and put that directory on PATH.
