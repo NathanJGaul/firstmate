@@ -565,12 +565,48 @@ Resume:
 | `-p --resume <Code Mode session id>` | refuses: it only works in the interactive terminal |
 
 Stop, rewake, and session start in the same lab: the `Stop` hook fired at the end of a Code Mode turn, its `asyncRewake` exit-2 banner woke the session as `Stop hook feedback`, and `SessionStart` fired for `startup`, `clear`, and `compact` with the digest reaching context.
-The real watcher and real wake records were not exercised there, and a TUI-driven live end-to-end test for Code Mode does not exist yet.
+The real watcher and real wake records were not exercised there; the scout pilot below adds a TUI-driven live guard for the launch knob.
 
 Not verified: Grok 1.0.77, Cursor, and pi-code loading `.claude/settings.json` with the new `onFailure` field.
 Grok and Cursor could not be probed because neither installed client is signed in (`grok` answered `Not signed in`, `cursor-agent status` answered `Not logged in`), and no pi-code probe was run.
 The indirect evidence is that those loaders already read the tracked Stop entries, which carry `asyncRewake`, a Claude-only field none of them defines, and ran them: `turnend-guard.md` records that grok 1.0.0 and pi-code each ran the Stop auto-arm synchronously for lack of `asyncRewake`, and Cursor's Claude-compatibility map loads the same file.
 That shows these loaders tolerate an unknown hook field in general; it does not show tolerance of `onFailure` specifically, so the gap stays open until a signed-in probe records it.
+
+### Claude Code Code Mode scout pilot, 2026-11-20
+
+This supports the Code Mode launch knob in `../configuration.md#claude-code-mode-configclaude-code-mode`.
+Refresh it with `FM_CLAUDE_CODEMODE_LIVE_E2E=1 tests/fm-claude-codemode-live-e2e.test.sh`, which needs the throwaway sign-in that `tests/fm-claude-codemode-lab-login.sh` prepares and never touches the real `~/.claude`.
+
+The guard builds each launch line with the real `bin/fm-spawn.sh`, then runs that exact line in a real tmux pane against a copy of the throwaway Claude config directory, with `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` left in the pane's ambient environment.
+It submits one bounded Haiku turn per case, and the pane answers the `--add-dir` folder confirmations for directories the lab created.
+
+Claude Code gates Code Mode on the client and terminal.
+When the pane shows `Code Mode (experimental) isn't available`, the guard prints a `skip:` line naming the version and exits without a verdict, so a skip proves nothing about the launch knob; only a run that reaches the cases below does.
+
+Result on Claude Code 2.1.328: the three live cases were not run in validation.
+Code Mode reports unavailable in the interactive terminal on this Claude Code version and account, reproduced with a bare launch and no Firstmate, so the guard skipped.
+
+| Case | Result |
+| --- | --- |
+| scout, `scouts` knob, confirmation accepted | not run in validation: Code Mode reports unavailable in the interactive terminal on this Claude Code version and account (reproduced with a bare launch, no Firstmate) |
+| ship worker, same knob, stray variable in the pane environment | not run in validation: Code Mode reports unavailable in the interactive terminal on this Claude Code version and account (reproduced with a bare launch, no Firstmate) |
+| scout, `scouts` knob, confirmation not accepted in the config directory | not run in validation: Code Mode reports unavailable in the interactive terminal on this Claude Code version and account (reproduced with a bare launch, no Firstmate) |
+
+What was proved instead:
+
+- The portable suite `tests/fm-spawn-claude-code-mode.test.sh` proves the knob parsing, the launch-line splice (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` for scouts only, an explicit `env -u` for every other launch), that a launch-env allowlist does not strip it, the acceptance pre-flight skip note, and that secondmates and the supervision engine never inherit the variable.
+- Eleven deliberate mutants of that behavior were each caught by the suite.
+- The launch-line suites (`fm-spawn-dispatch-profile`, `fm-worker-account`, `fm-claude-trust`, `fm-secondmate-harness`, `fm-backend-orca`, `fm-supervision-host`) pass with the added `env -u` token.
+
+A single earlier hand-run of the live guard on 2026-11-20 in the throwaway lab reported all three cases passing.
+Later runs did not reproduce it, so it is not relied on.
+
+To refresh on a machine where Code Mode is available:
+
+```sh
+tests/fm-claude-codemode-lab-login.sh
+FM_CLAUDE_CODEMODE_LIVE_E2E=1 tests/fm-claude-codemode-live-e2e.test.sh
+```
 
 ## Watcher continuity
 

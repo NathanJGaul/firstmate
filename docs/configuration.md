@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [Claude Code Mode](#claude-code-mode-configclaude-code-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -869,6 +869,55 @@ The diagnostic names the accepted values; Firstmate never falls back to a permis
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the permission-mode observations and the distinct startup dialogs.
+
+## Claude Code Mode (config/claude-code-mode)
+
+The optional local, gitignored `config/claude-code-mode` is an explicit per-launch switch for Claude Code's experimental Code Mode, in which the model writes JavaScript that calls the session's tools.
+It exists so Code Mode can be piloted on scouts, the read-heavy work where it helps most, without ever reaching a primary, a secondmate, or a ship worker.
+
+### Accepted values and refusals
+
+The token is the file's whitespace-trimmed content.
+
+| Token | Launch behavior |
+| --- | --- |
+| `off` | No launch starts in Code Mode. This is the default when the file is absent. |
+| `scouts` | A Claude scout launch starts in Code Mode when the conditions below hold. Nothing else changes. |
+
+Any other value, or an unreadable file, refuses every spawn from that home, whichever harness it would launch.
+This happens before any endpoint, worktree, or task record exists, and the diagnostic names the accepted values.
+
+### What each launch carries
+
+Every Claude launch built from Firstmate's own template states the choice on the launch line itself, so a stray `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` in a daemon's or a caller's environment never decides.
+A qualifying scout carries the assignment `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`.
+Every other such launch - ship workers, secondmates, relaunches, and scouts that do not qualify - carries `-u CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`.
+Both forms sit inside the launch line, so [`config/launch-env-allowlist`](#worker-launch-environment-configlaunch-env-allowlist) neither strips the assignment nor lets a listed variable override the unset.
+The supervision host's print-mode engine also unsets it, and no code path sets it for the primary, which Firstmate never launches.
+A raw launch command and every other harness are launched exactly as before.
+
+A scout qualifies only when all of these hold:
+
+- the home's setting is `scouts`;
+- the Claude permission mode is bypass, because under `auto` the classifier reads Code Mode's JavaScript once and does not see the tool calls it makes;
+- the Claude config directory the worker reads has recorded acceptance of the one-time Code Mode confirmation.
+
+That directory is the pinned worker account root when [`config/claude-account`](#worker-account-pin-configclaude-account-configpi-account) is present, otherwise `CLAUDE_CONFIG_DIR`, otherwise `$HOME`.
+Acceptance is the boolean `codeModeCaveatsAcceptedV1` in that directory's `.claude.json`.
+
+### The first-run confirmation
+
+The first Code Mode launch per Claude config directory shows a confirmation whose cursor starts on "No, start without it", and Firstmate's key plane cannot select "Yes".
+The spawn therefore only reads the acceptance and never writes or answers it; a person accepts it once in an interactive Claude session on that directory.
+When a scout would otherwise qualify but the directory has not accepted, the scout launches without Code Mode, the spawn prints one `note:` line saying why and naming the directory, and the spawn still succeeds.
+The same one-line note appears when the permission mode forces Code Mode off.
+
+### When changes apply and inheritance
+
+`bin/fm-spawn.sh` reads the file on every spawn and relaunch, so a change reaches the next launch without a restart.
+The file is not in the inherited configuration set, so no secondmate home receives it; create it in each home that wants it.
+Claude Code needs version 2.1.323 or later for Code Mode, and an older client silently ignores the variable.
+The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md#code-mode-experimental) records the version floor, hook failure semantics, and resume rule, and `tests/fm-claude-codemode-live-e2e.test.sh` is the opt-in live guard that refreshes the verification record.
 
 ## Worker tool exclusions (config/crew-exclude-tools)
 

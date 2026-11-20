@@ -354,7 +354,7 @@ family_for_basename() {
       ;;
     fm-afk-pi-herdr-return-e2e.test.sh|\
     fm-bearings-board-lavish-live-e2e.test.sh|\
-    fm-claude-stop-autoarm-live-e2e.test.sh|\
+    fm-claude-stop-autoarm-live-e2e.test.sh|fm-claude-codemode-live-e2e.test.sh|\
     fm-cmux-claude-composer-live-e2e.test.sh|\
     fm-composer-matrix-live-e2e.test.sh|\
     fm-composer-codex-idle-live-e2e.test.sh|\
@@ -389,7 +389,7 @@ family_for_basename() {
     fm-control.test.sh|fm-control-relaunch.test.sh|\
     fm-herdr-session-cleanup.test.sh|fm-send-resolve-key.test.sh|fm-send-strict.test.sh|\
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
-    fm-spawn-dispatch-profile.test.sh|fm-claude-trust.test.sh|\
+    fm-spawn-dispatch-profile.test.sh|fm-claude-trust.test.sh|fm-spawn-claude-code-mode.test.sh|\
     fm-worker-account.test.sh|\
     fm-git-strip-ai-trailers.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
@@ -730,6 +730,8 @@ tests/fm-classify-decision-key.test.sh 4362
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 73
 tests/fm-claude-stop-autoarm.test.sh 61189
 tests/fm-claude-trust.test.sh 12010
+tests/fm-claude-codemode-live-e2e.test.sh 60
+tests/fm-spawn-claude-code-mode.test.sh 20000
 tests/fm-cmux-claude-composer-live-e2e.test.sh 77
 tests/fm-codex-continuity-live-e2e.test.sh 108
 tests/fm-codex-hook-layer-live-e2e.test.sh 108

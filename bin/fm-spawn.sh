@@ -365,6 +365,23 @@
 #   worktree, or record exists and names the accepted values. The file is read
 #   on every spawn and relaunch, so a change reaches the next launch without a
 #   restart, and it is inherited into secondmate homes (bin/fm-config-inherit-lib.sh).
+# Claude Code Mode (config/claude-code-mode):
+#   One token, `off` (the default when absent) or `scouts`, owned by
+#   bin/fm-claude-code-mode-lib.sh and documented in docs/configuration.md
+#   "Claude Code Mode". Every launch built from the claude template states
+#   Code Mode on the launch line itself: a scout under `scouts` whose config
+#   directory has recorded the one-time confirmation (and under the bypass
+#   permission mode) carries CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1, and every
+#   other such launch (ship, secondmate, relaunch, a scout that does not
+#   qualify) carries `env -u` for it, so a stray variable in a caller's or a
+#   daemon's environment never decides and config/launch-env-allowlist cannot
+#   strip the assignment. A scout that would qualify except for the unaccepted
+#   confirmation or the auto permission mode launches without Code Mode and
+#   prints one `note:` line saying why; the confirmation is a human consent
+#   that Firstmate only reads, never writes. Any other token or an unreadable
+#   file refuses the spawn before any endpoint, worktree, or record exists.
+#   Raw launch commands and other harnesses are untouched, and the file is not
+#   inherited into secondmate homes.
 # Worker tool exclusions:
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
@@ -627,6 +644,12 @@ case "$CLAUDE_PERMISSION_MODE" in
 auto) CLAUDE_PERM_FLAG='--permission-mode auto' ;;
 *) CLAUDE_PERM_FLAG='--dangerously-skip-permissions' ;;
 esac
+# config/claude-code-mode (header above): resolved once per spawn or relaunch,
+# before any mutation, so a malformed file refuses instead of launching a worker
+# on a Code Mode posture the captain did not choose.
+# shellcheck source=bin/fm-claude-code-mode-lib.sh
+. "$SCRIPT_DIR/fm-claude-code-mode-lib.sh"
+CLAUDE_CODE_MODE_SETTING=$(fm_claude_code_mode_setting "$CONFIG") || exit 1
 # config/lavish-axi-host is the primary-owned per-machine address for the
 # shared Lavish server. Read it once per launch and refuse malformed values so
 # every worker reaches the same server instead of starting a second one.
@@ -5450,9 +5473,28 @@ case "$LAUNCH" in
   LAUNCH=${LAUNCH//__CLAUDEADDDIRS__/$CLAUDE_ADD_DIRS}
   ;;
 esac
+# Code Mode is an explicit per-launch choice (header above). Every template
+# Claude launch states it on the launch line itself: the assignment for a
+# scout that qualifies, otherwise an unset, so a stray variable in a daemon's or
+# a caller's environment never decides. The statement sits inside the launch
+# line, so config/launch-env-allowlist's `env -i` wrapper carries it unchanged.
+CLAUDE_CODE_MODE_TOKEN=
+if [ "$HARNESS" = claude ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+  CLAUDE_CODE_MODE_TOKEN="-u CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
+  if [ "$KIND" = scout ] && [ "$CLAUDE_CODE_MODE_SETTING" = scouts ]; then
+    code_mode_store=${CLAUDE_CONFIG_DIR:-${HOME:-}}
+    if [ "$CLAUDE_PERMISSION_MODE" != bypass ]; then
+      echo "note: Code Mode skipped for scout $ID: config/claude-permission-mode is $CLAUDE_PERMISSION_MODE, and its classifier reads Code Mode's JavaScript once without seeing the tool calls it makes, so Code Mode runs under bypass only"
+    elif fm_claude_code_mode_accepted "$code_mode_store"; then
+      CLAUDE_CODE_MODE_TOKEN="CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1"
+    else
+      echo "note: Code Mode skipped for scout $ID: the Claude config directory $code_mode_store has not accepted the one-time Code Mode confirmation (codeModeCaveatsAcceptedV1), and a worker would sit on that dialog; accept it once in an interactive claude session with CLAUDE_CONFIG_DIR=$code_mode_store, then respawn"
+    fi
+  fi
+fi
 case "$HARNESS" in
 claude | codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy | devin)
-  LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
+  LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI ${CLAUDE_CODE_MODE_TOKEN:+$CLAUDE_CODE_MODE_TOKEN }$LAUNCH"
   ;;
 esac
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not
