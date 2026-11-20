@@ -1,4 +1,4 @@
-// Verified against Pi 0.81.1 and 0.82.0, which add the ordinary-user spacer and row
+// Verified against Pi 0.81.1, 0.82.0, 1.5.2, and 1.6.0, which add the ordinary-user spacer and row
 // together via InteractiveMode.addMessageToChat. This adapter probes that exact method
 // and throws if it is missing; fm-calm.ts catches that and skips only this adapter with a
 // diagnostic instead of blocking Calm or Pi. It changes only that presentation and never
@@ -105,7 +105,7 @@ export function installCalmOperationalUserLayout(): void {
     override render(width: number): string[] {
       if (patch.hidesOperationalInput()) return [];
       const lines = super.render(width);
-      return this.hasLeadingSpacer ? ["", ...lines] : lines;
+      return this.hasLeadingSpacer ? ["", ...lines] : [...lines];
     }
   }
 
