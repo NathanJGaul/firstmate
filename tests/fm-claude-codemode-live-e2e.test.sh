@@ -81,11 +81,11 @@ wait_screen() {  # <text> <what> [iterations]
   while [ "$i" -lt "$limit" ]; do
     shot=$(screen)
     case "$shot" in
-    *'Adding a new directory'*"$LAB"*'Yes, add it'*)
+    *'Adding a new directory'*"$LAB"*'Yes, add it'* | *'Adding a new directory'*"$ROOT"*'Yes, add it'*)
       # The task-channel --add-dir grants name directories this lab created, and a
       # fresh config directory asks about each once per session. The cursor opens on
       # "No, exit", so move it onto "Yes, add it" before confirming. Only a path
-      # under the lab is ever answered; anything else falls through and times out.
+      # under the lab or this test's own worktree is ever answered; anything else falls through and times out.
       # The dialog ignores a key that lands as it draws, so let it settle first.
       sleep 1.5
       if printf '%s\n' "$shot" | grep -F '❯' | grep -q 'Yes, add it'; then
