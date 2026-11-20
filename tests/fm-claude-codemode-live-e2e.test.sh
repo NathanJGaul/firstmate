@@ -97,6 +97,12 @@ wait_screen() {  # <text> <what> [iterations]
       i=$((i + 4))
       continue
       ;;
+    *"Code Mode (experimental) isn't available"*)
+      # Claude's own availability gate (not the launch line) refused Code Mode on
+      # this client or terminal, so the pilot cannot be proven here: skip honestly.
+      printf 'skip: live: Claude Code %s reports Code Mode unavailable in this environment\n' "$CLAUDE_VERSION"
+      exit 0
+      ;;
     *'start without it'*) fail "the worker parked on the Code Mode confirmation while waiting for $what" ;;
     *'CLAUDE_EXIT='*) printf '%s\n' "$shot" >&2; fail "Claude Code $CLAUDE_VERSION exited while waiting for $what" ;;
     *"$text"*) return 0 ;;
