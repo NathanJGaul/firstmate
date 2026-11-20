@@ -824,11 +824,12 @@ BRIEF
   observe "fm-control interrupt: $kout"
   kout=$(fm "$ROOT/bin/fm-send.sh" "$ID" --key C-c 2>&1) || fail "F: fm-send --key C-c was refused on the lab runtime: $(printf '%s' "$kout" | tail -1 | cut -c1-200)"
   ok "F: fm-send --key Enter, Escape, C-u, and C-c are all delivered on Orca"
-  for verb in exit relaunch; do
-    if kout=$(fm "$ROOT/bin/fm-control.sh" "$ID" "$verb" 2>&1); then fail "F: fm-control $verb succeeded on Orca, which has no agent-state proof yet"; fi
-    assert_contains "$kout" "no recovery-grade agent-state classifier" "F: the $verb refusal does not name the missing stop proof"
-  done
-  ok "F: fm-control exit and relaunch are still refused on Orca, waiting on agent-state proof"
+  # The Ctrl+C just delivered ended the renamed sleep standing in for the harness, so the terminal is now
+  # shell-only and reads dead: exit is admitted since slice N3 and reports it already stopped (A15 below
+  # covers a running agent, which it refuses naming its state).
+  kout=$(fm "$ROOT/bin/fm-control.sh" "$ID" exit 2>&1) || fail "F: fm-control exit of the agent the C-c ended was refused: $kout"
+  assert_contains "$kout" "already-stopped $ID harness=claude backend=orca" "F: fm-control exit did not report the ended agent as already stopped"
+  ok "F: fm-control exit on Orca reports the agent the C-c ended as already stopped, on the process-table proof"
   sed -i.bak "s/^harness=.*/harness=$ORIG_HARNESS/" "$META" && rm -f "$META.bak"
   fm "$ROOT/bin/fm-send.sh" "$ID" --key Enter >/dev/null 2>&1 || fail "F: fm-send --key Enter failed on Orca"
   ok "F: fm-send --key Enter is delivered on Orca"
@@ -876,6 +877,156 @@ BRIEF
   git -C "$SCRATCH" show-ref --verify --quiet "refs/heads/$TASK_BRANCH" && fail "F: the task branch $TASK_BRANCH remains after a clean teardown"
   [ "$TASK_BRANCH" = "fm/$ID" ] || fail "F: the branch torn down was '$TASK_BRANCH', not fm/$ID"
   ok "F: a clean teardown removes the worktree, terminal, branch, and record"
+
+  # --- slice N3: close-and-recreate reclaim, exit, and relaunch (specs/010-orca-reclaim) --------------------
+  # A relaunch needs a harness the lab can run: the raw command is a renamed sleep, so fm-spawn --relaunch
+  # (the launch owner) takes it with --harness, while fm-control's own verbs are driven with the record
+  # relabelled to claude, as the interrupt step above does. No agent turn is started.
+  section "A15 reclaim (proves slice N3: relaunch of a killed agent, reclaim of a closed terminal, close of a wedged agent)"
+  own
+  RC_ID=test-orca-live-reclaim
+  RC_HARNESS="$LAB/fake/claude 3000"
+  mkdir -p "$FMHOME/data/$RC_ID"
+  cat > "$FMHOME/data/$RC_ID/brief.md" <<BRIEF
+# Task
+## Captain's intent
+Exercise the Orca reclaim against the lab runtime for $RC_ID.
+
+## Firstmate spec
+Confirm a killed agent, a closed terminal, and a wedged agent are each recovered with one terminal.
+BRIEF
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$RC_ID" "$SCRATCH" --mode local-only --yolo off --backend orca --harness "$RC_HARNESS" 2>&1) \
+    || fail "A15: the reclaim task's spawn failed: $out"
+  RC_META=$FMHOME/state/$RC_ID.meta
+  rcm() { sed -n "s/^$1=//p" "$RC_META" | head -1; }
+  RC_T0=$(rcm terminal); RC_WT=$(rcm worktree); RC_WID=$(rcm orca_worktree_id)
+  [ -n "$RC_T0" ] && [ -n "$RC_WT" ] && [ -n "$RC_WID" ] || fail "A15: the reclaim task's record lacks a terminal, worktree, or worktree id"
+  case "$RC_WT" in "$LAB"/*) : ;; *) fail "A15: the reclaim worktree $RC_WT is outside the lab" ;; esac
+  # work the reclaim must never touch: an unlanded commit and an uncommitted file
+  git -C "$RC_WT" -c user.email=lab@fm.test -c user.name=fm-test commit -q --allow-empty -m "fm-test reclaim unlanded work"
+  echo "fm-test dirty" > "$RC_WT/fm-test-reclaim-dirty.txt"
+  RC_HEAD=$(git -C "$RC_WT" rev-parse HEAD)
+  RC_STATUS=$(git -C "$RC_WT" status --porcelain)
+  rc_adapter() {  # <fn> [args...]: the repo's adapter against the lab runtime, routing variables stripped
+    # shellcheck disable=SC2016  # the single quotes are deliberate: $1 belongs to the inner bash
+    env -u ORCA_ENVIRONMENT -u ORCA_PAIRING_CODE -u ORCA_REMOTE_PAIRING \
+      bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source orca; shift; "$@"' _ "$ROOT" "$@"
+  }
+  rc_state() { rc_adapter fm_backend_agent_state orca "$1"; }
+  rc_wait_state() {  # <terminal> <state> [seconds]
+    local n=$(( ${3:-10} * 5 ))
+    while [ "$n" -gt 0 ]; do
+      [ "$(rc_state "$1")" = "$2" ] && return 0
+      sleep 0.2; n=$((n - 1))
+    done
+    return 1
+  }
+  rc_agent_pid() {  # <terminal>: the pid of the process named claude that carries the handle
+    rc_adapter fm_backend_orca_process_scan "$1" | awk -F'\t' '$2 == "claude" { print $1; exit }'
+  }
+  rc_assert_intact() {  # <label>: the worktree, its commit and its uncommitted file are exactly as left
+    [ "$(git -C "$RC_WT" rev-parse HEAD)" = "$RC_HEAD" ] || fail "A15 $1: the worktree's HEAD moved"
+    [ "$(git -C "$RC_WT" status --porcelain)" = "$RC_STATUS" ] || fail "A15 $1: the worktree's status changed"
+    [ "$(cat "$RC_WT/fm-test-reclaim-dirty.txt")" = "fm-test dirty" ] || fail "A15 $1: the uncommitted file changed"
+    [ "$(git -C "$RC_WT" symbolic-ref --short HEAD)" = "fm/$RC_ID" ] || fail "A15 $1: the worktree left its ship branch"
+  }
+  rc_assert_one_terminal() {  # <label> <handle>: exactly one live terminal for the worktree, and it is <handle>
+    local listed
+    listed=$(O terminal list --worktree "id:$RC_WID" --json | jq -r '[.result.terminals[] | select(.writable != false) | .handle] | sort | join(" ")')
+    [ "$listed" = "$2" ] || fail "A15 $1: the worktree holds terminals [$listed], not exactly [$2]"
+    [ "$(rcm terminal)" = "$2" ] || fail "A15 $1: the task record names '$(rcm terminal)', not $2"
+    [ "$(rcm orca_worktree_id)" = "$RC_WID" ] || fail "A15 $1: the record's worktree id changed"
+  }
+  rc_assert_no_process() {  # <label> <handle>: no local process carries the handle
+    local rows
+    rows=$(rc_adapter fm_backend_orca_process_scan "$2" | sed 1d)
+    [ -z "$rows" ] || fail "A15 $1: processes still carry handle $2: $(printf '%s' "$rows" | tr '\n\t' '|/' | cut -c1-240)"
+  }
+  rc_wait_state "$RC_T0" alive 10 || fail "A15: the reclaim task's raw harness never read alive (state '$(rc_state "$RC_T0")')"
+
+  # the receipt shapes (recorded in docs/verification/runtime-backends.md)
+  RC_PROBE=$(O terminal create --worktree "id:$RC_WID" --title fm-test-rc-probe --json | jq -r '.result.terminal.handle')
+  [ -n "$RC_PROBE" ] || fail "A15: probe terminal create returned no handle"
+  RC_CLOSE_LIVE=$(O terminal close --terminal "$RC_PROBE" --json)
+  observe "A15 terminal close of a live terminal: $(jq -c . <<<"$RC_CLOSE_LIVE")"
+  [ "$(jq -r '.result.close.ptyKilled' <<<"$RC_CLOSE_LIVE")" = true ] || fail "A15: closing a live terminal did not return result.close.ptyKilled true: $RC_CLOSE_LIVE"
+  RC_CLOSE_AGAIN=$(O terminal close --terminal "$RC_PROBE" --json 2>&1 || true)
+  observe "A15 terminal close of an already closed terminal: $(jq -c . <<<"$RC_CLOSE_AGAIN" 2>/dev/null || printf '%s' "$RC_CLOSE_AGAIN" | tr '\n' ' ' | cut -c1-300)"
+  RC_CLOSE_STALE=$(O terminal close --terminal term_00000000-0000-4000-8000-000000000000 --json 2>&1 || true)
+  observe "A15 terminal close of a handle the runtime never issued: $(jq -c . <<<"$RC_CLOSE_STALE" 2>/dev/null || printf '%s' "$RC_CLOSE_STALE" | tr '\n' ' ' | cut -c1-300)"
+  observe "A15 terminal list after the probe was closed: $(O terminal list --worktree "id:$RC_WID" --json | jq -c '[.result.terminals[] | {handle, writable, orphaned}]')"
+
+  # (1) a raw harness killed with SIGKILL reads dead and is relaunched into the SAME terminal
+  RC_PID=$(rc_agent_pid "$RC_T0")
+  [ -n "$RC_PID" ] || fail "A15: no process named claude carries $RC_T0"
+  orca_lab_pid_owned "$RC_PID" "$DATA" || fail "A15: the process named claude (pid $RC_PID) is not provably the lab's"
+  orca_lab_signal KILL "$RC_PID" "$DATA" || fail "A15: could not SIGKILL the lab-owned harness"
+  rc_wait_state "$RC_T0" dead 10 || fail "A15: after SIGKILL the terminal never read dead (state '$(rc_state "$RC_T0")')"
+  sed -i.bak 's/^harness=.*/harness=claude/' "$RC_META" && rm -f "$RC_META.bak"
+  kout=$(fm "$ROOT/bin/fm-control.sh" "$RC_ID" exit 2>&1) || fail "A15: fm-control exit of a dead agent was refused: $kout"
+  assert_contains "$kout" "already-stopped $RC_ID" "A15: exit of a dead agent did not report already-stopped"
+  sed -i.bak "s|^harness=.*|harness=$RC_HARNESS|" "$RC_META" && rm -f "$RC_META.bak"
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$RC_ID" --relaunch 2>&1) || fail "A15: relaunching a killed agent failed: $out"
+  rc_wait_state "$RC_T0" alive 10 || fail "A15: the relaunched harness never read alive in the adopted terminal (state '$(rc_state "$RC_T0")')"
+  rc_assert_one_terminal "killed agent" "$RC_T0"
+  rc_assert_intact "killed agent"
+  RC_PID2=$(rc_agent_pid "$RC_T0")
+  [ -n "$RC_PID2" ] && [ "$RC_PID2" != "$RC_PID" ] || fail "A15: no new harness process (old $RC_PID, new '${RC_PID2:-none}')"
+  [ "$(rc_adapter fm_backend_orca_process_scan "$RC_T0" | awk -F'\t' '$2 == "claude"' | wc -l | tr -d ' ')" = 1 ] || fail "A15: more than one harness process runs in the adopted terminal"
+  ok "A15: a harness killed with SIGKILL reads dead, exit reports already-stopped, and fm-spawn --relaunch adopts the same terminal with one new harness, one terminal, and the worktree intact"
+
+  # (2) a closed terminal reads missing: exit reports endpoint-gone and the relaunch reclaims a fresh terminal
+  O terminal close --terminal "$RC_T0" --json >/dev/null
+  rc_wait_state "$RC_T0" missing 10 || fail "A15: the closed terminal never read missing"
+  rc_assert_no_process "closed terminal" "$RC_T0"
+  sed -i.bak 's/^harness=.*/harness=claude/' "$RC_META" && rm -f "$RC_META.bak"
+  kout=$(fm "$ROOT/bin/fm-control.sh" "$RC_ID" exit 2>&1) || fail "A15: fm-control exit of a closed terminal was refused: $kout"
+  assert_contains "$kout" "endpoint-gone $RC_ID" "A15: exit of a closed terminal did not report endpoint-gone"
+  sed -i.bak "s|^harness=.*|harness=$RC_HARNESS|" "$RC_META" && rm -f "$RC_META.bak"
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$RC_ID" --relaunch 2>&1) || fail "A15: the reclaim of a closed terminal failed: $out"
+  RC_T1=$(rcm terminal)
+  [ -n "$RC_T1" ] && [ "$RC_T1" != "$RC_T0" ] || fail "A15: the reclaim did not republish a new terminal (record names '$RC_T1')"
+  rc_wait_state "$RC_T1" alive 10 || fail "A15: the reclaimed terminal's harness never read alive (state '$(rc_state "$RC_T1")')"
+  rc_assert_one_terminal "closed terminal" "$RC_T1"
+  rc_assert_intact "closed terminal"
+  rc_assert_no_process "closed terminal" "$RC_T0"
+  [ "$(rc_state "$RC_T0")" = missing ] || fail "A15: the old terminal does not read missing after the reclaim"
+  ok "A15: a closed terminal reads missing, exit reports endpoint-gone, and the reclaim republishes one fresh terminal with the same worktree id, one terminal, no stray process, and the worktree intact"
+  observe "A15 reclaim: $RC_T0->$RC_T1 title=$(O terminal list --worktree "id:$RC_WID" --json | jq -r '.result.terminals[0].title')"
+
+  # (3) a wedged agent: the plain verbs refuse naming alive, and the explicit close takes the receipt as proof
+  sed -i.bak 's/^harness=.*/harness=claude/' "$RC_META" && rm -f "$RC_META.bak"
+  if kout=$(fm "$ROOT/bin/fm-control.sh" "$RC_ID" exit 2>&1); then fail "A15: exit of a live agent succeeded without --close-terminal: $kout"; fi
+  assert_contains "$kout" "'alive'" "A15: the refusal does not name the alive state"
+  [ "$(rc_state "$RC_T1")" = alive ] || fail "A15: the refused exit disturbed the agent"
+  RC_PID3=$(rc_agent_pid "$RC_T1")
+  kout=$(fm "$ROOT/bin/fm-control.sh" "$RC_ID" exit --close-terminal 2>&1) || fail "A15: fm-control exit --close-terminal failed: $kout"
+  assert_contains "$kout" "closed $RC_ID" "A15: the explicit close did not report closed"
+  [ "$(rc_state "$RC_T1")" = missing ] || fail "A15: after the close the terminal does not read missing"
+  rc_assert_no_process "wedged agent" "$RC_T1"
+  orca_lab_pid_running "$RC_PID3" && fail "A15: the wedged agent (pid $RC_PID3) survived the close"
+  sed -i.bak "s|^harness=.*|harness=$RC_HARNESS|" "$RC_META" && rm -f "$RC_META.bak"
+  out=$(fm "$ROOT/bin/fm-spawn.sh" "$RC_ID" --relaunch 2>&1) || fail "A15: the reclaim after the explicit close failed: $out"
+  RC_T2=$(rcm terminal)
+  [ -n "$RC_T2" ] && [ "$RC_T2" != "$RC_T1" ] || fail "A15: no new terminal after the explicit close (record names '$RC_T2')"
+  rc_wait_state "$RC_T2" alive 10 || fail "A15: the harness never read alive in the terminal reclaimed after the close"
+  rc_assert_one_terminal "wedged agent" "$RC_T2"
+  rc_assert_intact "wedged agent"
+  ok "A15: a running agent is refused naming alive, then closed with --close-terminal on the receipt, and the reclaim leaves one terminal, no stray process, and the worktree intact"
+
+  # (4) teardown still refuses unlanded work after all of that
+  if out=$(fm "$ROOT/bin/fm-teardown.sh" "$RC_ID" 2>&1); then fail "A15: teardown of a reclaimed task holding unlanded work succeeded: $out"; fi
+  [ -d "$RC_WT" ] && [ -f "$RC_META" ] || fail "A15: a refused teardown removed the worktree or the record"
+  rc_assert_one_terminal "teardown refusal" "$RC_T2"
+  rc_assert_intact "teardown refusal"
+  ok "A15: teardown of the reclaimed task still refuses its unlanded work and leaves the terminal, worktree, and record in place"
+  observe "A15 teardown refusal: $(printf '%s' "$out" | tail -2 | tr '\n' '|' | cut -c1-240)"
+  git -C "$RC_WT" reset -q --hard HEAD~1
+  rm -f "$RC_WT/fm-test-reclaim-dirty.txt"
+  out=$(fm "$ROOT/bin/fm-teardown.sh" "$RC_ID" 2>&1) || fail "A15: the clean teardown of the reclaimed task failed: $out"
+  [ ! -e "$RC_WT" ] && [ ! -f "$RC_META" ] || fail "A15: the clean teardown left the worktree or the record"
+  [ "$(O terminal list --worktree "id:$RC_WID" --json 2>/dev/null | jq -r '.result.totalCount // 0')" = 0 ] || fail "A15: terminals remain after the clean teardown"
+  ok "A15: after the unlanded commit is gone, the reclaimed task tears down cleanly with no terminal left"
 
   # slice N1: a forced teardown of a ship holding an unmerged commit keeps the
   # branch (Orca's safe delete cannot prove it merged), under a custom prefix.

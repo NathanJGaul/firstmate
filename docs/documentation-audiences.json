@@ -1485,6 +1485,46 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/010-orca-reclaim/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/010-orca-reclaim/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },

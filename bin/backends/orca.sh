@@ -15,6 +15,12 @@
 # the same way: nothing is typed, replayed, or Entered. Without the capability the verified literal-send
 # and Enter loop runs unchanged. See fm_backend_orca_send_text_submit.
 #
+# A task whose agent died or whose terminal is gone is reclaimed by closing the
+# dead terminal and creating one fresh terminal by the recorded worktree id
+# (fm_backend_orca_reclaim_terminal); a wedged agent is stopped by closing its
+# terminal, and the close receipt (fm_backend_orca_close_terminal) is the stop
+# proof. Nothing here ever removes a worktree.
+#
 # Target string shape: the Orca terminal id accepted by `orca terminal ...`.
 
 # Shared composer-content classifier (empty|pending|unknown, and the fleet-wide
@@ -964,4 +970,151 @@ fm_backend_orca_send_text_receipt() {  # <terminal-id> <text> <retries> <enter-s
 fm_backend_orca_kill() {  # <terminal-id>
   fm_backend_orca_tool_check || return 1
   orca terminal close --terminal "$1" --json >/dev/null 2>&1 || true
+}
+
+
+# fm_backend_orca_close_terminal: close one task terminal and read the runtime's
+# receipt, printing exactly one verdict and returning 0 only for `killed`:
+#   killed     - the runtime answered ok with result.close.ptyKilled true for
+#                this handle: the PTY and every process in it are gone. This is
+#                the one verdict that is stop proof, because it is the runtime's
+#                own statement about the PTY rather than a read that could race.
+#   gone       - the runtime does not know the handle (terminal_handle_stale):
+#                nothing was killed, and nothing was there to kill.
+#   unkilled   - the runtime answered ok but killed nothing (ptyKilled false),
+#                as it does for a terminal that was already closed.
+#   unreadable - no CLI, no answer, invalid JSON, another error, or a receipt
+#                that names another handle or has no close record.
+# The terminal is always named explicitly and never closed by worktree, so a
+# close can never reach another terminal of the task's worktree. The CLI's exit
+# status is ignored because Orca prints its ok:false JSON and exits 1.
+# fm_backend_orca_kill keeps its own best-effort contract for teardown.
+fm_backend_orca_close_terminal() {  # <terminal-id>
+  local terminal=${1:-} out verdict
+  [ -n "$terminal" ] || { printf 'unreadable'; return 1; }
+  fm_backend_orca_tool_check || { printf 'unreadable'; return 1; }
+  out=$(orca terminal close --terminal "$terminal" --json 2>/dev/null) || true
+  verdict=$(printf '%s' "$out" | node -e '
+const fs = require("fs");
+const want = process.argv[1];
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  process.stdout.write("unreadable");
+  process.exit(0);
+}
+function out(v) { process.stdout.write(v); process.exit(0); }
+if (!data || typeof data !== "object") out("unreadable");
+if (data.ok === false) out(data.error && data.error.code === "terminal_handle_stale" ? "gone" : "unreadable");
+const c = data.ok === true && data.result ? data.result.close : null;
+if (!c || typeof c !== "object" || c.handle !== want) out("unreadable");
+if (c.ptyKilled === true) out("killed");
+if (c.ptyKilled === false) out("unkilled");
+out("unreadable");
+' "$terminal" 2>/dev/null) || verdict=
+  case "$verdict" in
+    killed|gone|unkilled) ;;
+    *) verdict=unreadable ;;
+  esac
+  printf '%s' "$verdict"
+  [ "$verdict" = killed ]
+}
+
+# fm_backend_orca_terminal_handles: the live terminals of one worktree, read from
+# `terminal list --worktree id:<worktree-id>`. Prints `ok` and then one handle
+# per line (an orphaned row, or a row the runtime reports unwritable, is not
+# live), or prints `unreadable` and returns 1 when the list cannot be read.
+fm_backend_orca_terminal_handles() {  # <worktree-id>
+  local worktree_id=${1:-} out
+  [ -n "$worktree_id" ] || { printf 'unreadable'; return 1; }
+  fm_backend_orca_tool_check || { printf 'unreadable'; return 1; }
+  out=$(orca terminal list --worktree "id:$worktree_id" --json 2>/dev/null) || true
+  printf '%s' "$out" | node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  process.stdout.write("unreadable");
+  process.exit(1);
+}
+const rows = data && data.ok === true && data.result && Array.isArray(data.result.terminals) ? data.result.terminals : null;
+if (!rows) {
+  process.stdout.write("unreadable");
+  process.exit(1);
+}
+const live = rows.filter((t) => t && typeof t.handle === "string" && t.handle !== "" && t.orphaned !== true && t.writable !== false);
+process.stdout.write("ok\n" + live.map((t) => t.handle + "\n").join(""));
+' 2>/dev/null || { printf 'unreadable'; return 1; }
+}
+
+# fm_backend_orca_absence_verdict: the Orca arm of the control plane's endpoint
+# absence proof (bin/fm-control-lib.sh's fm_control_endpoint_absence_verdict owns
+# the verdict vocabulary). Prints "<verdict>\t<reason>", the reason empty except
+# on `unproven`. A terminal is GONE only when all of these hold: the runtime this
+# seat addresses is on this host, it positively reads the terminal missing, and
+# no process on this host still carries the terminal's handle. The last clause
+# is what keeps a stale handle after a runtime restart - Orca's terminal
+# processes survive a restart - from licensing a second agent beside a live one.
+# A host with no process table accepts the runtime's own answer, the only
+# evidence available there.
+fm_backend_orca_absence_verdict() {  # <terminal-id>
+  local terminal=${1:-}
+  fm_backend_orca_runtime_is_local || {
+    printf 'unproven\tthe runtime this seat addresses may be on another host (ORCA_ENVIRONMENT, ORCA_PAIRING_CODE, or ORCA_REMOTE_PAIRING is set), so neither its answer about a terminal handle nor this host'"'"'s process table proves anything about that terminal'
+    return 0
+  }
+  case "$(fm_backend_orca_endpoint_state "$terminal")" in
+    present)
+      case "$(fm_backend_orca_agent_state "$terminal")" in
+        dead) printf 'dead\t' ;;
+        alive) printf 'alive\t' ;;
+        *) printf 'unproven\tthe terminal is present but no process on this host proves it agent-free' ;;
+      esac
+      ;;
+    missing)
+      case "$(fm_backend_orca_process_state "$terminal")" in
+        none|unsupported) printf 'gone\t' ;;
+        agent) printf 'alive\t' ;;
+        shell|other) printf 'unproven\tthe runtime reports the terminal gone, but a process on this host still carries its handle, so the terminal may be alive under a runtime that lost track of it' ;;
+        *) printf 'unproven\tthe runtime reports the terminal gone, but this host'"'"'s process table could not be read to confirm that nothing still carries its handle' ;;
+      esac
+      ;;
+    *) printf 'unproven\tthe runtime'"'"'s answer about the terminal could not be read' ;;
+  esac
+}
+
+# fm_backend_orca_reclaim_terminal: replace a task's gone terminal with exactly
+# one fresh one inside the task's own worktree, and print the new handle. The
+# caller has already proven the old terminal gone (the absence verdict); this
+# closes it anyway so that a tab Orca still shows for an exited shell does not
+# survive beside the replacement, requires it to read missing, creates one
+# terminal by the recorded worktree id (never by path or name), and requires the
+# new handle to read present and to be listed for that worktree while the old one
+# is not. A replacement that cannot be confirmed is closed again, never left
+# behind. Another terminal of the same worktree is never closed or adopted. It
+# never removes a worktree and never closes by worktree.
+fm_backend_orca_reclaim_terminal() {  # <worktree-id> <old-terminal> <title>
+  local worktree_id=${1:-} old=${2:-} title=${3:-} new listing
+  [ -n "$worktree_id" ] && [ -n "$old" ] && [ -n "$title" ] || {
+    echo "error: a reclaim needs the recorded worktree id, the old terminal, and a title" >&2
+    return 1
+  }
+  fm_backend_orca_tool_check || return 1
+  fm_backend_orca_close_terminal "$old" >/dev/null || true
+  if [ "$(fm_backend_orca_endpoint_state "$old")" != missing ]; then
+    echo "error: terminal $old does not read missing after it was closed; refusing to create a second terminal for $title beside it" >&2
+    return 1
+  fi
+  new=$(fm_backend_orca_terminal_create "$worktree_id" "$title") || return 1
+  listing=$(fm_backend_orca_terminal_handles "$worktree_id" 2>/dev/null) || listing=
+  if [ "$(fm_backend_orca_endpoint_state "$new")" != present ] \
+    || ! printf '%s\n' "$listing" | grep -Fxq -- "$new" \
+    || printf '%s\n' "$listing" | grep -Fxq -- "$old"; then
+    fm_backend_orca_kill "$new" >/dev/null 2>&1 || true
+    echo "error: the replacement terminal $new for $title could not be confirmed present and listed for its worktree while $old is not; closed it again and kept the previous record" >&2
+    return 1
+  fi
+  printf '%s' "$new"
 }

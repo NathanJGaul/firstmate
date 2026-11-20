@@ -289,18 +289,29 @@ fm_control_backend_supports_key() {  # <backend> <key>
 }
 
 # Whether <backend> has a recovery-grade agent-state classifier the control
-# plane trusts to prove an agent stopped. Only tmux and herdr are admitted;
-# zellij and cmux report `unverified`. Orca now reads `alive`, `dead`, and
-# `ambiguous` from the local process table (fm_backend_orca_agent_state), but
-# exit, relaunch, reclaim, and secondmate restart stay refused on it until the
-# reclaim slice proves them live, so Orca is deliberately not admitted here. The
-# control plane refuses a stop-proving verb there instead of reporting an
-# unprovable transition as success.
+# plane trusts to prove an agent stopped. tmux, herdr, and orca are admitted;
+# zellij and cmux report `unverified`. Orca's proof is the local process table
+# (fm_backend_orca_agent_state) for `dead`, the runtime's own terminal answer for
+# `missing`, and a close receipt for a wedged agent, and it admits nothing else:
+# `alive`, `ambiguous`, `unverified` (a runtime that may be on another host, or a
+# host with no process table), and `unreadable` all keep refusing. The control
+# plane refuses a stop-proving verb on a backend outside this list instead of
+# reporting an unprovable transition as success.
 fm_control_backend_state_verified() {  # <backend>
   case "${1-}" in
-    tmux|herdr) return 0 ;;
+    tmux|herdr|orca) return 0 ;;
   esac
   return 1
+}
+
+# Whether <backend> can stop a running agent by closing its endpoint, with the
+# runtime's close receipt as the positive stopped proof. Only Orca can: closing
+# an Orca terminal returns `ptyKilled: true` and takes the agent with it, while
+# every other backend's endpoint outlives its agent and is stopped by asking the
+# agent to exit. The close removes no worktree content; bin/fm-teardown.sh still
+# owns removal and the landed-work test.
+fm_control_backend_supports_close_terminal() {  # <backend>
+  [ "${1-}" = orca ]
 }
 
 # fm_control_endpoint_absence_verdict: the ONE owner of the per-backend proof
@@ -341,6 +352,11 @@ fm_control_backend_state_verified() {  # <backend>
 #     returns `unproven` and both verbs refuse. tmux is left exactly as
 #     deadlocked as it was before this change - no worse - but deliberately.
 #
+#   orca CAN prove it for a runtime on this host: the runtime's own answer must
+#     read the terminal missing AND no local process may still carry its handle
+#     (bin/backends/orca.sh's fm_backend_orca_absence_verdict owns the argument).
+#     A non-local runtime is always `unproven`.
+#
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
 fm_control_endpoint_absence_verdict() {  # <backend> <target>
@@ -361,6 +377,9 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target>
         missing) printf 'gone\t' ;;
         *) printf 'unproven\tthe recorded herdr session'"'"'s server could not be started, or its pane could not be classified once it was running' ;;
       esac
+      ;;
+    orca)
+      fm_backend_orca_absence_verdict "$target"
       ;;
     *)
       printf 'unproven\tbackend %s has no recovery-grade classifier, so absence cannot be proven on it at all' "'$backend'"

@@ -2153,7 +2153,7 @@ Findings:
 - The killed agent left a present terminal (`connected:true`), so only the process table separates `dead` from a live agent.
 - `systemd --user` and its `(sd-pam)` helper belong to the same user and refuse an `environ` read with `EACCES`, so a refused read is opaque; tallying it as unreadable made the first version read `unreadable` for an idle shell.
 - The full lab's Firstmate-level section needed a real binary named `claude` as its stand-in harness: `sh -c cat` reads `ambiguous`, and `fm-control interrupt` refuses an endpoint it cannot classify.
-  The steps for `fm-control exit` and `relaunch` still refuse on Orca.
+  The steps for `fm-control exit` and `relaunch` refused on Orca at this date; the reclaim entry below records them acting on proof.
 - `fm_backend_agent_state` of an idle shell in step A13 changed from `unverified` (recorded in the endpoint-presence entry above, before this classifier existed) to `dead`.
 
 Not covered: macOS and any host without `/proc` (read `unverified`), a runtime on a paired remote host, and a real Claude harness (a renamed `sleep` was used, so the real process name of the installed harness is not observed here).
@@ -2187,7 +2187,7 @@ What the lab proved against the runtime it started:
 - `fm_backend_send_key orca <terminal> Escape` reached a `cat -v` shell as `^[` and `C-u` cleared a typed line, so the adapter's bytes (`\x1b` and `\x15`, sent with `terminal send --text` and no `--enter`) match the raw bytes the earlier assertion proved.
 - `fm-send --key Escape` reached a task terminal as a raw Escape: the line discipline echoed `^[`.
 - `fm-control interrupt` on a task recorded with a verified Escape harness delivered one Escape and printed `interrupt-delivered <id> harness=claude backend=orca verified=endpoint cancel=unconfirmed`.
-- `fm-control exit` and `fm-control relaunch` stayed refused on Orca, naming the missing recovery-grade agent-state classifier.
+- `fm-control exit` and `fm-control relaunch` stayed refused on Orca at this date, naming the missing recovery-grade agent-state classifier; the reclaim entry below records them acting on proof.
 
 Not run: an interrupt of a real harness turn.
 The lab's isolated home holds no harness credentials, and a turn spends model tokens, so the interrupt above used the lab's raw terminal with its record labelled as a verified harness, which proves the control path and the byte delivery but not any harness's reaction to the Escape.
@@ -2220,6 +2220,41 @@ What the lab proved against the runtime it started:
 Not run: Orca's numeric-suffix rename of an already-taken branch name against the live runtime.
 The spawn's read-back refusal for it is pinned against a fake `orca` that renames the way Orca's help describes, and is not exercised live.
 Also not run: a ship squash-merged on a forge, whose branch Orca cannot prove merged and therefore keeps in the local repository.
+
+### Linux, headless runtime 1.4.261, close-and-recreate reclaim
+
+Observed on 2026-11-19 with the same lab, after `fm-control exit` and `relaunch` and `fm-spawn --relaunch` began acting on an Orca task on proof (specs/010-orca-reclaim).
+
+```sh
+bin/fm-test-run.sh tests/fm-backend-orca.test.sh
+bin/fm-test-run.sh tests/fm-control.test.sh
+bin/fm-test-run.sh tests/fm-control-relaunch.test.sh
+env -u ORCA_USER_DATA_PATH FM_ORCA_LIVE_E2E=1 tests/fm-backend-orca-smoke.test.sh
+```
+
+A passing full run printed `# summary: passed=67 findings=3`, left no lab process, directory, systemd scope, terminal, worktree, or branch, and left the operator's runtime running.
+The three findings are earlier observations about folder-kind repos, rewritten agent launch commands, and a stale agent identity, unchanged by this slice.
+`FM_ORCA_LIVE_SECTIONS=firstmate` runs only the Firstmate-level section that holds step A15 (`passed=31 findings=0`).
+No staged Orca build was activated and no real harness ran: the stand-in is a copy of `sleep` named `claude`, so the lab proves the control path and the process proof, not any harness's reaction.
+
+```text
+terminal close --terminal <live handle> --json              result.close{handle, tabId, ptyKilled:true}
+terminal close --terminal <the same handle again> --json    result.close{handle, tabId, ptyKilled:true}   (a repeat close answers true too)
+terminal close --terminal <handle the runtime never issued> ok:false, error.code=terminal_handle_stale
+terminal list --worktree id:<id> --json after a close       the closed handle is no longer listed
+```
+
+What step A15 proved against the runtime it started, through the repo's own scripts:
+
+- A harness killed with SIGKILL reads `dead` while its terminal stays present; `fm-control exit` reports `already-stopped`, and `fm-spawn --relaunch` adopts the same terminal: one new harness process, one listed terminal, the record unchanged, and the worktree's commit, branch, and uncommitted file untouched.
+- A terminal closed from outside reads `missing` with no process carrying its handle; `fm-control exit` reports `endpoint-gone`, and the reclaim republishes one fresh terminal titled `fm-<id>` with the same worktree id, one listed terminal, the old handle missing, no stray process, and the worktree intact.
+- A running agent is refused by `exit` naming `alive` and `--close-terminal`; with the flag the terminal is closed on the receipt, reads `missing`, no process carries its handle and the agent's pid is gone, and the reclaim leaves one terminal and the worktree intact.
+- `fm-teardown.sh` of the reclaimed task refuses its unlanded commit and leaves the terminal, worktree, and record in place; once the commit is removed, a clean teardown leaves no terminal.
+- The close receipt alone is not stop proof: a repeat close of a closed terminal still answers `ptyKilled: true`, so the stop verb also requires the terminal to read `missing` and no local process to carry its handle.
+  The portable regression for this is `tests/fm-backend-orca.test.sh` (`test_close_terminal_verdicts`, `test_absence_verdict_for_orca`, `test_reclaim_terminal`) and the stateful fake in `tests/orca-fake.sh`.
+
+Not run: a real harness turn (a later slice that needs a throwaway login), a runtime on a paired remote host (read `unverified` and refused), macOS and any host with no process table (a closed terminal there rests on the runtime's own answer alone), and a runtime restart that leaves a terminal's processes running under a stale handle (pinned against the fake process table only, where such a handle reads unproven).
+The lab drives `fm-spawn --relaunch --harness <raw command>` for the launch and `fm-control exit` for the stop, because `fm-control relaunch` accepts only verified harness names and the lab runtime's `PATH` may not hold an executable named for a real agent; the full `fm-control relaunch` transaction is covered by `tests/fm-control-relaunch.test.sh` against the fake.
 
 ## cmux
 

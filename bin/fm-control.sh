@@ -3,9 +3,9 @@
 # lifecycle verbs addressed to an exact task id.
 #
 # Usage: fm-control.sh <task-id> interrupt
-#        fm-control.sh <task-id> exit
+#        fm-control.sh <task-id> exit [--close-terminal]
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--close-terminal]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -51,6 +51,17 @@
 #              endpoint, so this verb cannot tell a destroyed window from one on
 #              a tmux server it cannot address, and it will not claim a stop it
 #              cannot see.
+#              ORCA stops an agent differently, because closing an Orca terminal
+#              takes the agent with it and returns a receipt. A `dead` terminal
+#              (only shells run in it) reports `already-stopped`, a terminal the
+#              local runtime reports gone with no process still carrying its
+#              handle reports `endpoint-gone`, and every other state REFUSES
+#              naming itself. A running agent is refused unless
+#              --close-terminal is given: that closes the recorded terminal,
+#              takes the receipt's `ptyKilled: true` as the stopped proof,
+#              confirms the terminal and its processes are gone, and reports
+#              `closed`. The flag applies to an agent reading `alive` only and
+#              touches no worktree content.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME worktree - and the same endpoint whenever that endpoint
 #              still exists - on the same or a newly chosen
@@ -61,9 +72,12 @@
 #              names, and the task's record rebinds to it; that is how a task
 #              whose terminal was destroyed is reclaimed by the home that owns
 #              it, rather than being stranded with a parked approval nobody can
-#              answer. Reclaim is HERDR-ONLY for the reason `exit` gives above:
-#              a tmux `missing` cannot be proven absent from a task record, so
-#              it refuses.
+#              answer. Reclaim is HERDR and ORCA only for the reason `exit` gives
+#              above: a tmux `missing` cannot be proven absent from a task
+#              record, so it refuses. On Orca the launch owner closes the dead
+#              terminal, creates one fresh terminal by the recorded worktree id,
+#              and republishes the record's terminal=; the worktree, its branch,
+#              and every uncommitted change are never touched.
 #              An explicit `default` model or effort clears that
 #              axis for the replacement. With no explicit axis, a secondmate
 #              re-resolves its durable config/secondmate-harness pin (harness
@@ -117,8 +131,8 @@
 #     delivers Escape and Ctrl+U only when its runtime reports the capability
 #     they are gated on, and refuses before sending anything when it does not.
 #   - `exit` and `relaunch` require a backend with a recovery-grade agent-state
-#     classifier (tmux, herdr), because without one the "the agent stopped"
-#     postcondition cannot be proven. zellij, orca, and cmux are refused rather
+#     classifier (tmux, herdr, orca), because without one the "the agent
+#     stopped" postcondition cannot be proven. zellij and cmux are refused rather
 #     than reported as successful blind.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
@@ -249,6 +263,7 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+CLOSE_TERMINAL=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -276,6 +291,7 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --close-terminal) CLOSE_TERMINAL=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -295,6 +311,9 @@ fi
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+fi
+if [ "$CLOSE_TERMINAL" = 1 ] && [ "$VERB" != exit ] && [ "$VERB" != relaunch ]; then
+  die "--close-terminal applies to 'exit' and 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -369,6 +388,9 @@ fm_control_harness_supported "$HARNESS" \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
 
 fm_backend_validate "$BACKEND" || exit 1
+if [ "$CLOSE_TERMINAL" = 1 ] && ! fm_control_backend_supports_close_terminal "$BACKEND"; then
+  die "--close-terminal applies to an orca task only: task $ID runs on the $BACKEND backend, whose endpoint outlives its agent and is stopped by asking the agent to exit, so there is no close receipt to take as proof"
+fi
 
 # --- shared helpers ---------------------------------------------------------
 
@@ -557,9 +579,19 @@ verify_interrupt_running() {
     # An interrupt cancels a turn; it must never have stopped the agent. This
     # is the postcondition that separates a landed interrupt from an accident.
     after=$(agent_state)
-    [ "$after" = alive ] \
-      || die "task $ID's agent is '$after' after its interrupt key; an interrupt must leave the agent running"
-    proof=agent-alive
+    case "$after" in
+      alive) proof=agent-alive ;;
+      unverified|ambiguous|unreadable)
+        # Orca reads these when its process table cannot attribute the
+        # terminal (a runtime that may be on another host, an unlistable table,
+        # a process that is neither a harness nor a shell). That is the absence
+        # of evidence, not evidence the agent stopped, so the endpoint's
+        # continued existence stays the proof.
+        fm_control_backend_supports_close_terminal "$BACKEND" \
+          || die "task $ID's agent is '$after' after its interrupt key; an interrupt must leave the agent running"
+        ;;
+      *) die "task $ID's agent is '$after' after its interrupt key; an interrupt must leave the agent running" ;;
+    esac
   fi
   printf '%s' "$proof"
 }
@@ -633,18 +665,65 @@ retire_busy_incarnation() {
   fi
 }
 
+# close_terminal_gate <state>: the stop gate for a backend that stops an agent by
+# closing its terminal (Orca; bin/fm-control-lib.sh's
+# fm_control_backend_supports_close_terminal). A running agent there is closed
+# only when the caller asked for it, and the explicit close is for a running
+# agent only: a stopped or gone one needs no close, and any state the classifier
+# could not prove is refused by the ordinary arms below. Every other backend
+# passes through unchanged.
+close_terminal_gate() {  # <state>
+  local state=$1
+  fm_control_backend_supports_close_terminal "$BACKEND" || return 0
+  if [ "$CLOSE_TERMINAL" = 1 ] && [ "$state" != alive ]; then
+    die "task $ID's agent reads '$state'; --close-terminal applies only to an agent that reads 'alive' (a stopped or gone agent needs no close, so run the verb without it)"
+  fi
+  if [ "$CLOSE_TERMINAL" = 0 ] && [ "$state" = alive ]; then
+    die "task $ID's agent reads 'alive' on $BACKEND, and this plane cannot prove it stopped by asking it to exit; refusing. If it is wedged and its terminal may be closed, retry with --close-terminal: the runtime's close receipt (ptyKilled true) is then the stop proof, and the worktree, its commits, and every uncommitted change are untouched"
+  fi
+}
+
+# do_close_terminal: stop a running agent by closing its terminal. The runtime's
+# receipt (ptyKilled true) is the stopped proof; the endpoint and every process
+# carrying its handle must then be confirmed gone within the exit wait, because a
+# close the runtime accepted but did not honour proves nothing. Nothing outside
+# the one recorded terminal is touched. Prints `closed`.
+do_close_terminal() {
+  local verdict absence elapsed=0
+  verdict=$(fm_backend_close_terminal "$BACKEND" "$T") || true
+  [ "$verdict" = killed ] \
+    || die "task $ID's terminal $T was asked to close, but the runtime's receipt reads '$verdict', not ptyKilled true, so the agent is not proven stopped; refusing to claim it"
+  while :; do
+    absence=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T")
+    [ "${absence%%$'\t'*}" = gone ] && break
+    awk -v e="$elapsed" -v t="$EXIT_WAIT" 'BEGIN{exit !(e < t)}' \
+      || die "task $ID's terminal $T gave a ptyKilled receipt but it or a process carrying its handle still exists after ${EXIT_WAIT}s (${absence#*$'\t'}); not claiming the agent stopped"
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  retire_busy_incarnation
+  printf 'closed'
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
-# `already-stopped`, `endpoint-gone`, or `stopped`.
+# `already-stopped`, `endpoint-gone`, `stopped`, or (Orca, --close-terminal)
+# `closed`.
 do_exit() {
   local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
   require_state_verified_backend exit
   state=$(agent_state)
+  close_terminal_gate "$state"
   case "$state" in
     dead)
       printf 'already-stopped'
       return 0
       ;;
-    alive) ;;
+    alive)
+      if fm_control_backend_supports_close_terminal "$BACKEND"; then
+        do_close_terminal
+        return 0
+      fi
+      ;;
     missing)
       # `missing` on its own is not a finding about the endpoint: it conflates
       # "destroyed" with "unreachable from this seat". Route it through the
@@ -672,7 +751,10 @@ do_exit() {
           ;;
         alive)
           # The agent came back with its endpoint. Fall through to the ordinary
-          # alive path: interrupt if busy, then the harness's exit command.
+          # alive path: interrupt if busy, then the harness's exit command. A
+          # backend that stops by closing refuses here without the explicit
+          # close, exactly as it does for an agent that read alive at the start.
+          close_terminal_gate alive
           ;;
         *)
           die "task $ID's endpoint $T reads 'missing', but ${absence#*$'\t'}; exit will not claim an agent stopped at an address it cannot trust, nor send lifecycle input to one"
@@ -1075,6 +1157,9 @@ do_relaunch() {
 
   require_state_verified_backend relaunch
   resolve_relaunch_profile
+  # A backend that stops an agent by closing its terminal refuses a running
+  # agent without the explicit close, before the instructions are touched.
+  close_terminal_gate "$(agent_state)"
 
   case "$KIND" in
     ship|scout)

@@ -5,6 +5,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/orca-fake.sh
+. "$(dirname "${BASH_SOURCE[0]}")/orca-fake.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-backend-orca-tests)
 FM_TEST_REPO="$TMP_ROOT/repo-path"
@@ -3004,15 +3006,15 @@ test_agent_state_missing_unverified_unreadable() {
   pass "fm_backend_agent_state: Orca reports missing, unverified, and unreadable"
 }
 
-test_a_missing_orca_endpoint_does_not_unlock_the_control_plane() {
+test_a_missing_orca_endpoint_is_a_proven_state_for_the_control_plane() {
   local got
-  orca_case control-stays-refused
+  orca_case control-admits-missing
   es_answer "$(es_exited)"
   # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $1 belong to the inner bash
   got=$(env PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; if fm_control_backend_state_verified orca; then echo verified; else echo refused; fi; fm_backend_agent_state orca term-es' "$ROOT" 2>/dev/null | tr '\n' ' ')
-  [ "$got" = "refused missing" ] || fail "a missing Orca endpoint must leave the stop-proving verbs refused, got '$got'"
-  pass "fm-control-lib: a missing Orca endpoint verdict leaves exit and relaunch refused"
+  [ "$got" = "verified missing" ] || fail "a missing Orca endpoint is a recovery-grade state and the control plane must admit Orca, got '$got'"
+  pass "fm-control-lib: Orca is admitted to the stop-proving verbs and a missing endpoint reads missing"
 }
 
 # crew state: the no-run fallback reads Orca presence through target_exists.
@@ -3281,17 +3283,17 @@ test_agent_state_makes_one_orca_call_and_uses_no_native_state() {
   pass "fm_backend_agent_state: the classifier adds no orca call beyond the presence read"
 }
 
-test_a_dead_orca_endpoint_does_not_unlock_the_control_plane() {
+test_a_dead_orca_endpoint_is_a_proven_state_for_the_control_plane() {
   local got
-  orca_case ps-control-refused
+  orca_case ps-control-admits
   es_answer "$(es_live)"
   pt_new
   pt_proc 100 1 zsh zsh term-es
   # shellcheck disable=SC2016  # the single quotes are deliberate: $0 belongs to the inner bash
   got=$(env -u ORCA_ENVIRONMENT PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_PROC_ROOT="$PT" \
     bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; if fm_control_backend_state_verified orca; then echo verified; else echo refused; fi; fm_backend_agent_state orca term-es' "$ROOT" 2>/dev/null | tr '\n' ' ')
-  [ "$got" = "refused dead" ] || fail "a dead Orca endpoint must leave the stop-proving verbs refused, got '$got'"
-  pass "fm-control-lib: a dead Orca endpoint verdict leaves exit and relaunch refused"
+  [ "$got" = "verified dead" ] || fail "a dead Orca endpoint is a recovery-grade state and the control plane must admit Orca, got '$got'"
+  pass "fm-control-lib: Orca is admitted to the stop-proving verbs and a shell-only terminal reads dead"
 }
 
 # scan units: the adapter's own row output, read directly.
@@ -3472,9 +3474,157 @@ test_process_state_settles_a_transient_other() {
   pass "fm_backend_orca_process_state: only other is resampled, and an exhausted window keeps it"
 }
 
+# --- close receipt, absence proof, and reclaim (specs/010-orca-reclaim) -------
+#
+# These run against the STATEFUL fake in tests/orca-fake.sh: a close changes what
+# the next terminal show says, so the reclaim's close-then-create-then-verify
+# order is observable. WTID is the worktree id every case's terminals belong to.
+
+WTID='wt-rc::/orca/wt-rc'
+
+rc_case() {  # <name> -> sets RCD to a fresh fake directory
+  RCD="$TMP_ROOT/rc-$1"
+  rm -rf "$RCD"
+  orca_fake_new "$RCD"
+}
+rc_run() {  # <command...> against the case's fake
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $@ belong to the inner bash
+  orca_fake_run "$RCD" bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; fm_backend_source orca; "$@"' "$ROOT" "$@" 2>/dev/null
+}
+rc_run_err() {  # like rc_run, with stderr
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $@ belong to the inner bash
+  orca_fake_run "$RCD" bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; fm_backend_source orca; "$@"' "$ROOT" "$@" 2>&1
+}
+
+test_close_terminal_verdicts() {
+  local got rc
+  rc_case close-killed
+  orca_fake_term "$RCD" term-live "$WTID" live shell
+  rc=0; got=$(rc_run fm_backend_orca_close_terminal term-live) || rc=$?
+  [ "$got" = killed ] && [ "$rc" -eq 0 ] || fail "closing a live terminal should print killed and return 0 (receipt ptyKilled true), got '$got' rc=$rc"
+  [ "$(rc_run fm_backend_orca_endpoint_state term-live)" = missing ] || fail "a killed terminal should then read missing"
+  assert_contains "$(cat "$RCD/fake/log")" $'orca\x1fterminal\x1fclose\x1f--terminal\x1fterm-live\x1f--json' "the close should name the exact terminal"
+  assert_not_contains "$(cat "$RCD/fake/log")" "--all" "a task close never closes by worktree"
+  assert_not_contains "$(cat "$RCD/fake/log")" "worktree" "a task close never touches the worktree"
+  # the real runtime answers ptyKilled true for a repeat close too (lab, 1.4.261), so the receipt alone
+  # is never what a caller trusts: the stop verb re-reads the endpoint and the process table afterwards
+  rc=0; got=$(rc_run fm_backend_orca_close_terminal term-live) || rc=$?
+  [ "$got" = killed ] && [ "$rc" -eq 0 ] || fail "a repeat close answers the receipt it is given: want killed, got '$got' rc=$rc"
+  rc=0; got=$(rc_run fm_backend_orca_close_terminal term-never) || rc=$?
+  [ "$got" = gone ] && [ "$rc" -ne 0 ] || fail "closing a handle the runtime never issued should print gone and not claim a kill, got '$got' rc=$rc"
+  rc_case close-nokill
+  orca_fake_term "$RCD" term-live "$WTID" live shell
+  orca_fake_flag "$RCD" close-nokill
+  rc=0; got=$(rc_run fm_backend_orca_close_terminal term-live) || rc=$?
+  [ "$got" = unkilled ] && [ "$rc" -ne 0 ] || fail "a receipt with ptyKilled false is not stop proof, got '$got' rc=$rc"
+  rc_case close-error
+  orca_fake_term "$RCD" term-live "$WTID" live shell
+  orca_fake_flag "$RCD" close-error
+  rc=0; got=$(rc_run fm_backend_orca_close_terminal term-live) || rc=$?
+  [ "$got" = unreadable ] && [ "$rc" -ne 0 ] || fail "an unreadable close answer is not proof, got '$got' rc=$rc"
+  rc_case close-wrong
+  orca_fake_term "$RCD" term-live "$WTID" live shell
+  orca_fake_flag "$RCD" close-wrong
+  rc=0; got=$(rc_run fm_backend_orca_close_terminal term-live) || rc=$?
+  [ "$got" = unreadable ] && [ "$rc" -ne 0 ] || fail "a receipt that names another terminal is not proof for this one, got '$got' rc=$rc"
+  pass "fm_backend_orca_close_terminal: only ptyKilled true is stop proof; stale, nokill, and unreadable answers are named and refused"
+}
+
+test_absence_verdict_for_orca() {
+  local got
+  av() {  # [env assignments...] -> the verdict line for term-a, tab shown as |
+    # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $@ belong to the inner bash
+    orca_fake_run "$RCD" "$@" bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; fm_control_endpoint_absence_verdict orca term-a' "$ROOT" 2>/dev/null | tr '\t' '|'
+  }
+  rc_case absence-gone
+  orca_fake_term "$RCD" term-a "$WTID" closed none
+  got=$(av); [ "$got" = "gone|" ] || fail "a closed terminal with no process carrying its handle is proven gone, got '$got'"
+  rc_case absence-alive
+  orca_fake_term "$RCD" term-a "$WTID" closed none
+  orca_fake_proc "$RCD" 400 1 claude claude term-a
+  got=$(av); [ "$got" = "alive|" ] || fail "a harness process under a handle the runtime calls gone reads alive, got '$got'"
+  rc_case absence-shell
+  orca_fake_term "$RCD" term-a "$WTID" closed none
+  orca_fake_proc "$RCD" 400 1 zsh zsh term-a
+  got=$(av); case "$got" in unproven\|*"carries"*) ;; *) fail "a lingering shell under a gone handle is unproven and says so, got '$got'" ;; esac
+  rc_case absence-unreadable-table
+  orca_fake_term "$RCD" term-a "$WTID" closed none
+  : > "$RCD/fake/proc-is-a-file"
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $@ belong to the inner bash
+  got=$(orca_fake_run "$RCD" FM_ORCA_PROC_ROOT="$RCD/fake/proc-is-a-file" bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; fm_control_endpoint_absence_verdict orca term-a' "$ROOT" 2>/dev/null | tr '\t' '|')
+  case "$got" in unproven\|*) ;; *) fail "an unreadable process table must not prove absence, got '$got'" ;; esac
+  rc_case absence-no-table
+  orca_fake_term "$RCD" term-a "$WTID" closed none
+  # shellcheck disable=SC2016  # the single quotes are deliberate: $0 and $@ belong to the inner bash
+  got=$(orca_fake_run "$RCD" FM_ORCA_PROC_ROOT="$RCD/fake/no-such-proc" bash -c '. "$0/bin/fm-backend.sh"; . "$0/bin/fm-control-lib.sh"; fm_control_endpoint_absence_verdict orca term-a' "$ROOT" 2>/dev/null | tr '\t' '|')
+  [ "$got" = "gone|" ] || fail "a host with no process table accepts the runtime's own answer, got '$got'"
+  rc_case absence-remote
+  orca_fake_term "$RCD" term-a "$WTID" closed none
+  got=$(av ORCA_ENVIRONMENT=elsewhere)
+  case "$got" in unproven\|*"another host"*) ;; *) fail "a non-local runtime never proves absence and names why, got '$got'" ;; esac
+  rc_case absence-present-dead
+  orca_fake_term "$RCD" term-a "$WTID" live shell
+  got=$(av); [ "$got" = "dead|" ] || fail "a present shell-only terminal is dead, got '$got'"
+  rc_case absence-present-alive
+  orca_fake_term "$RCD" term-a "$WTID" live agent
+  got=$(av); [ "$got" = "alive|" ] || fail "a present terminal with a harness is alive, got '$got'"
+  rc_case absence-present-other
+  orca_fake_term "$RCD" term-a "$WTID" live shell
+  orca_fake_proc "$RCD" 400 100 vim vim term-a
+  got=$(av); case "$got" in unproven\|*) ;; *) fail "an unclassifiable present terminal is unproven, got '$got'" ;; esac
+  rc_case absence-stale
+  got=$(av); [ "$got" = "gone|" ] || fail "a handle the runtime never issued, with no local process, is gone, got '$got'"
+  pass "fm_control_endpoint_absence_verdict: Orca proves absence only for a local runtime, a missing terminal, and no carrying process"
+}
+
+test_reclaim_terminal() {
+  local got rc log close_line create_line
+  rc_case reclaim
+  orca_fake_term "$RCD" term-old "$WTID" closed none
+  orca_fake_term "$RCD" term-other "$WTID" live shell
+  rc=0; got=$(rc_run fm_backend_orca_reclaim_terminal "$WTID" term-old fm-rc) || rc=$?
+  [ "$rc" -eq 0 ] && [ "$got" = term-new-1 ] || fail "a reclaim should print the one new handle, got '$got' rc=$rc: $(rc_run_err fm_backend_orca_reclaim_terminal "$WTID" term-old fm-rc)"
+  log=$(cat "$RCD/fake/log")
+  assert_contains "$log" $'orca\x1fterminal\x1fclose\x1f--terminal\x1fterm-old' "the dead terminal is closed first"
+  assert_contains "$log" $'orca\x1fterminal\x1fcreate\x1f--worktree\x1fid:'"$WTID"$'\x1f--title\x1ffm-rc' "the replacement is created by the recorded worktree id and titled"
+  assert_not_contains "$log" $'orca\x1fworktree\x1frm' "a reclaim never removes a worktree"
+  assert_not_contains "$log" "--all" "a reclaim never closes by worktree"
+  [ "$(orca_fake_calls "$RCD" terminal create)" -eq 1 ] || fail "a reclaim creates exactly one terminal"
+  close_line=$(grep -n -m1 -F $'terminal\x1fclose' "$RCD/fake/log" | cut -d: -f1)
+  create_line=$(grep -n -m1 -F $'terminal\x1fcreate' "$RCD/fake/log" | cut -d: -f1)
+  [ -n "$close_line" ] && [ -n "$create_line" ] && [ "$close_line" -lt "$create_line" ] \
+    || fail "the dead terminal must be closed BEFORE the replacement is created (close at line '$close_line', create at '$create_line')"
+  [ "$(orca_fake_handles "$RCD" "$WTID" | sort | tr '\n' ' ')" = "term-new-1 term-other " ] || fail "the worktree should hold the new terminal and the one it never touched, got '$(orca_fake_handles "$RCD" "$WTID" | tr '\n' ' ')'"
+  [ "$(rc_run fm_backend_orca_endpoint_state term-new-1)" = present ] || fail "the new terminal should read present"
+  assert_not_contains "$log" $'close\x1f--terminal\x1fterm-other' "another terminal of the worktree is never closed"
+
+  rc_case reclaim-lingers
+  orca_fake_term "$RCD" term-old "$WTID" live shell
+  orca_fake_flag "$RCD" close-lingers
+  rc=0; got=$(rc_run fm_backend_orca_reclaim_terminal "$WTID" term-old fm-rc) || rc=$?
+  [ "$rc" -ne 0 ] && [ -z "$got" ] || fail "a terminal that survives its close must stop the reclaim, got '$got' rc=$rc"
+  [ "$(orca_fake_calls "$RCD" terminal create)" -eq 0 ] || fail "no replacement may be created beside a terminal that still reads present"
+
+  rc_case reclaim-create-fails
+  orca_fake_term "$RCD" term-old "$WTID" closed none
+  orca_fake_flag "$RCD" create-fails
+  rc=0; got=$(rc_run fm_backend_orca_reclaim_terminal "$WTID" term-old fm-rc) || rc=$?
+  [ "$rc" -ne 0 ] && [ -z "$got" ] || fail "a failed create must stop the reclaim, got '$got' rc=$rc"
+
+  rc_case reclaim-unlisted
+  orca_fake_term "$RCD" term-old "$WTID" closed none
+  orca_fake_flag "$RCD" create-unlisted
+  rc=0; got=$(rc_run fm_backend_orca_reclaim_terminal "$WTID" term-old fm-rc) || rc=$?
+  [ "$rc" -ne 0 ] && [ -z "$got" ] || fail "a replacement the runtime does not list must stop the reclaim, got '$got' rc=$rc"
+  [ "$(rc_run fm_backend_orca_endpoint_state term-new-1)" = missing ] || fail "a replacement the reclaim cannot confirm is closed again, never left behind"
+  assert_not_contains "$(cat "$RCD/fake/log")" $'orca\x1fworktree\x1frm' "no failure path removes the worktree"
+  pass "fm_backend_orca_reclaim_terminal: close, create by id, verify; refuses and cleans up after itself on every failure"
+}
+
 test_dispatcher_sources_orca_and_routes_primitives
 test_json_get_ignores_undocumented_terminal_id_shapes
 test_worktree_and_terminal_helpers_parse_json
+
 test_json_get_reads_repo_kind
 test_repo_ensure_refuses_a_folder_repo
 test_repo_ensure_accepts_git_and_kindless_repos
@@ -3539,7 +3689,7 @@ test_endpoint_state_is_one_read_only_call
 test_endpoint_state_without_the_cli_is_unreadable
 test_target_exists_reads_the_four_endpoint_states
 test_agent_state_missing_unverified_unreadable
-test_a_missing_orca_endpoint_does_not_unlock_the_control_plane
+test_a_missing_orca_endpoint_is_a_proven_state_for_the_control_plane
 test_crew_state_reports_a_dead_orca_endpoint_gone
 test_crew_state_does_not_call_an_unreadable_orca_endpoint_gone
 test_worktree_create_passes_branch_and_base
@@ -3556,7 +3706,7 @@ test_agent_state_unverified_without_attribution
 test_agent_state_unreadable_matrix
 test_agent_state_endpoint_verdicts_do_not_read_the_table
 test_agent_state_makes_one_orca_call_and_uses_no_native_state
-test_a_dead_orca_endpoint_does_not_unlock_the_control_plane
+test_a_dead_orca_endpoint_is_a_proven_state_for_the_control_plane
 test_process_scan_matches_the_exact_handle
 test_process_scan_includes_descendants
 test_process_scan_drops_zombies_self_and_vanished
@@ -3566,3 +3716,6 @@ test_process_scan_opaque_environment_is_reached_through_the_tree
 test_process_scan_sanitizes_fields
 test_process_state_precedence
 test_process_state_settles_a_transient_other
+test_close_terminal_verdicts
+test_absence_verdict_for_orca
+test_reclaim_terminal

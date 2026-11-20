@@ -103,6 +103,30 @@ It never raw-deletes an Orca worktree.
 A close the CLI never attempted, because `orca` is not on the path, stops cleanup with the metadata intact even under `--force`: removing those records would leave nothing on disk naming a terminal that may still be live.
 Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/runtime-backends.md) "Endpoint close" owns what this arm can and cannot prove about its own close.
 
+## Reclaiming a task
+
+`bin/fm-control.sh` `exit` and `relaunch`, and the launch owner `bin/fm-spawn.sh --relaunch`, act on an Orca task only on proof.
+Closing an Orca terminal returns a receipt (`ptyKilled: true`) and takes the agent with it, and `terminal create --worktree id:<recorded id>` makes a replacement inside the same worktree in one call, so Orca reclaims by close-and-recreate rather than by reusing a pane.
+
+| The recorded terminal reads | `exit` | `relaunch` |
+| --- | --- | --- |
+| `dead` (present, only shells run in it) | `already-stopped` | the existing terminal is adopted: same handle, no create, no close |
+| `missing`, runtime on this host, no local process carries its handle | `endpoint-gone` | the dead terminal is closed, one fresh terminal is created by the recorded worktree id and titled for the task, and the record's `terminal=` is republished |
+| `alive` | refused, naming the state and `--close-terminal` | refused the same way |
+| `alive`, with `--close-terminal` | closes the terminal, takes `ptyKilled: true` as the stopped proof, confirms the terminal and its processes are gone, and reports `closed` | that close, then the reclaim above |
+| `ambiguous`, `unverified`, `unreadable`, or a `missing` the runtime cannot prove | refused, naming the state | refused, naming the state, with the instructions left byte-exact |
+
+The reclaim never touches the worktree.
+The worktree, its branch, its commits, and its uncommitted changes are exactly as left, the record keeps its `orca_worktree_id=` and its stable window alias, and nothing on the path calls `worktree rm` or closes by worktree.
+Exactly one terminal remains for the task: the dead one is closed first, the replacement must read present and appear in `terminal list --worktree id:<recorded id>` while the old handle does not, and a replacement that cannot be confirmed is closed again rather than left behind.
+Another terminal of the same worktree is never closed or adopted.
+A failure before the record is published keeps the previous record and closes only the terminal this reclaim created; a failure after it leaves the record naming the replacement, which is what the next recovery reconciles.
+
+A repeat close of an already closed terminal still answers `ptyKilled: true` on the real runtime, so the receipt alone is never what a stop verb trusts: it re-reads the endpoint and the process table afterwards, and refuses unless the terminal reads missing and no local process carries its handle.
+A runtime selected through `ORCA_ENVIRONMENT`, `ORCA_PAIRING_CODE`, or `ORCA_REMOTE_PAIRING` is never proven, because the process table says nothing about another host.
+[`agent-control.md`](agent-control.md) owns the verbs, the absence proof, and what a reclaim is not.
+The reclaim does not cover a real-harness turn: [`verification/runtime-backends.md`](verification/runtime-backends.md#orca) records what the lab proved and what it did not.
+
 ## Active limits
 
 - Orca is explicit-only.
@@ -113,7 +137,7 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
   A task already running is not re-checked, so only a new spawn meets the floor.
 - A receipt and a present endpoint prove Orca accepted input and, for a recognized agent, that its turn started; they do not prove which process runs in a live terminal.
   `fm_backend_agent_state` proves that from the local process table only: `alive`, `dead`, or `ambiguous` on the host that runs the runtime, `missing` for an absent terminal, `unreadable` for a read that failed, and `unverified` whenever the runtime may be on another host or no local process carries the handle.
-  The control plane's exit, relaunch, and secondmate restart verbs stay refused on Orca until the reclaim slice proves them live.
+  The control plane's `exit` and `relaunch` act on that proof, as [Reclaiming a task](#reclaiming-a-task) describes; secondmate restart stays refused, because Orca spawns no secondmates.
 - A harness that daemonizes away from the terminal's process tree and also cleans its environment cannot be found by the scan and would read `dead`; Firstmate's launch line keeps `ORCA_TERMINAL_HANDLE` in the launch environment and runs the harness in the shell's tree, so a worker it launched is always visible.
 - The adapter reads only verified response fields: the worktree id and path, a terminal handle from `result.terminal`, the root terminal object, or a `result.startupTerminal` that Orca reports as spawned, and the `result.terminals[]` rows of `terminal list --worktree`. It rejects other response shapes.
 - The branch-deleting release and the one-terminal-per-task adoption are proven live on the Linux headless runtime: after spawn, `worktree ps` reports `liveTerminalCount=1`, and teardown leaves no terminal behind; `verification/runtime-backends.md` records the lab results.
@@ -124,11 +148,11 @@ Reinstall the CLI and rerun; [`verification/runtime-backends.md`](verification/r
 
 These are the captain's current calls, and each holds until the capability it names lands.
 
-- Long-running or high-value ships belong on Herdr until Orca relaunch lands.
+- Long-running or high-value ships belong on Herdr until a real-harness smoke has run on Orca.
+  The process classifier and the reclaim below have landed, but only a renamed stand-in binary has run in a lab terminal, never a real harness.
   Orca suits scouts and short ships that are cheap to redo.
-- Orca delivers `interrupt` through `bin/fm-control.sh` for every harness whose interrupt is Escape or Ctrl+C, but refuses `exit` and `relaunch` today, so a dead Orca worker cannot be recovered through `bin/fm-control.sh` or `bin/fm-spawn.sh --relaunch`.
-  Both wait on the reclaim slice, which has to prove them live on top of the local process-table agent state described above.
-  An interrupt on Orca proves only that the endpoint still exists, and reports `cancel=unconfirmed` unless the harness has its own acknowledgement.
+- Orca delivers `interrupt` through `bin/fm-control.sh` for every harness whose interrupt is Escape or Ctrl+C, and `exit` and `relaunch` act only on proof, as [Reclaiming a task](#reclaiming-a-task) describes.
+  An interrupt on Orca reports `verified=agent-alive` when the process table proves the agent still runs, and otherwise proves only that the endpoint still exists; it reports `cancel=unconfirmed` unless the harness has its own acknowledgement.
   A harness that must see its screen between interrupt presses, such as Devin, is still refused, because Orca has no verified viewport read.
   [`agent-control.md`](agent-control.md) owns the reasons.
 - A project Orca registered as a folder, including the firstmate repository itself, cannot host Orca work, because Orca treats a folder as a different object from a git worktree.
@@ -141,6 +165,8 @@ These are the captain's current calls, and each holds until the capability it na
 
 ```sh
 tests/fm-backend-orca.test.sh
+tests/fm-control.test.sh
+tests/fm-control-relaunch.test.sh
 tests/fm-backend.test.sh
 tests/fm-bootstrap.test.sh
 tests/fm-teardown-endpoint-safety.test.sh
