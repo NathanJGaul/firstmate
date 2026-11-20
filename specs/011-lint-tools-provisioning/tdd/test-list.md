@@ -19,14 +19,14 @@ The real entry points run under `env -i`; downloads, `uname`, and archive extrac
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| A1  | `fm-lint.sh` run from `env -i` with a daemon-like search path and a provisioned managed directory resolves the pinned ShellCheck, reports the pinned version, runs, and the workflow lint resolves the pinned actionlint | US1.1, FR-001, FR-002 | example | PENDING | |
-| A2  | A tool on the search path wins over the managed directory | US1.2, FR-001 | example | PENDING | |
-| A3  | A managed ShellCheck or actionlint that is not the pinned version is refused naming the pin | US1.3, FR-003 | example | PENDING | |
-| A4  | `fm-install-lint-tools.sh` against an empty managed directory installs both tools through the installers and each reports its pin | US2.1, FR-006 | example | PENDING | |
-| A5  | A second `fm-install-lint-tools.sh` run performs no download | US2.2, FR-006 | example | PENDING | |
-| A6  | A checksum mismatch makes `fm-install-lint-tools.sh` exit non-zero and install nothing | US2.3, FR-006 | example | PENDING | |
-| A7  | `fm-install-lint-tools.sh --check` reports each tool and exits non-zero when one is missing or off-pin, changing nothing, and zero when both are pinned | US2.4, FR-006 | example | PENDING | |
-| A8  | With neither location holding the tool, both lint entry points exit 1 naming `fm-install-lint-tools.sh` and the managed directory | US3.1, FR-007 | example | PENDING | |
+| A1  | `fm-lint.sh` run from `env -i` with a daemon-like search path and a provisioned managed directory resolves the pinned ShellCheck, reports the pinned version, runs, and the workflow lint resolves the pinned actionlint | US1.1, FR-001, FR-002 | example | DONE | `tests/fm-lint-tools.test.sh::test_clean_env_resolves_the_default_managed_directory` |
+| A2  | A tool on the search path wins over the managed directory | US1.2, FR-001 | example | DONE | `tests/fm-lint-tools.test.sh::test_search_path_wins_over_the_managed_directory` |
+| A3  | A managed ShellCheck or actionlint that is not the pinned version is refused naming the pin | US1.3, FR-003 | example | DONE | `tests/fm-lint-tools.test.sh::test_off_pin_managed_tools_are_refused` |
+| A4  | `fm-install-lint-tools.sh` against an empty managed directory installs both tools through the installers and each reports its pin | US2.1, FR-006 | example | DONE | `tests/fm-lint-tools.test.sh::test_provisioning_installs_both_pinned_tools` |
+| A5  | A second `fm-install-lint-tools.sh` run performs no download | US2.2, FR-006 | example | DONE | `tests/fm-lint-tools.test.sh::test_second_provisioning_downloads_nothing` |
+| A6  | A checksum mismatch makes `fm-install-lint-tools.sh` exit non-zero and install nothing | US2.3, FR-006 | example | DONE | `tests/fm-lint-tools.test.sh::test_a_checksum_mismatch_installs_nothing` |
+| A7  | `fm-install-lint-tools.sh --check` reports each tool and exits non-zero when one is missing or off-pin, changing nothing, and zero when both are pinned | US2.4, FR-006 | example | DONE | `tests/fm-lint-tools.test.sh::test_check_reports_without_changing_anything` |
+| A8  | With neither location holding the tool, both lint entry points exit 1 naming `fm-install-lint-tools.sh` and the managed directory | US3.1, FR-007 | example | DONE | `tests/fm-lint-tools.test.sh::test_missing_tools_name_the_provisioning_command` |
 
 ## Inner loop: unit behaviors
 
@@ -34,33 +34,33 @@ The real entry points run under `env -i`; downloads, `uname`, and archive extrac
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U1  | The directory is `FM_LINT_TOOLS_DIR` when set | FR-002 | example | PENDING | |
-| U2  | Without the override the directory is under `XDG_CACHE_HOME`, else under `HOME/.cache`, in `firstmate/lint-tools` | FR-002 | example | PENDING | |
-| U3  | With no override and no home the directory lookup fails and resolution treats it as absent | FR-002, edge cases | example | PENDING | |
-| U4  | A non-executable managed file is ignored | edge cases | example | PENDING | |
+| U1  | The directory is `FM_LINT_TOOLS_DIR` when set | FR-002 | example | DONE | `tests/fm-lint-tools.test.sh::test_dir_honors_the_override` |
+| U2  | Without the override the directory is under `XDG_CACHE_HOME`, else under `HOME/.cache`, in `firstmate/lint-tools` | FR-002 | example | DONE | `tests/fm-lint-tools.test.sh::test_dir_default_follows_xdg_then_home` |
+| U3  | With no override and no home the directory lookup fails and resolution treats it as absent | FR-002, edge cases | example | DONE | `tests/fm-lint-tools.test.sh::test_dir_without_a_home_is_absent_not_an_error` |
+| U4  | A non-executable managed file is ignored | edge cases | example | DONE | `tests/fm-lint-tools.test.sh::test_resolve_ignores_a_non_executable_managed_file` |
 
 ### `bin/fm-install-shellcheck.sh` and `bin/fm-install-actionlint.sh`
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U5  | With no destination argument each installer installs into the managed directory | FR-005 | example | PENDING | |
-| U6  | With an explicit destination each installer installs there and leaves the managed directory untouched | FR-005 | example | PENDING | |
+| U5  | With no destination argument each installer installs into the managed directory | FR-005 | example | DONE | `tests/fm-lint-tools.test.sh::test_installers_default_to_the_managed_directory` |
+| U6  | With an explicit destination each installer installs there and leaves the managed directory untouched | FR-005 | example | DONE | `tests/fm-lint-tools.test.sh::test_installers_honor_an_explicit_destination` |
 
 ### `bin/fm-install-lint-tools.sh`
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U7  | A tool already at its pin is skipped while the other is installed | FR-006 | example | PENDING | |
-| U8  | An unknown argument exits 2 with usage | FR-006 | example | PENDING | |
-| U9  | The command never invokes a no-mistakes executable | FR-008 | example | PENDING | |
+| U7  | A tool already at its pin is skipped while the other is installed | FR-006 | example | DONE | `tests/fm-lint-tools.test.sh::test_an_already_pinned_tool_is_skipped` |
+| U8  | An unknown argument exits 2 with usage | FR-006 | example | DONE | `tests/fm-lint-tools.test.sh::test_an_unknown_argument_exits_2_with_usage` |
+| U9  | The command never invokes a no-mistakes executable | FR-008 | example | DONE | `tests/fm-lint-tools.test.sh::test_provisioning_never_touches_the_daemon` |
 
 ### Missing-tool tests in existing suites
 
 | id  | behavior | traces | kind | state | test |
 | --- | -------- | ------ | ---- | ----- | ---- |
-| U10 | The existing missing-ShellCheck test passes on a machine with a provisioned managed directory | SC-003 | characterization | PENDING | |
-| U11 | The existing missing-actionlint test passes on a machine with a provisioned managed directory | SC-003 | characterization | PENDING | |
-| U12 | The fallback RSS assertion in `tests/fm-lint.test.sh` applies only where `/usr/bin/time` exists | SC-003 | example | PENDING | |
+| U10 | The existing missing-ShellCheck test passes on a machine with a provisioned managed directory | SC-003 | characterization | BASELINE | `tests/fm-lint.test.sh::test_missing_shellcheck_fails_closed` |
+| U11 | The existing missing-actionlint test passes on a machine with a provisioned managed directory | SC-003 | characterization | BASELINE | `tests/fm-lint-workflows.test.sh::test_missing_actionlint_fails_closed` |
+| U12 | The fallback RSS assertion in `tests/fm-lint.test.sh` applies only where `/usr/bin/time` exists | SC-003 | example | DONE | `tests/fm-lint.test.sh::the RSS assertion in the memory-fallback test` |
 
 ## Invariants and edge cases still to place
 
