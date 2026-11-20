@@ -583,13 +583,30 @@ It submits one bounded Haiku turn per case, and the pane answers the `--add-dir`
 Claude Code gates Code Mode on the client and terminal.
 When the pane shows `Code Mode (experimental) isn't available`, the guard prints a `skip:` line naming the version and exits without a verdict, so a skip proves nothing about the launch knob; only a run that reaches the cases below does.
 
-Result on Claude Code 2.1.328, all three cases:
+Result on Claude Code 2.1.328: the three live cases were not run in validation.
+Code Mode reports unavailable in the interactive terminal on this Claude Code version and account, reproduced with a bare launch and no Firstmate, so the guard skipped.
 
-| Case | Observed |
+| Case | Result |
 | --- | --- |
-| scout, `scouts` knob, confirmation accepted | `Code Mode (experimental) is on` banner, and the transcript records a `REPL` tool call |
-| ship worker, same knob, stray variable in the pane environment | no banner and no `REPL` call |
-| scout, `scouts` knob, confirmation not accepted in the config directory | spawn prints the `Code Mode skipped` note, no confirmation dialog, no banner |
+| scout, `scouts` knob, confirmation accepted | not run in validation: Code Mode reports unavailable in the interactive terminal on this Claude Code version and account (reproduced with a bare launch, no Firstmate) |
+| ship worker, same knob, stray variable in the pane environment | not run in validation: Code Mode reports unavailable in the interactive terminal on this Claude Code version and account (reproduced with a bare launch, no Firstmate) |
+| scout, `scouts` knob, confirmation not accepted in the config directory | not run in validation: Code Mode reports unavailable in the interactive terminal on this Claude Code version and account (reproduced with a bare launch, no Firstmate) |
+
+What was proved instead:
+
+- The portable suite `tests/fm-spawn-claude-code-mode.test.sh` proves the knob parsing, the launch-line splice (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` for scouts only, an explicit `env -u` for every other launch), that a launch-env allowlist does not strip it, the acceptance pre-flight skip note, and that secondmates and the supervision engine never inherit the variable.
+- Eleven deliberate mutants of that behavior were each caught by the suite.
+- The launch-line suites (`fm-spawn-dispatch-profile`, `fm-worker-account`, `fm-claude-trust`, `fm-secondmate-harness`, `fm-backend-orca`, `fm-supervision-host`) pass with the added `env -u` token.
+
+A single earlier hand-run of the live guard on 2026-11-20 in the throwaway lab reported all three cases passing.
+Later runs did not reproduce it, so it is not relied on.
+
+To refresh on a machine where Code Mode is available:
+
+```sh
+tests/fm-claude-codemode-lab-login.sh
+FM_CLAUDE_CODEMODE_LIVE_E2E=1 tests/fm-claude-codemode-live-e2e.test.sh
+```
 
 ## Watcher continuity
 

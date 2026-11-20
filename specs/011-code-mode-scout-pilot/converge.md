@@ -9,7 +9,9 @@
 ## Remaining
 
 - Nothing for this slice.
-  The live E2E ran on 2026-11-20 against Claude Code 2.1.328 and passed all three cases; the dated result is in `docs/verification/supervision.md`.
+  The live E2E was not run in validation: Code Mode reports unavailable in the interactive terminal on Claude Code 2.1.328 and this account.
+  An earlier single hand-run reported all three cases passing but was not reproduced, so it is not relied on.
+  Re-run on a machine where Code Mode is available; the command and record are in `docs/verification/supervision.md`.
 - Follow-up noted, not built: an `onFailure` audit for hooks other than the three tracked ones.
 
 ## Risk

@@ -46,7 +46,7 @@ All eleven were caught.
 | US2.4 | `test_library_parses_the_knob_and_reads_the_store_without_writing` |
 | US3.1 | `test_scouts_knob_never_reaches_a_secondmate` |
 | US3.2 | `test_supervision_engine_never_inherits_the_variable` |
-| US4.1 to US4.4 | `tests/fm-claude-codemode-live-e2e.test.sh` (opt-in; passed on Claude Code 2.1.328, 2026-11-20) |
+| US4.1 to US4.4 | `tests/fm-claude-codemode-live-e2e.test.sh` (opt-in; not run in validation because Code Mode reports unavailable on Claude Code 2.1.328 and this account; see `docs/verification/supervision.md`) |
 | US5.1 to US5.3 | `bin/fm-doc-audience-check.sh` plus review of `docs/configuration.md`, the spawn header, and the adapter reference |
 
 Known limitation: relaunch re-enters the same launch construction as a fresh spawn, and the portable suite does not drive `--relaunch` separately.
