@@ -14,6 +14,6 @@ New portable tests live in `tests/fm-spawn-claude-code-mode.test.sh`; run with `
 - [X] T009 Update the existing golden launch assertions for the new `-u` token.
 - [X] T010 [US4] Write `tests/fm-claude-codemode-live-e2e.test.sh` and its login helper, register in `bin/fm-test-run.sh`; run the offline parts (gate, refusals) now.
 - [X] T011 [US5] Docs: `docs/configuration.md`, the Claude adapter reference, `docs/documentation-audiences.json` entries if required.
-- [ ] T012 Append `needs-decision [key=code-mode-pilot-login]` with the exact sign-in command and stop until answered; then run the live E2E and record the dated result in `docs/verification/supervision.md`.
+- [X] T012 Append `needs-decision [key=code-mode-pilot-login]` with the exact sign-in command and stop until answered; then run the live E2E and record the dated result in `docs/verification/supervision.md`.
 - [X] T013 `/speckit.tdd.verify` with mutants; `/speckit.implement`, `/speckit.checklist`, `/speckit.analyze`, `/speckit.converge`.
 - [X] T014 `bin/fm-lint.sh`, `bin/fm-doc-audience-check.sh`, `bin/fm-test-run.sh --check-coverage`, the changed suites.

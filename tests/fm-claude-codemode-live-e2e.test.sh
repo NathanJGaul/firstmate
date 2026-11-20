@@ -81,6 +81,22 @@ wait_screen() {  # <text> <what> [iterations]
   while [ "$i" -lt "$limit" ]; do
     shot=$(screen)
     case "$shot" in
+    *'Adding a new directory'*"$LAB"*'Yes, add it'*)
+      # The task-channel --add-dir grants name directories this lab created, and a
+      # fresh config directory asks about each once per session. The cursor opens on
+      # "No, exit", so move it onto "Yes, add it" before confirming. Only a path
+      # under the lab is ever answered; anything else falls through and times out.
+      # The dialog ignores a key that lands as it draws, so let it settle first.
+      sleep 1.5
+      if printf '%s\n' "$shot" | grep -F '❯' | grep -q 'Yes, add it'; then
+        tmux -L "$SOCKET" send-keys -t "$SESSION" Enter
+      else
+        tmux -L "$SOCKET" send-keys -t "$SESSION" Down
+      fi
+      sleep 1
+      i=$((i + 4))
+      continue
+      ;;
     *'start without it'*) fail "the worker parked on the Code Mode confirmation while waiting for $what" ;;
     *'CLAUDE_EXIT='*) printf '%s\n' "$shot" >&2; fail "Claude Code $CLAUDE_VERSION exited while waiting for $what" ;;
     *"$text"*) return 0 ;;
@@ -115,6 +131,8 @@ run_case() {
   printf '%s\n' "$knob" >"$home/config/claude-code-mode"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   printf 'alpha\nbeta\ngamma\n' >"$wt/notes.txt"
+  # A pooled worktree must be clean when the spawn refreshes its base.
+  git -C "$wt" add notes.txt && git -C "$wt" -c user.name=lab -c user.email=lab@example.invalid commit -q -m 'lab notes'
   fm_test_spawn_brief "$home" "$id" "$brief"
   extra=(--mode no-mistakes --yolo off)
   [ "$kind" = ship ] || extra=(--scout)
