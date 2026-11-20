@@ -1573,6 +1573,54 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "specs/012-pi-1-6-typings/analyze.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/checklist.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/checklists/requirements.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/converge.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/plan.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/quickstart.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/research.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/spec.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/tasks.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/tdd/cycle-log.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/tdd/test-list.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "specs/012-pi-1-6-typings/tdd/verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "specs/004-worker-browser-session/analyze.md",
       "audience": "maintainer-verification"
     },
